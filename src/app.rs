@@ -1019,6 +1019,7 @@ mod tests {
             key_path: None,
             ssh_host: None,
             container: "amnezia-xray".to_string(),
+            telegram_admin_chat_id: None,
         };
         let app = App::with_config(config, test_runtime());
         assert_eq!(app.screen, Screen::Dashboard);
@@ -1034,6 +1035,7 @@ mod tests {
             key_path: None,
             ssh_host: Some("vps-vpn".to_string()),
             container: "amnezia-xray".to_string(),
+            telegram_admin_chat_id: None,
         };
         let app = App::with_config(config, test_runtime());
         assert_eq!(app.dashboard_state.server_host, "vps-vpn");

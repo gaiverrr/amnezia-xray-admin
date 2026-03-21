@@ -4,6 +4,7 @@ mod backend_trait;
 mod config;
 mod error;
 mod ssh;
+mod telegram;
 mod ui;
 mod xray;
 
@@ -78,6 +79,21 @@ fn main() {
 
     if cli.server_info {
         if let Err(e) = runtime.block_on(cli_server_info(&config, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if cli.telegram_bot {
+        let token = match cli.telegram_token {
+            Some(ref t) => t.clone(),
+            None => {
+                eprintln!("Error: --telegram-token or TELEGRAM_TOKEN env var is required");
+                std::process::exit(1);
+            }
+        };
+        if let Err(e) = runtime.block_on(cli_telegram_bot(&config, &token, local)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
@@ -381,4 +397,10 @@ async fn cli_list_users(config: &Config, local: bool) -> error::Result<()> {
     }
 
     Ok(())
+}
+
+async fn cli_telegram_bot(config: &Config, token: &str, local: bool) -> error::Result<()> {
+    env_logger::init();
+    let backend = connect_cli_backend(config, local).await?;
+    telegram::run_bot(token, backend, config.clone()).await
 }

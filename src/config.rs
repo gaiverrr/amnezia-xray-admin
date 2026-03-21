@@ -82,6 +82,14 @@ pub struct Cli {
     /// Use local backend (direct docker exec) instead of SSH — for running on VPS
     #[arg(long = "local")]
     pub local: bool,
+
+    /// Run as Telegram bot daemon (requires --telegram-token or TELEGRAM_TOKEN env var)
+    #[arg(long = "telegram-bot")]
+    pub telegram_bot: bool,
+
+    /// Telegram bot token (can also be set via TELEGRAM_TOKEN env var)
+    #[arg(long = "telegram-token", env = "TELEGRAM_TOKEN")]
+    pub telegram_token: Option<String>,
 }
 
 /// Application configuration
@@ -102,6 +110,9 @@ pub struct Config {
     /// Docker container name (default: amnezia-xray)
     #[serde(default = "default_container")]
     pub container: String,
+    /// Telegram bot admin chat ID (set automatically on first /start)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_admin_chat_id: Option<i64>,
 }
 
 fn default_port() -> u16 {
@@ -125,6 +136,7 @@ impl Default for Config {
             key_path: None,
             ssh_host: None,
             container: DEFAULT_CONTAINER.to_string(),
+            telegram_admin_chat_id: None,
         }
     }
 }
@@ -304,6 +316,7 @@ host = "10.0.0.1"
             key_path: Some(PathBuf::from("/keys/id_rsa")),
             ssh_host: Some("my-server".to_string()),
             container: "xray-test".to_string(),
+            telegram_admin_chat_id: None,
         };
         config.save_to(&path).unwrap();
 
@@ -354,6 +367,8 @@ host = "10.0.0.1"
             online_status: false,
             server_info: false,
             local: false,
+            telegram_bot: false,
+            telegram_token: None,
         };
         config.merge_cli(&cli);
 
@@ -374,6 +389,7 @@ host = "10.0.0.1"
             key_path: Some(PathBuf::from("/original/key")),
             ssh_host: Some("original-alias".to_string()),
             container: "original-ctr".to_string(),
+            telegram_admin_chat_id: None,
         };
         let cli = Cli {
             host: None,
@@ -389,6 +405,8 @@ host = "10.0.0.1"
             online_status: false,
             server_info: false,
             local: false,
+            telegram_bot: false,
+            telegram_token: None,
         };
         config.merge_cli(&cli);
 
@@ -417,6 +435,8 @@ host = "10.0.0.1"
             online_status: false,
             server_info: false,
             local: false,
+            telegram_bot: false,
+            telegram_token: None,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());
@@ -455,6 +475,7 @@ host = "10.0.0.1"
             key_path: None,
             ssh_host: Some("vps-vpn".to_string()),
             container: "amnezia-xray".to_string(),
+            telegram_admin_chat_id: None,
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();

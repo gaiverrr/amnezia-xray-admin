@@ -152,6 +152,7 @@ impl SetupState {
             } else {
                 self.container.clone()
             },
+            telegram_admin_chat_id: None,
         }
     }
 
@@ -497,6 +498,7 @@ mod tests {
             key_path: Some(std::path::PathBuf::from("/home/.ssh/key")),
             ssh_host: Some("vps-vpn".to_string()),
             container: "my-xray".to_string(),
+            telegram_admin_chat_id: None,
         };
         let state = SetupState::from_config(&config);
         assert_eq!(state.ssh_host, "vps-vpn");
@@ -571,6 +573,7 @@ mod tests {
             key_path: None,
             ssh_host: Some("myhost".to_string()),
             container: "amnezia-xray".to_string(),
+            telegram_admin_chat_id: None,
         };
         let state = SetupState::from_config(&config);
         let result = state.to_config();

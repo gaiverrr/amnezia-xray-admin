@@ -139,13 +139,13 @@ Three-phase plan:
 ### Phase 4: Telegram bot
 
 ### Task 11: Add teloxide dependency and bot skeleton
-- [ ] add `teloxide` crate to Cargo.toml (with features: macros, auto-send)
-- [ ] add `--telegram-bot` flag to Cli struct
-- [ ] add `TELEGRAM_TOKEN` env var reading (or `--telegram-token` arg)
-- [ ] implement auto-admin: first user to send `/start` becomes admin, chat ID saved to config
-- [ ] create `src/telegram.rs` module with bot startup function
-- [ ] implement basic `/start` and `/help` commands
-- [ ] run tests — must pass before next task
+- [x] add `teloxide` crate to Cargo.toml (with features: macros)
+- [x] add `--telegram-bot` flag to Cli struct
+- [x] add `TELEGRAM_TOKEN` env var reading (or `--telegram-token` arg)
+- [x] implement auto-admin: first user to send `/start` becomes admin, chat ID saved to config
+- [x] create `src/telegram.rs` module with bot startup function
+- [x] implement basic `/start` and `/help` commands
+- [x] run tests — 296 tests pass, clippy clean
 
 ### Task 12: Telegram /users and /status commands
 - [ ] implement `/users` — list users with stats (like --list-users but formatted for Telegram)

@@ -361,6 +361,7 @@ mod tests {
             key_path: None,
             ssh_host: None,
             container: "amnezia-xray".to_string(),
+            telegram_admin_chat_id: None,
         };
         let (host, port, user, key) = resolve_connection_info(&config).unwrap();
         assert_eq!(host, "1.2.3.4");
@@ -385,6 +386,7 @@ mod tests {
             user: "root".to_string(),
             key_path: None,
             container: "amnezia-xray".to_string(),
+            telegram_admin_chat_id: None,
         };
         // Falls back to treating alias as hostname
         let (host, port, user, _key) = resolve_connection_info(&config).unwrap();
@@ -402,6 +404,7 @@ mod tests {
             key_path: Some(std::path::PathBuf::from("~/.ssh/id_ed25519")),
             ssh_host: None,
             container: "amnezia-xray".to_string(),
+            telegram_admin_chat_id: None,
         };
         let (_host, _port, _user, key) = resolve_connection_info(&config).unwrap();
         let key_path = key.expect("key_path should be Some");
@@ -427,6 +430,7 @@ mod tests {
             key_path: Some(std::path::PathBuf::from("/home/user/.ssh/id_rsa")),
             ssh_host: None,
             container: "amnezia-xray".to_string(),
+            telegram_admin_chat_id: None,
         };
         let (_host, _port, _user, key) = resolve_connection_info(&config).unwrap();
         let key_path = key.expect("key_path should be Some");
