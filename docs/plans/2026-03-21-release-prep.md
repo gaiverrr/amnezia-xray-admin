@@ -68,10 +68,10 @@ brew install amnezia-xray-admin
 - [x] run tests — must pass before next task
 
 ### Task 4: Set up GitHub Actions CI
-- [ ] create `.github/workflows/ci.yml`: test + clippy + fmt check on push/PR
-- [ ] matrix: ubuntu-latest + macos-latest
-- [ ] cache cargo registry and target dir
-- [ ] run tests — must pass before next task
+- [x] create `.github/workflows/ci.yml`: test + clippy + fmt check on push/PR
+- [x] matrix: ubuntu-latest + macos-latest
+- [x] cache cargo registry and target dir
+- [x] run tests — must pass before next task
 
 ### Task 5: Set up GitHub Actions release workflow
 - [ ] create `.github/workflows/release.yml`: triggered on tag push `v*`
