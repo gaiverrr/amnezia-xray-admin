@@ -24,13 +24,22 @@ pub struct TrafficStats {
     pub downlink: u64,
 }
 
+/// User data within a clientsTable entry
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ClientUserData {
+    #[serde(rename = "clientName", default)]
+    pub client_name: String,
+    #[serde(rename = "creationDate", default)]
+    pub creation_date: String,
+}
+
 /// An entry in the clientsTable JSON file
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ClientEntry {
     #[serde(rename = "clientId")]
     pub client_id: String,
     #[serde(rename = "userData")]
-    pub user_data: String,
+    pub user_data: ClientUserData,
 }
 
 /// A client entry within a server.json inbound's settings.clients array
@@ -225,14 +234,17 @@ impl ClientsTable {
         self.entries
             .iter()
             .find(|e| e.client_id == uuid)
-            .map(|e| e.user_data.as_str())
+            .map(|e| e.user_data.client_name.as_str())
     }
 
     /// Add an entry
     pub fn add(&mut self, client_id: String, name: String) {
         self.entries.push(ClientEntry {
             client_id,
-            user_data: name,
+            user_data: ClientUserData {
+                client_name: name,
+                creation_date: String::new(),
+            },
         });
     }
 
@@ -308,8 +320,8 @@ mod tests {
 
     fn sample_clients_table() -> &'static str {
         r#"[
-            {"clientId": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb", "userData": "bob"},
-            {"clientId": "cccccccc-4444-5555-6666-dddddddddddd", "userData": "alice"}
+            {"clientId": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb", "userData": {"clientName": "bob", "creationDate": ""}},
+            {"clientId": "cccccccc-4444-5555-6666-dddddddddddd", "userData": {"clientName": "alice", "creationDate": ""}}
         ]"#
     }
 
@@ -386,7 +398,7 @@ mod tests {
             table.entries[0].client_id,
             "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
         );
-        assert_eq!(table.entries[0].user_data, "bob");
+        assert_eq!(table.entries[0].user_data.client_name, "bob");
     }
 
     #[test]
@@ -487,7 +499,10 @@ mod tests {
     fn test_client_entry_serde() {
         let entry = ClientEntry {
             client_id: "test-uuid".to_string(),
-            user_data: "test-name".to_string(),
+            user_data: ClientUserData {
+                client_name: "test-name".to_string(),
+                creation_date: String::new(),
+            },
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("clientId"));

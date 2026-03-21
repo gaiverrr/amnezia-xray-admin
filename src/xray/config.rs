@@ -309,8 +309,8 @@ mod tests {
 
     fn sample_clients_table() -> &'static str {
         r#"[
-            {"clientId": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb", "userData": "bob"},
-            {"clientId": "cccccccc-4444-5555-6666-dddddddddddd", "userData": "alice"}
+            {"clientId": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb", "userData": {"clientName": "bob", "creationDate": ""}},
+            {"clientId": "cccccccc-4444-5555-6666-dddddddddddd", "userData": {"clientName": "alice", "creationDate": ""}}
         ]"#
     }
 
