@@ -523,7 +523,16 @@ impl App {
                             // User navigated away or viewing a different user; discard
                             continue;
                         }
-                        self.user_detail_state.cached_vless_url = Some(added.vless_url.clone());
+                        match self.screen {
+                            Screen::AddUser => {
+                                self.add_user_state.cached_vless_url =
+                                    Some(added.vless_url.clone());
+                            }
+                            _ => {
+                                self.user_detail_state.cached_vless_url =
+                                    Some(added.vless_url.clone());
+                            }
+                        }
                         match intent {
                             VlessUrlIntent::Clipboard => {
                                 let osc52 = user_detail::osc52_copy(&added.vless_url);

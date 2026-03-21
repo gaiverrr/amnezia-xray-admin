@@ -182,7 +182,7 @@ pub async fn upload_and_restart(
         "sh -c 'echo {} | base64 -d > {} && mv {} {}'",
         b64, tmp, tmp, SERVER_CONFIG_PATH
     );
-    let result = session.exec_command(&write_cmd).await?;
+    let result = session.exec_in_container(&write_cmd).await?;
     if !result.success() {
         return Err(AppError::Xray(format!(
             "failed to write server config: {}",
@@ -190,7 +190,7 @@ pub async fn upload_and_restart(
         )));
     }
 
-    // Restart the container to apply changes
+    // Restart the container to apply changes (must run on host)
     let restart_cmd = format!("docker restart {}", container);
     let result = session.exec_command(&restart_cmd).await?;
     if !result.success() {
@@ -206,7 +206,7 @@ pub async fn upload_and_restart(
 /// Read server.json from the remote server.
 pub async fn read_server_config(session: &SshSession) -> Result<ServerConfig> {
     let cmd = format!("cat {}", SERVER_CONFIG_PATH);
-    let result = session.exec_command(&cmd).await?;
+    let result = session.exec_in_container(&cmd).await?;
     if !result.success() {
         return Err(AppError::Xray(format!(
             "failed to read server config: {}",
@@ -219,7 +219,7 @@ pub async fn read_server_config(session: &SshSession) -> Result<ServerConfig> {
 /// Read clientsTable from the remote server.
 pub async fn read_clients_table(session: &SshSession) -> Result<ClientsTable> {
     let cmd = format!("cat {}", CLIENTS_TABLE_PATH);
-    let result = session.exec_command(&cmd).await?;
+    let result = session.exec_in_container(&cmd).await?;
     if !result.success() {
         return Err(AppError::Xray(format!(
             "failed to read clients table: {}",
@@ -239,9 +239,28 @@ pub async fn ensure_api_enabled(session: &SshSession, container: &str) -> Result
     let modified = enable_api(&mut config, &clients_table)?;
     if modified {
         upload_and_restart(session, &config, container).await?;
+        // Wait for the Xray process inside the container to become ready
+        // after restart, so subsequent API calls don't fail.
+        wait_for_xray_ready(session, container).await?;
     }
 
     Ok(modified)
+}
+
+/// Poll `xray version` inside the container until it succeeds or timeout.
+async fn wait_for_xray_ready(session: &SshSession, container: &str) -> Result<()> {
+    let check_cmd = format!("docker exec {} xray version", container);
+    for _ in 0..10 {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        if let Ok(result) = session.exec_command(&check_cmd).await {
+            if result.success() {
+                return Ok(());
+            }
+        }
+    }
+    Err(AppError::Xray(
+        "container did not become ready after restart".to_string(),
+    ))
 }
 
 #[cfg(test)]

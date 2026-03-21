@@ -205,7 +205,13 @@ fn check_known_host(
     if let Some(parent) = kh_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let entry = format!("{} {} {}\n", host_pattern, key_type, key_b64);
+    // Ensure we don't corrupt the last line if file lacks a trailing newline
+    let prefix = if content.ends_with('\n') || content.is_empty() {
+        ""
+    } else {
+        "\n"
+    };
+    let entry = format!("{}{} {} {}\n", prefix, host_pattern, key_type, key_b64);
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
