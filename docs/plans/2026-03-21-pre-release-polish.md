@@ -106,10 +106,10 @@ Implement the design spec from `docs/superpowers/specs/2026-03-21-pre-release-po
 - [x] run tests — must pass before next task
 
 ### Task 7: Improve --help with examples
-- [ ] replace `long_about` in `Cli` struct with `after_help` containing usage examples
-- [ ] include examples for: TUI launch, SSH alias, list-users, add-user, user-qr, deploy-bot, backup, restore
-- [ ] verify: `cargo run -- --help`
-- [ ] run tests — must pass before next task
+- [x] replace `long_about` in `Cli` struct with `after_help` containing usage examples
+- [x] include examples for: TUI launch, SSH alias, list-users, add-user, user-qr, deploy-bot, backup, restore
+- [x] verify: `cargo run -- --help`
+- [x] run tests — must pass before next task
 
 ### Task 8: Improve error messages
 - [ ] wrap SSH connection errors in `src/ssh.rs` or `src/backend.rs` with actionable hints:

@@ -27,7 +27,36 @@ fn is_valid_container_name(name: &str) -> bool {
 #[command(name = "amnezia-xray-admin")]
 #[command(about = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray server")]
 #[command(
-    long_about = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray (VLESS + XTLS-Reality) server.\n\nConnects to your VPS via SSH, talks to the Xray gRPC API for live user management\nand traffic stats. No container restarts needed.\n\nOn first run, a setup wizard guides you through the SSH connection.\nConfig is saved to ~/.config/amnezia-xray-admin/config.toml.\n\nExamples:\n  amnezia-xray-admin                        # Use saved config or start setup wizard\n  amnezia-xray-admin --ssh-host vps-vpn     # Connect using SSH config alias\n  amnezia-xray-admin --host 1.2.3.4 --key ~/.ssh/id_ed25519"
+    long_about = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray (VLESS + XTLS-Reality) server.\n\nConnects to your VPS via SSH, talks to the Xray gRPC API for live user management\nand traffic stats. No container restarts needed.\n\nOn first run, a setup wizard guides you through the SSH connection.\nConfig is saved to ~/.config/amnezia-xray-admin/config.toml."
+)]
+#[command(after_help = "\
+EXAMPLES:
+  Launch TUI (interactive dashboard):
+    amnezia-xray-admin
+    amnezia-xray-admin --ssh-host vps-vpn
+    amnezia-xray-admin --host 1.2.3.4 --key ~/.ssh/id_ed25519
+
+  User management:
+    amnezia-xray-admin --list-users
+    amnezia-xray-admin --add-user Friend
+    amnezia-xray-admin --delete-user Friend --yes
+    amnezia-xray-admin --rename-user \"Old Name\" \"New Name\"
+    amnezia-xray-admin --user-url Friend
+    amnezia-xray-admin --user-qr Friend
+
+  Server info:
+    amnezia-xray-admin --check-server
+    amnezia-xray-admin --server-info
+    amnezia-xray-admin --online-status
+
+  Backups:
+    amnezia-xray-admin --backup
+    amnezia-xray-admin --restore
+    amnezia-xray-admin --restore 20260321-143000
+
+  Telegram bot:
+    amnezia-xray-admin --deploy-bot --telegram-token <TOKEN>
+    amnezia-xray-admin --telegram-bot --local --container amnezia-xray"
 )]
 #[command(version)]
 pub struct Cli {
