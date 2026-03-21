@@ -54,6 +54,10 @@ pub struct Cli {
     /// Docker container name running Xray
     #[arg(long = "container")]
     pub container: Option<String>,
+
+    /// List users and exit (non-interactive mode)
+    #[arg(long = "list-users")]
+    pub list_users: bool,
 }
 
 /// Application configuration
@@ -319,6 +323,7 @@ host = "10.0.0.1"
             key_path: Some(PathBuf::from("/tmp/key")),
             ssh_host: Some("alias".to_string()),
             container: Some("ctr".to_string()),
+            list_users: false,
         };
         config.merge_cli(&cli);
 
@@ -347,6 +352,7 @@ host = "10.0.0.1"
             key_path: None,
             ssh_host: None,
             container: None,
+            list_users: false,
         };
         config.merge_cli(&cli);
 
@@ -368,6 +374,7 @@ host = "10.0.0.1"
             key_path: None,
             ssh_host: None,
             container: None,
+            list_users: false,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());

@@ -66,7 +66,7 @@ fn expand_key_path(path: Option<std::path::PathBuf>) -> Option<std::path::PathBu
 }
 
 /// Resolve SSH connection parameters from the app config.
-fn resolve_connection(
+pub fn resolve_connection_info(
     config: &Config,
 ) -> Result<(String, u16, String, Option<std::path::PathBuf>), AppError> {
     if let Some(ref alias) = config.ssh_host {
@@ -102,7 +102,7 @@ fn resolve_connection(
 
 /// Connect to the server using the app config.
 async fn connect(config: &Config) -> Result<SshSession, AppError> {
-    let (hostname, port, user, key_path) = resolve_connection(config)?;
+    let (hostname, port, user, key_path) = resolve_connection_info(config)?;
     let addr = if hostname.contains(':') {
         // IPv6 address needs brackets
         format!("[{}]:{}", hostname, port)
@@ -141,7 +141,7 @@ async fn build_vless_url(
     let port = server_config.vless_port().unwrap_or(443);
     let public_key = read_public_key(session).await?;
 
-    let (hostname, ..) = resolve_connection(config)?;
+    let (hostname, ..) = resolve_connection_info(config)?;
 
     let params = VlessUrlParams {
         uuid: uuid.to_string(),
@@ -364,7 +364,7 @@ mod tests {
             ssh_host: None,
             container: "amnezia-xray".to_string(),
         };
-        let (host, port, user, key) = resolve_connection(&config).unwrap();
+        let (host, port, user, key) = resolve_connection_info(&config).unwrap();
         assert_eq!(host, "1.2.3.4");
         assert_eq!(port, 2222);
         assert_eq!(user, "admin");
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn test_resolve_connection_no_host() {
         let config = Config::default();
-        let result = resolve_connection(&config);
+        let result = resolve_connection_info(&config);
         assert!(result.is_err());
     }
 
@@ -389,7 +389,7 @@ mod tests {
             container: "amnezia-xray".to_string(),
         };
         // Falls back to treating alias as hostname
-        let (host, port, user, _key) = resolve_connection(&config).unwrap();
+        let (host, port, user, _key) = resolve_connection_info(&config).unwrap();
         assert_eq!(host, "nonexistent-alias");
         assert_eq!(port, 22);
         assert_eq!(user, "root");
@@ -405,7 +405,7 @@ mod tests {
             ssh_host: None,
             container: "amnezia-xray".to_string(),
         };
-        let (_host, _port, _user, key) = resolve_connection(&config).unwrap();
+        let (_host, _port, _user, key) = resolve_connection_info(&config).unwrap();
         let key_path = key.expect("key_path should be Some");
         // Tilde should be expanded to the home directory
         assert!(
@@ -430,7 +430,7 @@ mod tests {
             ssh_host: None,
             container: "amnezia-xray".to_string(),
         };
-        let (_host, _port, _user, key) = resolve_connection(&config).unwrap();
+        let (_host, _port, _user, key) = resolve_connection_info(&config).unwrap();
         let key_path = key.expect("key_path should be Some");
         assert_eq!(key_path.to_string_lossy(), "/home/user/.ssh/id_rsa");
     }

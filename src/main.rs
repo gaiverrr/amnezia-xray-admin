@@ -31,6 +31,15 @@ fn main() {
         }
     };
 
+    // Non-interactive CLI commands
+    if cli.list_users {
+        if let Err(e) = runtime.block_on(cli_list_users(&config)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // Initialize terminal
     let mut terminal = match app::init_terminal() {
         Ok(t) => t,
@@ -53,4 +62,68 @@ fn main() {
         eprintln!("Application error: {}", e);
         std::process::exit(1);
     }
+}
+
+async fn cli_list_users(config: &Config) -> error::Result<()> {
+    let (hostname, port, user, key_path) = backend::resolve_connection_info(config)?;
+    let addr = if hostname.contains(':') {
+        format!("[{}]:{}", hostname, port)
+    } else {
+        format!("{}:{}", hostname, port)
+    };
+
+    eprintln!("Connecting to {}@{}...", user, addr);
+    let session = ssh::SshSession::connect(&addr, &user, key_path.as_deref(), &config.container).await?;
+
+    let client = xray::client::XrayApiClient::new(&session);
+    let users = client.list_users().await?;
+
+    // Fetch stats for each user
+    let mut users_with_stats = Vec::new();
+    for mut user in users {
+        if let Ok(stats) = client.get_user_stats(&user.email).await {
+            user.stats = stats;
+        }
+        if let Ok(count) = client.get_online_count(&user.email).await {
+            user.online_count = count;
+        }
+        users_with_stats.push(user);
+    }
+
+    if users_with_stats.is_empty() {
+        println!("No users found.");
+        return Ok(());
+    }
+
+    // Print header
+    println!(
+        "{:<30} {:<10} {:<12} {:<12} {:<8}",
+        "NAME", "UUID", "UPLOAD", "DOWNLOAD", "ONLINE"
+    );
+    println!("{}", "-".repeat(72));
+
+    for user in &users_with_stats {
+        let name = if user.name.is_empty() {
+            &user.uuid[..8]
+        } else {
+            &user.name
+        };
+        let uuid_short = &user.uuid[..std::cmp::min(8, user.uuid.len())];
+        let online = if user.online_count > 0 {
+            format!("● {}", user.online_count)
+        } else {
+            "○".to_string()
+        };
+
+        println!(
+            "{:<30} {:<10} {:<12} {:<12} {:<8}",
+            name,
+            uuid_short,
+            ui::dashboard::format_bytes(user.stats.uplink),
+            ui::dashboard::format_bytes(user.stats.downlink),
+            online,
+        );
+    }
+
+    Ok(())
 }

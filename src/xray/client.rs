@@ -366,13 +366,19 @@ fn urlencode_fragment(s: &str) -> String {
 /// ```
 pub fn parse_stat_value(output: &str) -> Option<u64> {
     for line in output.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("value:") {
-            let val_str = rest.trim();
-            if let Ok(val) = val_str.parse::<i64>() {
-                // Stats can be negative after reset; treat as 0
-                return Some(val.max(0) as u64);
-            }
+        let trimmed = line.trim().trim_matches(',');
+        // Handle both text format (value: 123) and JSON format ("value": 123)
+        let rest = if let Some(r) = trimmed.strip_prefix("\"value\":") {
+            r
+        } else if let Some(r) = trimmed.strip_prefix("value:") {
+            r
+        } else {
+            continue;
+        };
+        let val_str = rest.trim();
+        if let Ok(val) = val_str.parse::<i64>() {
+            // Stats can be negative after reset; treat as 0
+            return Some(val.max(0) as u64);
         }
     }
     None
