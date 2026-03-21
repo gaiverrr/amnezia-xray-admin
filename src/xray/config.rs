@@ -71,11 +71,7 @@ fn add_api_section(config: &mut ServerConfig) {
     if !api.get("services").is_some_and(|v| v.is_array()) {
         api.insert("services".to_string(), json!([]));
     }
-    let services = api
-        .get_mut("services")
-        .unwrap()
-        .as_array_mut()
-        .unwrap();
+    let services = api.get_mut("services").unwrap().as_array_mut().unwrap();
     for required in &["HandlerService", "StatsService"] {
         if !services.iter().any(|s| s.as_str() == Some(required)) {
             services.push(json!(required));
@@ -142,19 +138,13 @@ fn add_policy_section(config: &mut ServerConfig) {
 
 /// Check whether a routing rule is a correct API routing rule.
 fn is_valid_api_routing_rule(rule: &serde_json::Value) -> bool {
-    let has_outbound = rule
-        .get("outboundTag")
-        .and_then(|t| t.as_str())
-        == Some("api");
+    let has_outbound = rule.get("outboundTag").and_then(|t| t.as_str()) == Some("api");
     let has_inbound = rule
         .get("inboundTag")
         .and_then(|t| t.as_array())
         .map(|tags| tags.iter().any(|t| t.as_str() == Some("api")))
         .unwrap_or(false);
-    let has_type = rule
-        .get("type")
-        .and_then(|t| t.as_str())
-        == Some("field");
+    let has_type = rule.get("type").and_then(|t| t.as_str()) == Some("field");
     has_outbound && has_inbound && has_type
 }
 
@@ -168,11 +158,10 @@ fn add_api_routing_rule(config: &mut ServerConfig) -> bool {
     if let Some(routing) = config.raw.get_mut("routing") {
         if let Some(rules) = routing.get_mut("rules").and_then(|r| r.as_array_mut()) {
             // Find any existing rule with outboundTag "api"
-            if let Some(pos) = rules.iter().position(|r| {
-                r.get("outboundTag")
-                    .and_then(|t| t.as_str())
-                    == Some("api")
-            }) {
+            if let Some(pos) = rules
+                .iter()
+                .position(|r| r.get("outboundTag").and_then(|t| t.as_str()) == Some("api"))
+            {
                 if is_valid_api_routing_rule(&rules[pos]) {
                     return false;
                 }
@@ -218,9 +207,10 @@ fn add_api_inbound(config: &mut ServerConfig) -> bool {
         .and_then(|i| i.as_array_mut())
     {
         // Find any existing inbound tagged "api"
-        if let Some(pos) = inbounds.iter().position(|ib| {
-            ib.get("tag").and_then(|t| t.as_str()) == Some("api")
-        }) {
+        if let Some(pos) = inbounds
+            .iter()
+            .position(|ib| ib.get("tag").and_then(|t| t.as_str()) == Some("api"))
+        {
             if is_valid_api_inbound(&inbounds[pos]) {
                 return false;
             }
@@ -1011,7 +1001,11 @@ mod tests {
         assert!(modified, "should repair broken routing rule");
 
         let rules = config.raw["routing"]["rules"].as_array().unwrap();
-        assert_eq!(rules.len(), 1, "broken rule should be replaced, not duplicated");
+        assert_eq!(
+            rules.len(),
+            1,
+            "broken rule should be replaced, not duplicated"
+        );
         assert_eq!(rules[0]["outboundTag"], "api");
         let inbound_tags = rules[0]["inboundTag"].as_array().unwrap();
         assert!(inbound_tags.iter().any(|t| t == "api"));

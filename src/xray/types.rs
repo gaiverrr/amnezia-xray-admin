@@ -156,9 +156,7 @@ impl ServerConfig {
         let has_handler = services
             .iter()
             .any(|s| s.as_str() == Some("HandlerService"));
-        let has_stats = services
-            .iter()
-            .any(|s| s.as_str() == Some("StatsService"));
+        let has_stats = services.iter().any(|s| s.as_str() == Some("StatsService"));
         has_tag && has_handler && has_stats
     }
 
@@ -402,8 +400,7 @@ mod tests {
         assert!(!config.has_api());
 
         // Incomplete api section (missing services) should return false
-        let incomplete =
-            ServerConfig::parse(r#"{"api":{"tag":"api"},"inbounds":[]}"#).unwrap();
+        let incomplete = ServerConfig::parse(r#"{"api":{"tag":"api"},"inbounds":[]}"#).unwrap();
         assert!(!incomplete.has_api());
 
         // Missing one service should return false

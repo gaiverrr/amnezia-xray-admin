@@ -481,10 +481,7 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
     let _ = backend.close().await;
 
     if !result.success() {
-        return Err(format!(
-            "Verification failed: {}",
-            result.combined_output()
-        ));
+        return Err(format!("Verification failed: {}", result.combined_output()));
     }
 
     let status = result.stdout.trim().to_string();
