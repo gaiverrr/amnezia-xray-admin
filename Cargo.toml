@@ -31,5 +31,8 @@ teloxide = { version = "0.17.0", features = ["macros"] }
 log = "0.4.29"
 env_logger = "0.11.9"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+
 [dev-dependencies]
 tempfile = "3"
