@@ -63,9 +63,9 @@ brew install amnezia-xray-admin
 - [x] run tests — must pass before next task
 
 ### Task 3: Create CHANGELOG.md
-- [ ] create CHANGELOG.md following Keep a Changelog format
-- [ ] document v0.1.0 features: TUI dashboard, CLI commands, SSH connection, xray API integration, QR code generation, first-run setup wizard
-- [ ] run tests — must pass before next task
+- [x] create CHANGELOG.md following Keep a Changelog format
+- [x] document v0.1.0 features: TUI dashboard, CLI commands, SSH connection, xray API integration, QR code generation, first-run setup wizard
+- [x] run tests — must pass before next task
 
 ### Task 4: Set up GitHub Actions CI
 - [ ] create `.github/workflows/ci.yml`: test + clippy + fmt check on push/PR
