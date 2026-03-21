@@ -133,7 +133,7 @@ impl<'a> XrayApiClient<'a> {
     /// Rename a user. Updates clientsTable and server.json email, restarts container.
     ///
     /// This resets the user's traffic stats because xray tracks stats by email.
-    /// The user's UUID and active connections are preserved.
+    /// The user's UUID is preserved; active connections are dropped during restart.
     pub async fn rename_user(&self, old_name: &str, new_name: &str) -> Result<()> {
         let old_email = XrayUser::email_from_name(old_name);
         let new_email = XrayUser::email_from_name(new_name);
