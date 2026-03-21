@@ -14,6 +14,11 @@ fn is_valid_name_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '-' || c == '_'
 }
 
+/// Check if a username is valid (non-empty, valid chars, doesn't start with `-`).
+fn is_valid_username(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('-') && name.chars().all(is_valid_name_char)
+}
+
 /// Result of an add-user operation
 #[derive(Debug, Clone)]
 pub enum AddUserResult {
@@ -75,7 +80,7 @@ impl AddUserState {
                 true
             }
             KeyCode::Enter => {
-                if !self.name.trim().is_empty() {
+                if is_valid_username(self.name.trim()) {
                     self.confirmed = true;
                 }
                 true
@@ -98,7 +103,7 @@ impl AddUserState {
 
     /// Check if the user has confirmed and name is valid
     pub fn is_confirmed(&self) -> bool {
-        self.confirmed && !self.name.trim().is_empty()
+        self.confirmed && is_valid_username(self.name.trim())
     }
 }
 

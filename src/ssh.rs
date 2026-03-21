@@ -55,11 +55,16 @@ fn check_known_host(
 
     let key_b64 = base64::engine::general_purpose::STANDARD.encode(&key_data);
 
-    // Build the host pattern for known_hosts lookup
+    // Build the host pattern for known_hosts lookup.
+    // Strip brackets from IPv6 host before formatting to avoid double-brackets.
+    let bare_host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
     let host_pattern = if port == 22 {
         host.to_string()
     } else {
-        format!("[{}]:{}", host, port)
+        format!("[{}]:{}", bare_host, port)
     };
 
     let kh_path = match known_hosts_path() {
@@ -390,6 +395,17 @@ impl SshSession {
 
     /// Execute a command inside the Docker container.
     pub async fn exec_in_container(&self, command: &str) -> Result<CommandOutput> {
+        // Defense-in-depth: verify container name is shell-safe
+        if !self
+            .container
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+        {
+            return Err(AppError::Ssh(format!(
+                "unsafe container name: {}",
+                self.container
+            )));
+        }
         let full_cmd = format!("docker exec {} {}", self.container, command);
         self.exec_command(&full_cmd).await
     }
@@ -402,7 +418,6 @@ impl SshSession {
             .map_err(|e| AppError::Ssh(format!("disconnect failed: {}", e)))?;
         Ok(())
     }
-
 }
 
 /// Parse host and port from an address string like "1.2.3.4:22" or "[::1]:22".

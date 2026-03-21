@@ -103,7 +103,12 @@ fn resolve_connection(
 /// Connect to the server using the app config.
 async fn connect(config: &Config) -> Result<SshSession, AppError> {
     let (hostname, port, user, key_path) = resolve_connection(config)?;
-    let addr = format!("{}:{}", hostname, port);
+    let addr = if hostname.contains(':') {
+        // IPv6 address needs brackets
+        format!("[{}]:{}", hostname, port)
+    } else {
+        format!("{}:{}", hostname, port)
+    };
     SshSession::connect(addr, &user, key_path.as_deref(), &config.container).await
 }
 

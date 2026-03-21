@@ -106,7 +106,9 @@ impl ServerConfig {
 
     /// Check if a client with the given email already exists in the VLESS inbound.
     pub fn has_client_email(&self, email: &str) -> bool {
-        self.clients().iter().any(|c| c.email.as_deref() == Some(email))
+        self.clients()
+            .iter()
+            .any(|c| c.email.as_deref() == Some(email))
     }
 
     /// Add a client to the VLESS inbound

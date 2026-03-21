@@ -145,7 +145,6 @@ impl UserDetailState {
     pub fn take_clipboard_copied(&mut self) -> bool {
         std::mem::replace(&mut self.clipboard_copied, false)
     }
-
 }
 
 #[cfg(test)]

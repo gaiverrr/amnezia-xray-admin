@@ -259,7 +259,6 @@ impl SetupState {
             _ => false,
         }
     }
-
 }
 
 #[cfg(test)]
