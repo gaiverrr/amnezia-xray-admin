@@ -58,6 +58,10 @@ pub struct Cli {
     /// List users and exit (non-interactive mode)
     #[arg(long = "list-users")]
     pub list_users: bool,
+
+    /// Check server: verify API setup, print version, user count, and exit
+    #[arg(long = "check-server")]
+    pub check_server: bool,
 }
 
 /// Application configuration
@@ -324,6 +328,7 @@ host = "10.0.0.1"
             ssh_host: Some("alias".to_string()),
             container: Some("ctr".to_string()),
             list_users: false,
+            check_server: false,
         };
         config.merge_cli(&cli);
 
@@ -353,6 +358,7 @@ host = "10.0.0.1"
             ssh_host: None,
             container: None,
             list_users: false,
+            check_server: false,
         };
         config.merge_cli(&cli);
 
@@ -375,6 +381,7 @@ host = "10.0.0.1"
             ssh_host: None,
             container: None,
             list_users: false,
+            check_server: false,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());

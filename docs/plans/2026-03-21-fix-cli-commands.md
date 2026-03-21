@@ -54,12 +54,12 @@ Three-phase plan:
 - [x] run tests — must pass before next task
 
 ### Task 2: Fix startup API validation (ensure_api_enabled)
-- [ ] verify `ensure_api_enabled()` runs on first dashboard load (check `spawn_fetch_dashboard` in backend.rs)
-- [ ] ensure it handles already-configured servers gracefully (idempotent)
-- [ ] ensure container restart happens only when config actually changes
-- [ ] add `--check-server` CLI command to verify API setup without launching TUI
-- [ ] test: `cargo run -- --check-server` should print "API enabled, N users, xray vX.X"
-- [ ] run tests — must pass before next task
+- [x] verify `ensure_api_enabled()` runs on first dashboard load (check `spawn_fetch_dashboard` in backend.rs)
+- [x] ensure it handles already-configured servers gracefully (idempotent)
+- [x] ensure container restart happens only when config actually changes
+- [x] add `--check-server` CLI command to verify API setup without launching TUI
+- [x] test: `cargo run -- --check-server` should print "API enabled, N users, xray vX.X"
+- [x] run tests — must pass before next task
 
 ### Task 3: Investigate and fix online status
 - [ ] test xray `statsonline` API manually: `ssh vps-vpn "docker exec amnezia-xray xray api statsonline -s 127.0.0.1:8080 -email 'Alexander@vpn'"`

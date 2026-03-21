@@ -40,6 +40,14 @@ fn main() {
         return;
     }
 
+    if cli.check_server {
+        if let Err(e) = runtime.block_on(cli_check_server(&config)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // Initialize terminal
     let mut terminal = match app::init_terminal() {
         Ok(t) => t,
@@ -62,6 +70,42 @@ fn main() {
         eprintln!("Application error: {}", e);
         std::process::exit(1);
     }
+}
+
+async fn cli_check_server(config: &Config) -> error::Result<()> {
+    let (hostname, port, user, key_path) = backend::resolve_connection_info(config)?;
+    let addr = if hostname.contains(':') {
+        format!("[{}]:{}", hostname, port)
+    } else {
+        format!("{}:{}", hostname, port)
+    };
+
+    eprintln!("Connecting to {}@{}...", user, addr);
+    let session =
+        ssh::SshSession::connect(&addr, &user, key_path.as_deref(), &config.container).await?;
+
+    // Ensure API is enabled (idempotent — no restart if already configured)
+    eprintln!("Checking API configuration...");
+    let modified = xray::config::ensure_api_enabled(&session, &config.container).await?;
+    if modified {
+        eprintln!("API was not configured — enabled and container restarted.");
+    } else {
+        eprintln!("API already configured.");
+    }
+
+    let client = xray::client::XrayApiClient::new(&session);
+
+    let users = client.list_users().await?;
+    let server_info = client.get_server_info().await?;
+
+    println!(
+        "API enabled, {} users, xray v{}",
+        users.len(),
+        server_info.version
+    );
+
+    let _ = session.close().await;
+    Ok(())
 }
 
 async fn cli_list_users(config: &Config) -> error::Result<()> {
