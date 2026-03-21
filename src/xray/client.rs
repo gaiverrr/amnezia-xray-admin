@@ -14,6 +14,26 @@ use uuid::Uuid;
 const API_ADDR: &str = "127.0.0.1:8080";
 const VLESS_INBOUND_TAG: &str = "vless-in";
 
+/// Validate that an email/tag string is safe for shell interpolation.
+/// Rejects anything containing characters outside `[a-zA-Z0-9@._-]`.
+fn is_shell_safe_identifier(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-'))
+}
+
+/// Shell-quote an identifier, returning an error if it contains unsafe characters.
+fn validated_email(email: &str) -> Result<&str> {
+    if is_shell_safe_identifier(email) {
+        Ok(email)
+    } else {
+        Err(AppError::Xray(format!(
+            "unsafe email/identifier for shell command: {:?}",
+            email
+        )))
+    }
+}
+
 /// Server information from Xray.
 #[derive(Debug, Clone, Default)]
 pub struct ServerInfo {
@@ -99,8 +119,8 @@ impl<'a> XrayApiClient<'a> {
 
     /// Get traffic stats for a user by email.
     pub async fn get_user_stats(&self, email: &str) -> Result<TrafficStats> {
-        let uplink_cmd = build_stats_cmd(email, "uplink");
-        let downlink_cmd = build_stats_cmd(email, "downlink");
+        let uplink_cmd = build_stats_cmd(email, "uplink")?;
+        let downlink_cmd = build_stats_cmd(email, "downlink")?;
 
         let up_result = self.session.exec_in_container(&uplink_cmd).await?;
         let down_result = self.session.exec_in_container(&downlink_cmd).await?;
@@ -113,14 +133,14 @@ impl<'a> XrayApiClient<'a> {
 
     /// Get online connection count for a user.
     pub async fn get_online_count(&self, email: &str) -> Result<u32> {
-        let cmd = build_online_cmd(email);
+        let cmd = build_online_cmd(email)?;
         let result = self.session.exec_in_container(&cmd).await?;
         Ok(parse_stat_value(&result.stdout).unwrap_or(0) as u32)
     }
 
     /// Get list of online IPs for a user.
     pub async fn get_online_ips(&self, email: &str) -> Result<Vec<String>> {
-        let cmd = build_online_ip_list_cmd(email);
+        let cmd = build_online_ip_list_cmd(email)?;
         let result = self.session.exec_in_container(&cmd).await?;
         Ok(parse_ip_list(&result.stdout))
     }
@@ -130,8 +150,8 @@ impl<'a> XrayApiClient<'a> {
         let version_result = self.session.exec_in_container("xray version").await?;
         let version = parse_version(&version_result.stdout);
 
-        let up_cmd = build_inbound_stats_cmd(VLESS_INBOUND_TAG, "uplink");
-        let down_cmd = build_inbound_stats_cmd(VLESS_INBOUND_TAG, "downlink");
+        let up_cmd = build_inbound_stats_cmd(VLESS_INBOUND_TAG, "uplink")?;
+        let down_cmd = build_inbound_stats_cmd(VLESS_INBOUND_TAG, "downlink")?;
 
         let up_result = self.session.exec_in_container(&up_cmd).await?;
         let down_result = self.session.exec_in_container(&down_cmd).await?;
@@ -163,7 +183,7 @@ impl<'a> XrayApiClient<'a> {
     }
 
     async fn exec_api_rmu(&self, email: &str) -> Result<()> {
-        let cmd = build_rmu_cmd(email);
+        let cmd = build_rmu_cmd(email)?;
         let result = self.session.exec_in_container(&cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
@@ -176,8 +196,8 @@ impl<'a> XrayApiClient<'a> {
 
     async fn write_server_config(&self, config: &ServerConfig) -> Result<()> {
         let json = config.to_json();
-        let escaped = json.replace('\'', "'\\''");
-        let cmd = format!("printf '%s' '{}' > {}", escaped, SERVER_CONFIG_PATH);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
+        let cmd = format!("sh -c 'echo {} | base64 -d > {}'", b64, SERVER_CONFIG_PATH);
         let result = self.session.exec_command(&cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
@@ -190,8 +210,8 @@ impl<'a> XrayApiClient<'a> {
 
     async fn write_clients_table(&self, table: &ClientsTable) -> Result<()> {
         let json = table.to_json();
-        let escaped = json.replace('\'', "'\\''");
-        let cmd = format!("printf '%s' '{}' > {}", escaped, CLIENTS_TABLE_PATH);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
+        let cmd = format!("sh -c 'echo {} | base64 -d > {}'", b64, CLIENTS_TABLE_PATH);
         let result = self.session.exec_command(&cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
@@ -222,37 +242,49 @@ pub fn build_adu_json(uuid: &str, email: &str, inbound_tag: &str) -> String {
 }
 
 /// Build the `xray api rmu` command string.
-pub fn build_rmu_cmd(email: &str) -> String {
-    format!("xray api rmu -s {} -email {}", API_ADDR, email)
+/// Returns Err if email contains shell-unsafe characters.
+pub fn build_rmu_cmd(email: &str) -> Result<String> {
+    let email = validated_email(email)?;
+    Ok(format!("xray api rmu -s {} -email {}", API_ADDR, email))
 }
 
 /// Build the `xray api stats` command for user traffic.
-pub fn build_stats_cmd(email: &str, direction: &str) -> String {
-    format!(
+/// Returns Err if email contains shell-unsafe characters.
+pub fn build_stats_cmd(email: &str, direction: &str) -> Result<String> {
+    let email = validated_email(email)?;
+    Ok(format!(
         "xray api stats -s {} -name 'user>>>{}>>>traffic>>>{}'",
         API_ADDR, email, direction
-    )
+    ))
 }
 
 /// Build the `xray api stats` command for inbound traffic.
-pub fn build_inbound_stats_cmd(inbound_tag: &str, direction: &str) -> String {
-    format!(
+pub fn build_inbound_stats_cmd(inbound_tag: &str, direction: &str) -> Result<String> {
+    let tag = validated_email(inbound_tag)?;
+    Ok(format!(
         "xray api stats -s {} -name 'inbound>>>{}>>>traffic>>>{}'",
-        API_ADDR, inbound_tag, direction
-    )
+        API_ADDR, tag, direction
+    ))
 }
 
 /// Build the `xray api statsonline` command.
-pub fn build_online_cmd(email: &str) -> String {
-    format!("xray api statsonline -s {} -email {}", API_ADDR, email)
+/// Returns Err if email contains shell-unsafe characters.
+pub fn build_online_cmd(email: &str) -> Result<String> {
+    let email = validated_email(email)?;
+    Ok(format!(
+        "xray api statsonline -s {} -email {}",
+        API_ADDR, email
+    ))
 }
 
 /// Build the `xray api statsonlineiplist` command.
-pub fn build_online_ip_list_cmd(email: &str) -> String {
-    format!(
+/// Returns Err if email contains shell-unsafe characters.
+pub fn build_online_ip_list_cmd(email: &str) -> Result<String> {
+    let email = validated_email(email)?;
+    Ok(format!(
         "xray api statsonlineiplist -s {} -email {}",
         API_ADDR, email
-    )
+    ))
 }
 
 // -- vless:// URL generation --
@@ -403,13 +435,13 @@ mod tests {
 
     #[test]
     fn test_build_rmu_cmd() {
-        let cmd = build_rmu_cmd("alice@vpn");
+        let cmd = build_rmu_cmd("alice@vpn").unwrap();
         assert_eq!(cmd, "xray api rmu -s 127.0.0.1:8080 -email alice@vpn");
     }
 
     #[test]
     fn test_build_stats_cmd_uplink() {
-        let cmd = build_stats_cmd("alice@vpn", "uplink");
+        let cmd = build_stats_cmd("alice@vpn", "uplink").unwrap();
         assert_eq!(
             cmd,
             "xray api stats -s 127.0.0.1:8080 -name 'user>>>alice@vpn>>>traffic>>>uplink'"
@@ -418,13 +450,13 @@ mod tests {
 
     #[test]
     fn test_build_stats_cmd_downlink() {
-        let cmd = build_stats_cmd("alice@vpn", "downlink");
+        let cmd = build_stats_cmd("alice@vpn", "downlink").unwrap();
         assert!(cmd.contains("user>>>alice@vpn>>>traffic>>>downlink"));
     }
 
     #[test]
     fn test_build_inbound_stats_cmd() {
-        let cmd = build_inbound_stats_cmd("vless-in", "uplink");
+        let cmd = build_inbound_stats_cmd("vless-in", "uplink").unwrap();
         assert_eq!(
             cmd,
             "xray api stats -s 127.0.0.1:8080 -name 'inbound>>>vless-in>>>traffic>>>uplink'"
@@ -433,17 +465,25 @@ mod tests {
 
     #[test]
     fn test_build_online_cmd() {
-        let cmd = build_online_cmd("bob@vpn");
+        let cmd = build_online_cmd("bob@vpn").unwrap();
         assert_eq!(cmd, "xray api statsonline -s 127.0.0.1:8080 -email bob@vpn");
     }
 
     #[test]
     fn test_build_online_ip_list_cmd() {
-        let cmd = build_online_ip_list_cmd("bob@vpn");
+        let cmd = build_online_ip_list_cmd("bob@vpn").unwrap();
         assert_eq!(
             cmd,
             "xray api statsonlineiplist -s 127.0.0.1:8080 -email bob@vpn"
         );
+    }
+
+    #[test]
+    fn test_build_cmd_rejects_unsafe_email() {
+        assert!(build_rmu_cmd("alice; rm -rf /").is_err());
+        assert!(build_stats_cmd("bob$(whoami)", "uplink").is_err());
+        assert!(build_online_cmd("evil`cmd`@vpn").is_err());
+        assert!(build_online_ip_list_cmd("a'b@vpn").is_err());
     }
 
     // -- Response parsing tests --
@@ -586,7 +626,7 @@ stat: {
     #[test]
     fn test_stats_cmd_uses_correct_separator() {
         // Xray uses >>> as separator in stat names
-        let cmd = build_stats_cmd("test@vpn", "uplink");
+        let cmd = build_stats_cmd("test@vpn", "uplink").unwrap();
         assert!(cmd.contains(">>>"));
         // Should have exactly 3 separators: user>>>email>>>traffic>>>direction
         let stat_name = cmd.split('\'').nth(1).unwrap();
@@ -595,7 +635,7 @@ stat: {
 
     #[test]
     fn test_inbound_stats_cmd_uses_correct_separator() {
-        let cmd = build_inbound_stats_cmd("vless-in", "downlink");
+        let cmd = build_inbound_stats_cmd("vless-in", "downlink").unwrap();
         let stat_name = cmd.split('\'').nth(1).unwrap();
         assert_eq!(stat_name.matches(">>>").count(), 3);
     }

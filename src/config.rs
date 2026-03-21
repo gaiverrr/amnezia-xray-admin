@@ -16,6 +16,7 @@ const DEFAULT_CONTAINER: &str = "amnezia-xray";
 fn is_valid_container_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 128
+        && name.starts_with(|c: char| c.is_ascii_alphanumeric())
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
@@ -125,7 +126,7 @@ impl Config {
         let config: Config = toml::from_str(&content)?;
         if !is_valid_container_name(&config.container) {
             return Err(AppError::Config(format!(
-                "invalid container name '{}': only alphanumeric, hyphen, underscore, and dot allowed",
+                "invalid container name '{}': must start with alphanumeric, then only alphanumeric, hyphen, underscore, and dot",
                 config.container
             )));
         }
