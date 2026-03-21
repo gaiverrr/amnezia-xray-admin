@@ -142,9 +142,9 @@ Implement the design spec from `docs/superpowers/specs/2026-03-21-pre-release-po
 - [x] run linter: `cargo clippy`
 
 ### Task 11: [Final] Update documentation
-- [ ] update CLAUDE.md with new CLI commands
-- [ ] update README.md CLI commands section
-- [ ] update CHANGELOG.md with new features
+- [x] update CLAUDE.md with new CLI commands
+- [x] update README.md CLI commands section
+- [x] update CHANGELOG.md with new features
 
 ## Technical Details
 

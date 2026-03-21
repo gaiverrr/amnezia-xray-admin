@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 cargo build                    # dev build
 cargo build --release          # release build
-cargo test                     # all 350 tests
+cargo test                     # all 405 tests
 cargo test xray::client        # run tests in one module
 cargo test test_build_rmu      # run a single test by name
 cargo clippy                   # lint (expect dead_code warnings in telegram module)
@@ -26,6 +26,12 @@ cargo run -- --user-qr <name>                      # render QR code in terminal
 cargo run -- --online-status                       # show online users and IPs
 cargo run -- --server-info                         # xray version, traffic, user count
 cargo run -- --local --list-users                  # use local docker exec (on VPS)
+cargo run -- --add-user <name>                     # add user, print URL
+cargo run -- --delete-user <name> --yes             # delete user (--yes skips confirmation)
+cargo run -- --rename-user <old> <new>              # rename user (resets traffic stats)
+cargo run -- --backup                               # create timestamped backup
+cargo run -- --restore                              # restore latest backup
+cargo run -- --restore <timestamp>                  # restore specific backup (YYYYMMDD-HHMMSS)
 cargo run -- --telegram-bot --local --container c  # run Telegram bot daemon
 cargo run -- --deploy-bot --telegram-token <TOKEN>  # deploy bot to VPS via SSH
 ```
@@ -67,7 +73,7 @@ cargo run -- --deploy-bot --telegram-token <TOKEN>  # deploy bot to VPS via SSH
 - **backend_trait.rs**: `XrayBackend` trait + `SshBackend` and `LocalBackend` implementations
 - **xray/types.rs**: Data types (`XrayUser`, `ServerConfig`, `ClientsTable`). `ServerConfig` wraps `serde_json::Value` to preserve unknown fields
 - **xray/config.rs**: `ensure_api_enabled()` — one-time server.json transformation (adds stats/policy/api sections, emails, level:0)
-- **xray/client.rs**: `XrayApiClient` — list/add/remove users, stats, online status. Commands run via `docker exec <container> xray api ...`
+- **xray/client.rs**: `XrayApiClient` — list/add/remove/rename users, stats, online status, backup/restore. Commands run via `docker exec <container> xray api ...`
 - **backend.rs**: Async task spawners, `BackendMsg` enum, connection helpers
 - **telegram.rs**: Telegram bot module using teloxide. Commands: /start, /help, /users, /status, /add, /delete, /url, /qr
 - **error.rs**: `AppError` enum (SSH, Xray, Config, IO variants) and `Result<T>` type alias
@@ -81,6 +87,8 @@ cargo run -- --deploy-bot --telegram-token <TOKEN>  # deploy bot to VPS via SSH
 - **Stats require `level: 0`**: Xray only tracks per-user traffic when clients have `"level": 0` matching the policy section.
 - **clientsTable format**: `userData` is an object `{"clientName": "...", "creationDate": "..."}`, not a plain string.
 - **Email format**: `name@vpn` — derived from clientsTable name, used as xray stats identifier.
+- **Auto-backup**: `backup_config()` runs before every mutation (add/remove/rename/ensure_api_enabled). Creates `.bak` copies of server.json and clientsTable inside the container.
+- **Timestamped backups**: `backup_config_timestamped()` creates backups with `YYYYMMDD-HHMMSS` suffix for `--backup` CLI command.
 
 ## Release Process
 

@@ -12,7 +12,8 @@ Connects to your VPS via SSH, talks to the Xray gRPC API for live user managemen
 - **Traffic stats** - Real-time upload/download stats per user
 - **Online status** - See which users are currently connected and from which IPs
 - **QR codes** - Generate `vless://` URLs and scannable QR codes for easy sharing
-- **CLI commands** - Non-interactive mode for scripting (`--list-users`, `--user-url`, `--user-qr`, `--online-status`, `--server-info`)
+- **CLI commands** - Non-interactive mode for scripting (`--list-users`, `--add-user`, `--delete-user`, `--rename-user`, `--user-url`, `--user-qr`, `--online-status`, `--server-info`)
+- **Backup & restore** - Auto-backup before every mutation; manual `--backup` and `--restore` commands
 - **Telegram bot** - Manage users via Telegram commands (`/users`, `/add`, `/delete`, `/url`, `/qr`, `/status`)
 - **SSH config support** - Use your existing `~/.ssh/config` aliases (e.g. `ssh vps-vpn`)
 - **First-run wizard** - Interactive setup on first launch, no manual config editing needed
@@ -82,6 +83,24 @@ amnezia-xray-admin --ssh-host vps-vpn --online-status
 
 # Show server info: xray version, total traffic, user count, API status
 amnezia-xray-admin --ssh-host vps-vpn --server-info
+
+# Add a new user (prints name, UUID, and vless:// URL)
+amnezia-xray-admin --ssh-host vps-vpn --add-user "Friend"
+
+# Delete a user (interactive confirmation, or use --yes to skip)
+amnezia-xray-admin --ssh-host vps-vpn --delete-user "Friend" --yes
+
+# Rename a user (note: resets traffic stats)
+amnezia-xray-admin --ssh-host vps-vpn --rename-user "OldName" "NewName"
+
+# Create a timestamped backup of server.json and clientsTable
+amnezia-xray-admin --ssh-host vps-vpn --backup
+
+# Restore from the latest backup
+amnezia-xray-admin --ssh-host vps-vpn --restore
+
+# Restore from a specific backup by timestamp
+amnezia-xray-admin --ssh-host vps-vpn --restore 20260321-143000
 ```
 
 Use `--local` to run directly on the VPS (uses `docker exec` instead of SSH):
