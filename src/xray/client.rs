@@ -307,7 +307,7 @@ impl<'a> XrayApiClient<'a> {
         };
 
         // Validate both files exist
-        let validate_cmd = build_validate_backup_cmd(&ts);
+        let validate_cmd = build_validate_backup_cmd(&ts)?;
         let result = self.backend.exec_in_container(&validate_cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
@@ -317,7 +317,7 @@ impl<'a> XrayApiClient<'a> {
         }
 
         // Copy backup files back to originals
-        let restore_cmd = build_restore_cmd(&ts);
+        let restore_cmd = build_restore_cmd(&ts)?;
         let result = self.backend.exec_in_container(&restore_cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
@@ -452,24 +452,26 @@ pub fn build_list_backups_cmd() -> String {
 
 /// Build the shell command to validate that a clientsTable backup exists for a timestamp.
 ///
-/// Panics if `timestamp` is not a valid YYYYMMDD-HHMMSS timestamp.
-pub fn build_validate_backup_cmd(timestamp: &str) -> String {
-    assert!(
-        is_valid_timestamp(timestamp),
-        "invalid timestamp format: {timestamp}"
-    );
-    format!("test -f {}.{}.bak", CLIENTS_TABLE_PATH, timestamp)
+/// Returns an error if `timestamp` is not a valid YYYYMMDD-HHMMSS timestamp.
+pub fn build_validate_backup_cmd(timestamp: &str) -> Result<String> {
+    if !is_valid_timestamp(timestamp) {
+        return Err(AppError::Xray(format!(
+            "invalid timestamp format: {timestamp}"
+        )));
+    }
+    Ok(format!("test -f {}.{}.bak", CLIENTS_TABLE_PATH, timestamp))
 }
 
 /// Build the shell command to restore both config files from a timestamped backup.
 ///
-/// Panics if `timestamp` is not a valid YYYYMMDD-HHMMSS timestamp.
-pub fn build_restore_cmd(timestamp: &str) -> String {
-    assert!(
-        is_valid_timestamp(timestamp),
-        "invalid timestamp format: {timestamp}"
-    );
-    format!(
+/// Returns an error if `timestamp` is not a valid YYYYMMDD-HHMMSS timestamp.
+pub fn build_restore_cmd(timestamp: &str) -> Result<String> {
+    if !is_valid_timestamp(timestamp) {
+        return Err(AppError::Xray(format!(
+            "invalid timestamp format: {timestamp}"
+        )));
+    }
+    Ok(format!(
         "sh -c 'cp {}.{}.bak {} && cp {}.{}.bak {}'",
         SERVER_CONFIG_PATH,
         timestamp,
@@ -477,7 +479,7 @@ pub fn build_restore_cmd(timestamp: &str) -> String {
         CLIENTS_TABLE_PATH,
         timestamp,
         CLIENTS_TABLE_PATH
-    )
+    ))
 }
 
 /// Parse timestamps from `ls -t` output of server.json backup files.
@@ -822,20 +824,30 @@ mod tests {
 
     #[test]
     fn test_build_validate_backup_cmd() {
-        let cmd = build_validate_backup_cmd("20260321-120000");
+        let cmd = build_validate_backup_cmd("20260321-120000").unwrap();
         assert!(cmd.contains("test -f"));
         assert!(cmd.contains("clientsTable.20260321-120000.bak"));
     }
 
     #[test]
+    fn test_build_validate_backup_cmd_invalid() {
+        assert!(build_validate_backup_cmd("not-a-timestamp").is_err());
+    }
+
+    #[test]
     fn test_build_restore_cmd() {
-        let cmd = build_restore_cmd("20260321-120000");
+        let cmd = build_restore_cmd("20260321-120000").unwrap();
         // Should restore both files
         assert!(cmd.contains("server.json.20260321-120000.bak"));
         assert!(cmd.contains("clientsTable.20260321-120000.bak"));
         // Should copy backups to originals
         assert!(cmd.contains("cp "));
         assert!(cmd.contains("&&"));
+    }
+
+    #[test]
+    fn test_build_restore_cmd_invalid() {
+        assert!(build_restore_cmd("not-a-timestamp").is_err());
     }
 
     #[test]
