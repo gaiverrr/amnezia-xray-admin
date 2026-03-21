@@ -127,16 +127,16 @@ src/
 - [x] run tests — must pass before next task
 
 ### Task 6: Xray API client (stats and user management)
-- [ ] implement gRPC communication via SSH-tunneled commands in `src/xray/client.rs`
-- [ ] `list_users()` — read server.json + clientsTable, return merged user list
-- [ ] `add_user(name)` — generate UUID, call `xray api adu`, update server.json + clientsTable
-- [ ] `remove_user(uuid)` — call `xray api rmu`, update server.json + clientsTable
-- [ ] `get_user_stats(email)` — call `xray api stats` for up/down traffic
-- [ ] `get_online_count(email)` — call `xray api statsonline`
-- [ ] `get_online_ips(email)` — call `xray api statsonlineiplist`
-- [ ] `get_server_info()` — xray version, uptime, total traffic
-- [ ] write tests for command construction and response parsing
-- [ ] run tests — must pass before next task
+- [x] implement gRPC communication via SSH-tunneled commands in `src/xray/client.rs`
+- [x] `list_users()` — read server.json + clientsTable, return merged user list
+- [x] `add_user(name)` — generate UUID, call `xray api adu`, update server.json + clientsTable
+- [x] `remove_user(uuid)` — call `xray api rmu`, update server.json + clientsTable
+- [x] `get_user_stats(email)` — call `xray api stats` for up/down traffic
+- [x] `get_online_count(email)` — call `xray api statsonline`
+- [x] `get_online_ips(email)` — call `xray api statsonlineiplist`
+- [x] `get_server_info()` — xray version, uptime, total traffic
+- [x] write tests for command construction and response parsing
+- [x] run tests — must pass before next task
 
 ### Task 7: vless:// URL and QR code generation
 - [ ] implement `generate_vless_url()` in `src/xray/client.rs`

@@ -8,8 +8,8 @@ use crate::error::{AppError, Result};
 use crate::ssh::SshSession;
 use serde_json::json;
 
-const SERVER_CONFIG_PATH: &str = "/opt/amnezia/xray/server.json";
-const CLIENTS_TABLE_PATH: &str = "/opt/amnezia/xray/clientsTable";
+pub(crate) const SERVER_CONFIG_PATH: &str = "/opt/amnezia/xray/server.json";
+pub(crate) const CLIENTS_TABLE_PATH: &str = "/opt/amnezia/xray/clientsTable";
 const API_LISTEN_PORT: u16 = 8080;
 
 /// Ensure the Xray API is enabled in the server config.
