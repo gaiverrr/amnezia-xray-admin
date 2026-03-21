@@ -115,7 +115,7 @@ async fn connect(config: &Config) -> Result<SshSession, AppError> {
 /// Read the Xray public key from the server (needed for vless:// URL generation).
 async fn read_public_key(session: &SshSession) -> Result<String, AppError> {
     let result = session
-        .exec_command(&format!("cat {}", PUBLIC_KEY_PATH))
+        .exec_in_container(&format!("cat {}", PUBLIC_KEY_PATH))
         .await?;
     if result.success() {
         Ok(result.stdout.trim().to_string())
@@ -438,5 +438,13 @@ mod tests {
     #[test]
     fn test_expand_key_path_none() {
         assert!(expand_key_path(None).is_none());
+    }
+
+    #[test]
+    fn test_public_key_path_is_inside_container() {
+        // The public key lives inside the Amnezia container (no bind mounts).
+        // read_public_key() must use exec_in_container(), not exec_command().
+        assert_eq!(PUBLIC_KEY_PATH, "/opt/amnezia/xray/xray_public.key");
+        assert!(PUBLIC_KEY_PATH.starts_with("/opt/amnezia/"));
     }
 }
