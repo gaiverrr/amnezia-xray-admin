@@ -55,12 +55,12 @@ brew install amnezia-xray-admin
 - [x] run tests — must pass before next task
 
 ### Task 2: Write README.md
-- [ ] rewrite README with sections: Overview, Features, Install, Quick Start, CLI Commands, Configuration, Screenshots, Contributing, License
-- [ ] installation section: Homebrew (primary), cargo install (secondary), from source
-- [ ] CLI commands section: document all `--list-users`, `--user-url`, `--user-qr`, `--online-status`, `--server-info`, `--check-server`
-- [ ] add TUI keybindings table
-- [ ] add screenshot placeholder (or real screenshot if available)
-- [ ] run tests — must pass before next task
+- [x] rewrite README with sections: Overview, Features, Install, Quick Start, CLI Commands, Configuration, Screenshots, Contributing, License
+- [x] installation section: Homebrew (primary), cargo install (secondary), from source
+- [x] CLI commands section: document all `--list-users`, `--user-url`, `--user-qr`, `--online-status`, `--server-info`, `--check-server`
+- [x] add TUI keybindings table
+- [x] add screenshot placeholder (or real screenshot if available)
+- [x] run tests — must pass before next task
 
 ### Task 3: Create CHANGELOG.md
 - [ ] create CHANGELOG.md following Keep a Changelog format

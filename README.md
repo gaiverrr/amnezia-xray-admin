@@ -20,34 +20,47 @@ Connects to your VPS via SSH, talks to the Xray gRPC API for live user managemen
 
 ## Installation
 
-### From source
+### Homebrew (macOS/Linux)
+
+```sh
+brew tap gaiverrr/tap
+brew install amnezia-xray-admin
+```
+
+### Cargo install
 
 Requires [Rust 1.70+](https://rustup.rs/).
 
 ```sh
-git clone https://github.com/AmneziaVPN/amnezia-xray-admin.git
+cargo install --git https://github.com/gaiverrr/amnezia-xray-admin
+```
+
+### From source
+
+```sh
+git clone https://github.com/gaiverrr/amnezia-xray-admin.git
 cd amnezia-xray-admin
 cargo build --release
 ```
 
 The binary will be at `target/release/amnezia-xray-admin`.
 
-## Usage
-
-### TUI (interactive)
+## Quick Start
 
 ```sh
-# First run - starts setup wizard
+# First run - starts interactive setup wizard
 amnezia-xray-admin
 
-# Connect using an SSH config alias
+# Or connect using an SSH config alias
 amnezia-xray-admin --ssh-host vps-vpn
 
-# Connect with explicit parameters
+# Or connect with explicit parameters
 amnezia-xray-admin --host 1.2.3.4 --user root --key ~/.ssh/id_ed25519
 ```
 
-### CLI commands (non-interactive)
+The setup wizard will guide you through connecting to your VPS and configuring the Xray API.
+
+## CLI Commands
 
 All CLI commands connect via SSH, run the operation, print the result, and exit.
 
@@ -77,7 +90,7 @@ Use `--local` to run directly on the VPS (uses `docker exec` instead of SSH):
 amnezia-xray-admin --local --container amnezia-xray --list-users
 ```
 
-### Keyboard shortcuts (TUI)
+## TUI Keybindings
 
 | Key | Action |
 |-----|--------|
@@ -119,33 +132,6 @@ Press `t` on the dashboard to open the Telegram Bot setup screen. Follow the ins
 amnezia-xray-admin --ssh-host vps-vpn --deploy-bot --telegram-token "123456:ABC..."
 ```
 
-### Manual Docker deployment
-
-```sh
-docker run -d \
-  --name axadmin-bot \
-  --restart unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -e TELEGRAM_TOKEN=your_bot_token \
-  axadmin:latest \
-  --telegram-bot --local --container amnezia-xray
-```
-
-Or with docker-compose:
-
-```yaml
-services:
-  axadmin-bot:
-    image: axadmin:latest
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-      - XRAY_CONTAINER=amnezia-xray
-    command: --telegram-bot --local --container amnezia-xray
-```
-
 Access control: the first user to send `/start` to the bot becomes the admin. All other users get "Access denied".
 
 ## Configuration
@@ -178,6 +164,15 @@ CLI arguments override config file values. Run `amnezia-xray-admin --help` for a
 - Xray configured with VLESS + XTLS-Reality
 
 The tool will automatically enable the Xray gRPC API on first connection if it's not already configured.
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/my-feature`)
+3. Run tests before submitting (`cargo test && cargo clippy && cargo fmt --check`)
+4. Open a pull request
 
 ## License
 
