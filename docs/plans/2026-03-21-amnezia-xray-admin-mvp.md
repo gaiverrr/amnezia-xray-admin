@@ -211,10 +211,10 @@ src/
 - [x] run `cargo fmt --check` — code is formatted
 
 ### Task 15: [Final] Documentation and open-source prep
-- [ ] write README.md with: description, screenshots placeholder, installation, usage, configuration, building from source
-- [ ] add LICENSE file (MIT or Apache-2.0)
-- [ ] add `--help` output that's genuinely helpful
-- [ ] ensure no secrets/hardcoded values in codebase
+- [x] write README.md with: description, screenshots placeholder, installation, usage, configuration, building from source
+- [x] add LICENSE file (MIT or Apache-2.0)
+- [x] add `--help` output that's genuinely helpful
+- [x] ensure no secrets/hardcoded values in codebase
 
 ## Technical Details
 

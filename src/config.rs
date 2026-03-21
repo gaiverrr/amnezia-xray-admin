@@ -15,6 +15,7 @@ const DEFAULT_CONTAINER: &str = "amnezia-xray";
 #[derive(Parser, Debug)]
 #[command(name = "amnezia-xray-admin")]
 #[command(about = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray server")]
+#[command(long_about = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray (VLESS + XTLS-Reality) server.\n\nConnects to your VPS via SSH, talks to the Xray gRPC API for live user management\nand traffic stats. No container restarts needed.\n\nOn first run, a setup wizard guides you through the SSH connection.\nConfig is saved to ~/.config/amnezia-xray-admin/config.toml.\n\nExamples:\n  amnezia-xray-admin                        # Use saved config or start setup wizard\n  amnezia-xray-admin --ssh-host vps-vpn     # Connect using SSH config alias\n  amnezia-xray-admin --host 1.2.3.4 --key ~/.ssh/id_ed25519")]
 #[command(version)]
 pub struct Cli {
     /// SSH host (IP or hostname) to connect to
