@@ -1,0 +1,276 @@
+# amnezia-xray-admin MVP
+
+## Overview
+A hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray (VLESS + XTLS-Reality) server.
+Connects to VPS via pure-Rust SSH, talks to Xray gRPC API for live user management and traffic stats.
+Open-source friendly: first-run setup wizard, config file, SSH config alias support.
+
+**Problem:** Amnezia client app manages users by SSH-ing in, editing JSON, and restarting the container.
+No dashboard, no stats, no live view. This tool fills that gap.
+
+**Key features (MVP):**
+- List users with online/offline status and traffic stats
+- Add/remove users (live via Xray gRPC API, no restart)
+- Generate `vless://` URL + terminal QR code for easy sharing
+- Fancy hacker/cyberpunk TUI aesthetic
+
+## Context
+- **Server:** VPS accessible via `ssh vps-vpn`, running `amnezia-xray` Docker container
+- **Protocol:** VLESS + XTLS-Reality on port 443, masquerading as `www.googletagmanager.com`
+- **Xray version:** 25.8.3 with gRPC API support (`HandlerService`, `StatsService`)
+- **Current users:** 8 clients (1 initial UUID + 7 named in `clientsTable`)
+- **Server config:** `/opt/amnezia/xray/server.json` inside container
+- **Client registry:** `/opt/amnezia/xray/clientsTable` (JSON array with clientId + userData)
+- **Keys on server:** `xray_uuid.key`, `xray_public.key`, `xray_private.key`, `xray_short_id.key`
+- **API not yet enabled** — needs `api`, `stats`, `policy` sections added to server.json
+- **Xray API capabilities:** `adu`/`rmu` (add/remove users live), `stats`/`statsquery`, `statsonline`, `statsonlineiplist`
+
+## Tech Stack
+- **Rust 1.94** (edition 2021)
+- **ratatui** — TUI framework
+- **crossterm** — terminal backend
+- **russh** — pure Rust SSH2 client (connection, exec, port-forwarding)
+- **tokio** — async runtime
+- **serde / serde_json** — JSON parsing (server.json, clientsTable)
+- **uuid** — UUID generation for new clients
+- **clap** — CLI argument parsing
+- **toml** — config file parsing
+- **dirs** — XDG config directory resolution
+- **qrcode + unicode-width** — terminal QR code rendering
+- **base64** — vless:// URL encoding
+
+## Development Approach
+- **Testing approach**: Regular (code first, then tests)
+- Complete each task fully before moving to the next
+- Make small, focused changes
+- **CRITICAL: every task MUST include new/updated tests** for code changes in that task
+- **CRITICAL: all tests must pass before starting next task**
+- **CRITICAL: update this plan file when scope changes during implementation**
+- Open-source friendly: good error messages, config file docs, --help output
+
+## Architecture
+
+```
+src/
+├── main.rs           # Entry point, CLI args, app bootstrap
+├── app.rs            # App state machine, event loop
+├── config.rs         # Config file (~/.config/amnezia-xray-admin/config.toml)
+├── ssh.rs            # SSH connection via russh (exec, port-forward)
+├── xray/
+│   ├── mod.rs        # Re-exports
+│   ├── client.rs     # Xray gRPC API client (stats, user mgmt)
+│   ├── config.rs     # server.json / clientsTable parsing & mutation
+│   └── types.rs      # Data types (User, Stats, ServerConfig)
+├── ui/
+│   ├── mod.rs        # Re-exports
+│   ├── theme.rs      # Hacker/cyberpunk color palette & styles
+│   ├── dashboard.rs  # Main dashboard view (user list + stats)
+│   ├── setup.rs      # First-run setup wizard
+│   ├── user_detail.rs # User detail panel (IPs, traffic, actions)
+│   ├── add_user.rs   # Add user dialog
+│   └── qr.rs         # QR code display widget
+└── error.rs          # Error types
+```
+
+## Progress Tracking
+- Mark completed items with `[x]` immediately when done
+- Add newly discovered tasks with + prefix
+- Document issues/blockers with ! prefix
+- Update plan if implementation deviates from original scope
+
+## Implementation Steps
+
+### Task 1: Project scaffolding and dependencies
+- [ ] fix Cargo.toml edition (2024 -> 2021) and add all dependencies
+- [ ] create module structure (empty files with mod declarations)
+- [ ] define error types in `src/error.rs` (AppError enum with SSH, Xray, Config, IO variants)
+- [ ] write tests for error type Display/From impls
+- [ ] `cargo build` must succeed
+
+### Task 2: Config system
+- [ ] define config struct in `src/config.rs` (host, port, user, key_path, ssh_config_host, container_name)
+- [ ] implement config loading from `~/.config/amnezia-xray-admin/config.toml`
+- [ ] implement config saving with `0600` permissions
+- [ ] implement CLI args with clap (--host, --port, --user, --key, --ssh-host, --container)
+- [ ] CLI args override config file values; --ssh-host uses SSH config alias (e.g. `vps-vpn`)
+- [ ] write tests for config loading, merging, defaults
+- [ ] run tests — must pass before next task
+
+### Task 3: SSH connection layer
+- [ ] implement SSH connection in `src/ssh.rs` using russh
+- [ ] support direct host:port connection with key auth
+- [ ] support ssh-agent authentication
+- [ ] parse `~/.ssh/config` to resolve Host aliases (hostname, port, user, identity file)
+- [ ] implement `exec_command()` — run command on remote, return stdout/stderr
+- [ ] implement `exec_in_container()` — wrapper for `docker exec <container> <cmd>`
+- [ ] write tests for SSH config parsing (unit tests with mock config content)
+- [ ] run tests — must pass before next task
+
+### Task 4: Xray data types and server config parsing
+- [ ] define types in `src/xray/types.rs`: `XrayUser`, `ClientEntry`, `ServerConfig`, `TrafficStats`
+- [ ] implement `ServerConfig` parsing from server.json in `src/xray/config.rs`
+- [ ] implement `ClientsTable` parsing from clientsTable JSON
+- [ ] implement merging: cross-reference server.json clients with clientsTable names
+- [ ] implement server.json mutation: add/remove client from clients array
+- [ ] implement clientsTable mutation: add/remove entry
+- [ ] write tests with fixture JSON (real format from server)
+- [ ] run tests — must pass before next task
+
+### Task 5: Enable Xray API on server (one-time setup)
+- [ ] implement `ensure_api_enabled()` in `src/xray/config.rs`
+- [ ] detect if server.json already has `api` section
+- [ ] if missing: add `api`, `stats`, `policy`, `routing` rule, and `dokodemo-door` inbound on 127.0.0.1:8080
+- [ ] add `email` field to each existing client (derive from clientsTable name or UUID)
+- [ ] add `tag: "vless-in"` to the main inbound
+- [ ] upload modified config and restart container via SSH
+- [ ] write tests for config transformation (input JSON -> expected output JSON)
+- [ ] run tests — must pass before next task
+
+### Task 6: Xray API client (stats and user management)
+- [ ] implement gRPC communication via SSH-tunneled commands in `src/xray/client.rs`
+- [ ] `list_users()` — read server.json + clientsTable, return merged user list
+- [ ] `add_user(name)` — generate UUID, call `xray api adu`, update server.json + clientsTable
+- [ ] `remove_user(uuid)` — call `xray api rmu`, update server.json + clientsTable
+- [ ] `get_user_stats(email)` — call `xray api stats` for up/down traffic
+- [ ] `get_online_count(email)` — call `xray api statsonline`
+- [ ] `get_online_ips(email)` — call `xray api statsonlineiplist`
+- [ ] `get_server_info()` — xray version, uptime, total traffic
+- [ ] write tests for command construction and response parsing
+- [ ] run tests — must pass before next task
+
+### Task 7: vless:// URL and QR code generation
+- [ ] implement `generate_vless_url()` in `src/xray/client.rs`
+- [ ] format: `vless://<uuid>@<host>:443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=<site>&fp=chrome&pbk=<pubkey>&sid=<shortid>#<name>`
+- [ ] implement QR code rendering as unicode block characters for terminal display
+- [ ] write tests for URL generation (known inputs -> expected URL)
+- [ ] run tests — must pass before next task
+
+### Task 8: TUI theme and base layout
+- [ ] define hacker/cyberpunk theme in `src/ui/theme.rs`
+- [ ] color palette: matrix green (#00ff41), cyan (#00d4ff), dark backgrounds, red for alerts
+- [ ] ASCII art header/logo for the app
+- [ ] implement base app frame with ratatui: header bar, main area, status bar, keybinding hints
+- [ ] implement app state machine in `src/app.rs` (screens: Setup, Dashboard, UserDetail, AddUser, QrView)
+- [ ] implement event loop: key input handling, periodic refresh
+- [ ] `cargo build` must succeed, app launches and shows empty dashboard frame
+
+### Task 9: First-run setup wizard TUI
+- [ ] implement setup screen in `src/ui/setup.rs`
+- [ ] input fields: host, port (default 22), user (default root), SSH key path, SSH config alias, container name (default amnezia-xray)
+- [ ] tab/shift-tab navigation between fields
+- [ ] [Test Connection] button — attempts SSH + reads xray version
+- [ ] [Save & Start] — saves config and transitions to dashboard
+- [ ] show connection test result (success with version or error message)
+- [ ] if config already exists, skip setup and go to dashboard
+- [ ] manual testing: run app, complete setup flow
+
+### Task 10: Dashboard view — user list with stats
+- [ ] implement dashboard in `src/ui/dashboard.rs`
+- [ ] server info header: hostname, xray version, total upload/download
+- [ ] user table: name, UUID (truncated), upload, download, online status (green dot/red dot), online count
+- [ ] keyboard navigation: j/k or arrow keys to select user, Enter for detail
+- [ ] `[a]` keybinding hint for add user, `[d]` for delete, `[r]` for refresh, `[q]` for quit
+- [ ] auto-refresh stats on configurable interval (default 5s)
+- [ ] loading spinner while fetching data
+- [ ] manual testing: connect to real server, see user list with live data
+
+### Task 11: Add user dialog
+- [ ] implement add user dialog in `src/ui/add_user.rs`
+- [ ] modal overlay on dashboard
+- [ ] input field for user name
+- [ ] on confirm: call `add_user()`, show success + vless:// URL, offer QR view
+- [ ] on cancel: dismiss modal
+- [ ] error handling: show error message if add fails
+- [ ] manual testing: add a test user, verify appears in list
+
+### Task 12: User detail panel and delete confirmation
+- [ ] implement user detail in `src/ui/user_detail.rs`
+- [ ] show: full UUID, name, creation date, upload/download, online IPs with timestamps
+- [ ] `[q]` to show QR code, `[d]` to delete with confirmation
+- [ ] delete confirmation: "Are you sure? Type user name to confirm" (prevents accidental deletion)
+- [ ] `[c]` to copy vless:// URL to clipboard (if terminal supports OSC 52)
+- [ ] manual testing: view user details, delete a test user
+
+### Task 13: QR code view
+- [ ] implement QR display in `src/ui/qr.rs`
+- [ ] render QR code centered in terminal using unicode half-blocks
+- [ ] show vless:// URL below QR code
+- [ ] show user name as title
+- [ ] `Esc` or `q` to go back
+- [ ] manual testing: generate QR, scan with phone Amnezia app
+
+### Task 14: Verify acceptance criteria
+- [ ] verify all MVP features work end-to-end on real server
+- [ ] verify first-run setup wizard works for new user
+- [ ] verify SSH config alias (e.g. `vps-vpn`) works
+- [ ] verify add/remove user works without container restart
+- [ ] verify traffic stats update in real-time
+- [ ] verify QR code scannable by Amnezia mobile app
+- [ ] run full test suite (unit tests)
+- [ ] run `cargo clippy` — all warnings must be fixed
+- [ ] run `cargo fmt --check` — code must be formatted
+
+### Task 15: [Final] Documentation and open-source prep
+- [ ] write README.md with: description, screenshots placeholder, installation, usage, configuration, building from source
+- [ ] add LICENSE file (MIT or Apache-2.0)
+- [ ] add `--help` output that's genuinely helpful
+- [ ] ensure no secrets/hardcoded values in codebase
+
+## Technical Details
+
+### Server Config Transformation (Task 5)
+Current server.json needs these additions to enable the API:
+```json
+{
+  "api": { "tag": "api", "services": ["HandlerService", "StatsService"] },
+  "stats": {},
+  "policy": {
+    "levels": { "0": { "statsUserUplink": true, "statsUserDownlink": true } },
+    "system": { "statsInboundUplink": true, "statsInboundDownlink": true }
+  },
+  "routing": { "rules": [{ "inboundTag": ["api"], "outboundTag": "api", "type": "field" }] },
+  "inbounds": [
+    { "tag": "api", "port": 8080, "listen": "127.0.0.1", "protocol": "dokodemo-door", "settings": { "address": "127.0.0.1" } },
+    { "tag": "vless-in", "port": 443, ... }  // existing inbound with tag + email fields on clients
+  ]
+}
+```
+
+Each client needs `"email": "<name>@vpn"` for stats tracking.
+
+### vless:// URL Format
+```
+vless://<uuid>@<server_ip>:<port>?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=<masking_site>&fp=chrome&pbk=<public_key>&sid=<short_id>#<url_encoded_name>
+```
+
+### Xray API Commands (executed via `docker exec amnezia-xray xray api ...`)
+- Add user: `xray api adu -s 127.0.0.1:8080 user.json` where user.json = `{"inboundTag":"vless-in","user":{"email":"name@vpn","level":0,"account":{"id":"<uuid>","flow":"xtls-rprx-vision"}}}`
+- Remove user: `xray api rmu -s 127.0.0.1:8080 -email name@vpn`
+- Stats: `xray api stats -s 127.0.0.1:8080 -name "user>>>name@vpn>>>traffic>>>downlink"`
+- Online: `xray api statsonline -s 127.0.0.1:8080 -email name@vpn`
+
+### TUI Color Palette (Hacker/Cyberpunk)
+- Background: `#0a0a0a` (near-black)
+- Primary text: `#00ff41` (matrix green)
+- Secondary text: `#00d4ff` (cyan)
+- Accent: `#ff00ff` (magenta)
+- Alert/danger: `#ff0040` (neon red)
+- Muted: `#444444` (dark gray)
+- Success: `#00ff41` (green)
+- Borders: `#1a3a1a` (dark green)
+
+## Post-Completion
+
+**Manual verification:**
+- Test on Linux terminal (not just macOS)
+- Test with different terminal emulators (iTerm2, Alacritty, kitty)
+- Verify QR scanning works with Amnezia iOS and Android apps
+- Test with slow SSH connections
+
+**Future features (v2):**
+- Speed limiting per user (tc/iptables via SSH)
+- Connection logs viewer
+- Bandwidth graphs over time (sparklines in TUI)
+- Multiple server support
+- Config backup/restore
+- Amnezia WireGuard protocol support
