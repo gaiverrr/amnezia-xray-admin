@@ -346,10 +346,8 @@ impl<'a> XrayApiClient<'a> {
         );
         let result = self.backend.exec_in_container(&cmd).await?;
         if !result.success() {
-            return Err(AppError::Xray(format!(
-                "adu failed: {}",
-                result.stderr.trim()
-            )));
+            let msg = format!("adu failed: {}", result.stderr.trim());
+            return Err(AppError::Xray(crate::error::add_hint(&msg)));
         }
         Ok(())
     }
@@ -358,10 +356,8 @@ impl<'a> XrayApiClient<'a> {
         let cmd = build_rmu_cmd(email)?;
         let result = self.backend.exec_in_container(&cmd).await?;
         if !result.success() {
-            return Err(AppError::Xray(format!(
-                "rmu failed: {}",
-                result.stderr.trim()
-            )));
+            let msg = format!("rmu failed: {}", result.stderr.trim());
+            return Err(AppError::Xray(crate::error::add_hint(&msg)));
         }
         Ok(())
     }

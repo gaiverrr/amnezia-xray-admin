@@ -317,7 +317,10 @@ impl SshSession {
 
         let mut handle = client::connect(config, addr, handler)
             .await
-            .map_err(|e| AppError::Ssh(format!("connection failed: {}", e)))?;
+            .map_err(|e| {
+                let msg = format!("connection failed: {}", e);
+                AppError::Ssh(crate::error::add_hint(&msg))
+            })?;
 
         let authenticated = if let Some(key_path) = key_path {
             let key = load_secret_key(key_path, None)
@@ -325,13 +328,16 @@ impl SshSession {
             handle
                 .authenticate_publickey(user, Arc::new(key))
                 .await
-                .map_err(|e| AppError::Ssh(format!("key auth failed: {}", e)))?
+                .map_err(|e| {
+                    let msg = format!("key auth failed: {}", e);
+                    AppError::Ssh(crate::error::add_hint(&msg))
+                })?
         } else {
             Self::try_agent_auth(&mut handle, user).await?
         };
 
         if !authenticated {
-            return Err(AppError::Ssh("authentication failed".to_string()));
+            return Err(AppError::Ssh(crate::error::add_hint("authentication failed")));
         }
 
         Ok(Self {
@@ -344,12 +350,18 @@ impl SshSession {
     async fn try_agent_auth(handle: &mut client::Handle<SshHandler>, user: &str) -> Result<bool> {
         let mut agent = russh_keys::agent::client::AgentClient::connect_env()
             .await
-            .map_err(|e| AppError::Ssh(format!("ssh-agent connect failed: {}", e)))?;
+            .map_err(|e| {
+                let msg = format!("ssh-agent connect failed: {}", e);
+                AppError::Ssh(crate::error::add_hint(&msg))
+            })?;
 
         let identities = agent
             .request_identities()
             .await
-            .map_err(|e| AppError::Ssh(format!("ssh-agent list keys failed: {}", e)))?;
+            .map_err(|e| {
+                let msg = format!("ssh-agent list keys failed: {}", e);
+                AppError::Ssh(crate::error::add_hint(&msg))
+            })?;
 
         for key in identities {
             match handle
@@ -421,7 +433,20 @@ impl SshSession {
             )));
         }
         let full_cmd = format!("docker exec {} {}", self.container, command);
-        self.exec_command(&full_cmd).await
+        let output = self.exec_command(&full_cmd).await?;
+        // Enrich docker-level errors with hints (container not found, not running)
+        if !output.success() {
+            let stderr_lower = output.stderr.to_lowercase();
+            if stderr_lower.contains("no such container")
+                || stderr_lower.contains("is not running")
+            {
+                return Err(AppError::Xray(crate::error::add_hint(&format!(
+                    "docker exec failed: {}",
+                    output.stderr.trim()
+                ))));
+            }
+        }
+        Ok(output)
     }
 
     /// The Docker container name this session targets.

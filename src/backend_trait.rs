@@ -122,7 +122,20 @@ impl XrayBackend for LocalBackend {
             )));
         }
         let args = self.docker_exec_args(cmd);
-        Self::run_local("docker", &args).await
+        let output = Self::run_local("docker", &args).await?;
+        // Enrich docker-level errors with hints (container not found, not running)
+        if !output.success() {
+            let stderr_lower = output.stderr.to_lowercase();
+            if stderr_lower.contains("no such container")
+                || stderr_lower.contains("is not running")
+            {
+                return Err(AppError::Xray(crate::error::add_hint(&format!(
+                    "docker exec failed: {}",
+                    output.stderr.trim()
+                ))));
+            }
+        }
+        Ok(output)
     }
 
     async fn exec_on_host(&self, cmd: &str) -> Result<CommandOutput> {

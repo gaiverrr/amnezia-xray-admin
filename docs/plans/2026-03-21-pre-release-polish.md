@@ -112,14 +112,14 @@ Implement the design spec from `docs/superpowers/specs/2026-03-21-pre-release-po
 - [x] run tests — must pass before next task
 
 ### Task 8: Improve error messages
-- [ ] wrap SSH connection errors in `src/ssh.rs` or `src/backend.rs` with actionable hints:
+- [x] wrap SSH connection errors in `src/ssh.rs` or `src/backend.rs` with actionable hints:
   - connection refused → "Cannot connect to VPS. Check: 1) SSH config alias is correct 2) VPS is reachable 3) SSH key is loaded"
   - auth failed → "SSH authentication failed. Check your SSH key or ssh-agent."
-- [ ] wrap container errors: "Container 'X' not found. Run 'docker ps' on your VPS."
-- [ ] wrap xray API errors: "Xray API not responding. Run '--check-server' to diagnose."
-- [ ] wrap public key missing: "Public key file missing in container. Is Amnezia Xray properly installed?"
-- [ ] write tests for error message wrapping
-- [ ] run tests — must pass before next task
+- [x] wrap container errors: "Container 'X' not found. Run 'docker ps' on your VPS."
+- [x] wrap xray API errors: "Xray API not responding. Run '--check-server' to diagnose."
+- [x] wrap public key missing: "Public key file missing in container. Is Amnezia Xray properly installed?"
+- [x] write tests for error message wrapping
+- [x] run tests — must pass before next task
 
 ### Task 9: TUI layout polish
 - [ ] review dashboard screen: column widths for names with brackets/spaces

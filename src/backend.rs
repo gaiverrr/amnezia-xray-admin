@@ -123,10 +123,8 @@ async fn read_public_key(backend: &dyn XrayBackend) -> Result<String, AppError> 
     if result.success() {
         Ok(result.stdout.trim().to_string())
     } else {
-        Err(AppError::Xray(format!(
-            "failed to read public key: {}",
-            result.stderr.trim()
-        )))
+        let msg = format!("failed to read public key: {}", result.stderr.trim());
+        Err(AppError::Xray(crate::error::add_hint(&msg)))
     }
 }
 
