@@ -9,6 +9,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
 
 use crate::config::Config;
+use crate::ui::dashboard::{self, DashboardState};
 use crate::ui::setup::{self, SetupState};
 use crate::ui::theme;
 
@@ -32,6 +33,7 @@ pub struct App {
     pub last_refresh: Instant,
     pub status_message: String,
     pub setup_state: SetupState,
+    pub dashboard_state: DashboardState,
     pub config: Config,
 }
 
@@ -47,12 +49,21 @@ impl App {
             last_refresh: Instant::now(),
             status_message: String::new(),
             setup_state: SetupState::default(),
+            dashboard_state: DashboardState::default(),
             config: Config::default(),
         }
     }
 
     pub fn with_config(config: Config) -> Self {
         let has_config = config.has_connection_info();
+        let mut dashboard_state = DashboardState::default();
+        if has_config {
+            if let Some(ref host) = config.host {
+                dashboard_state.server_host = host.clone();
+            } else if let Some(ref ssh_host) = config.ssh_host {
+                dashboard_state.server_host = ssh_host.clone();
+            }
+        }
         Self {
             screen: if has_config {
                 Screen::Dashboard
@@ -63,6 +74,7 @@ impl App {
             last_refresh: Instant::now(),
             status_message: String::new(),
             setup_state: SetupState::from_config(&config),
+            dashboard_state,
             config,
         }
     }
@@ -96,6 +108,26 @@ impl App {
             KeyCode::Char('r') => {
                 self.last_refresh = Instant::now();
                 self.status_message = "Refreshing...".to_string();
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.dashboard_state.select_next();
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.dashboard_state.select_previous();
+            }
+            KeyCode::Enter => {
+                if self.dashboard_state.selected_user().is_some() {
+                    self.screen = Screen::UserDetail;
+                }
+            }
+            KeyCode::Char('a') => {
+                self.screen = Screen::AddUser;
+            }
+            KeyCode::Char('d') => {
+                if self.dashboard_state.selected_user().is_some() {
+                    self.screen = Screen::UserDetail;
+                    // Delete confirmation happens in user detail view
+                }
             }
             _ => {}
         }
@@ -181,7 +213,17 @@ impl App {
     }
 
     /// Draw the UI
-    pub fn draw(&self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
+    pub fn draw(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
+        // Tick spinner when loading
+        if self.dashboard_state.loading {
+            self.dashboard_state.tick_spinner();
+        }
+
+        let screen = self.screen;
+        let screen_label = self.screen_label();
+        let keybinds = self.keybind_hints();
+        let status_message = self.status_message.clone();
+
         terminal.draw(|frame| {
             let size = frame.area();
 
@@ -195,14 +237,20 @@ impl App {
                 ])
                 .split(size);
 
-            self.draw_header(frame, chunks[0]);
-            self.draw_body(frame, chunks[1]);
-            self.draw_status_bar(frame, chunks[2]);
+            Self::draw_header_static(frame, chunks[0], screen_label);
+
+            match screen {
+                Screen::Dashboard => dashboard::draw(&mut self.dashboard_state, frame, chunks[1]),
+                Screen::Setup => setup::draw(&self.setup_state, frame, chunks[1]),
+                _ => Self::draw_placeholder_widget(frame, chunks[1], screen_label),
+            }
+
+            Self::draw_status_bar_static(frame, chunks[2], &status_message, &keybinds);
         })?;
         Ok(())
     }
 
-    fn draw_header(&self, frame: &mut ratatui::Frame, area: Rect) {
+    fn draw_header_static(frame: &mut ratatui::Frame, area: Rect, screen_label: &str) {
         let header_block = Block::default()
             .borders(Borders::BOTTOM)
             .border_style(theme::border_style())
@@ -212,7 +260,7 @@ impl App {
             " {} {} | {}",
             theme::APP_NAME,
             theme::APP_VERSION,
-            self.screen_label()
+            screen_label
         );
         let header = Paragraph::new(Line::from(vec![Span::styled(
             title_text,
@@ -223,45 +271,7 @@ impl App {
         frame.render_widget(header, area);
     }
 
-    fn draw_body(&self, frame: &mut ratatui::Frame, area: Rect) {
-        match self.screen {
-            Screen::Dashboard => self.draw_dashboard_placeholder(frame, area),
-            Screen::Setup => setup::draw(&self.setup_state, frame, area),
-            Screen::UserDetail => self.draw_placeholder(frame, area, "User Detail"),
-            Screen::AddUser => self.draw_placeholder(frame, area, "Add User"),
-            Screen::QrView => self.draw_placeholder(frame, area, "QR Code"),
-        }
-    }
-
-    fn draw_dashboard_placeholder(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme::border_style())
-            .title(Span::styled(" Dashboard ", theme::secondary_style()))
-            .style(theme::text_style());
-
-        let logo_lines: Vec<Line> = theme::LOGO
-            .lines()
-            .map(|l| Line::from(Span::styled(l, theme::title_style())))
-            .collect();
-
-        let mut lines = logo_lines;
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  Connecting to server...",
-            theme::muted_style(),
-        )));
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  No user data loaded yet.",
-            theme::muted_style(),
-        )));
-
-        let content = Paragraph::new(lines).block(block);
-        frame.render_widget(content, area);
-    }
-
-    fn draw_placeholder(&self, frame: &mut ratatui::Frame, area: Rect, label: &str) {
+    fn draw_placeholder_widget(frame: &mut ratatui::Frame, area: Rect, label: &str) {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(theme::border_style())
@@ -279,12 +289,16 @@ impl App {
         frame.render_widget(content, area);
     }
 
-    fn draw_status_bar(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let keybinds = self.keybind_hints();
-        let status = if self.status_message.is_empty() {
-            keybinds
+    fn draw_status_bar_static(
+        frame: &mut ratatui::Frame,
+        area: Rect,
+        status_message: &str,
+        keybinds: &str,
+    ) {
+        let status = if status_message.is_empty() {
+            keybinds.to_string()
         } else {
-            format!("{} | {}", self.status_message, keybinds)
+            format!("{} | {}", status_message, keybinds)
         };
 
         let bar = Paragraph::new(Line::from(Span::styled(status, theme::status_style())));
@@ -637,5 +651,139 @@ mod tests {
             app.setup_state.test_result,
             setup::TestResult::Success(_)
         ));
+    }
+
+    // --- Dashboard navigation tests ---
+
+    use crate::xray::types::{TrafficStats, XrayUser};
+
+    fn make_test_user(name: &str) -> XrayUser {
+        XrayUser {
+            uuid: format!("{}-uuid-1234-5678-abcdefabcdef", name),
+            name: name.to_string(),
+            email: format!("{}@vpn", name),
+            flow: "xtls-rprx-vision".to_string(),
+            stats: TrafficStats::default(),
+            online_count: 0,
+        }
+    }
+
+    fn app_with_users(users: Vec<XrayUser>) -> App {
+        let mut app = App::new(true);
+        app.screen = Screen::Dashboard;
+        app.dashboard_state.set_users(users);
+        app
+    }
+
+    #[test]
+    fn test_dashboard_j_selects_next() {
+        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
+        assert_eq!(app.dashboard_state.selected(), Some(0));
+        app.handle_key(make_key(KeyCode::Char('j')));
+        assert_eq!(app.dashboard_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn test_dashboard_k_selects_previous() {
+        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
+        app.dashboard_state.table_state.select(Some(1));
+        app.handle_key(make_key(KeyCode::Char('k')));
+        assert_eq!(app.dashboard_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_dashboard_down_selects_next() {
+        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
+        assert_eq!(app.dashboard_state.selected(), Some(0));
+        app.handle_key(make_key(KeyCode::Down));
+        assert_eq!(app.dashboard_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn test_dashboard_up_selects_previous() {
+        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
+        app.dashboard_state.table_state.select(Some(1));
+        app.handle_key(make_key(KeyCode::Up));
+        assert_eq!(app.dashboard_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_dashboard_enter_goes_to_user_detail() {
+        let mut app = app_with_users(vec![make_test_user("alice")]);
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::UserDetail);
+    }
+
+    #[test]
+    fn test_dashboard_enter_no_users_stays() {
+        let mut app = App::new(true);
+        app.screen = Screen::Dashboard;
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::Dashboard);
+    }
+
+    #[test]
+    fn test_dashboard_a_goes_to_add_user() {
+        let mut app = App::new(true);
+        app.screen = Screen::Dashboard;
+        app.handle_key(make_key(KeyCode::Char('a')));
+        assert_eq!(app.screen, Screen::AddUser);
+    }
+
+    #[test]
+    fn test_dashboard_d_with_user_goes_to_detail() {
+        let mut app = app_with_users(vec![make_test_user("alice")]);
+        app.handle_key(make_key(KeyCode::Char('d')));
+        assert_eq!(app.screen, Screen::UserDetail);
+    }
+
+    #[test]
+    fn test_dashboard_d_without_users_stays() {
+        let mut app = App::new(true);
+        app.screen = Screen::Dashboard;
+        app.handle_key(make_key(KeyCode::Char('d')));
+        assert_eq!(app.screen, Screen::Dashboard);
+    }
+
+    #[test]
+    fn test_with_config_sets_dashboard_host() {
+        let config = Config {
+            host: Some("1.2.3.4".to_string()),
+            ..Config::default()
+        };
+        let app = App::with_config(config);
+        assert_eq!(app.dashboard_state.server_host, "1.2.3.4");
+    }
+
+    #[test]
+    fn test_with_config_sets_dashboard_ssh_host() {
+        let config = Config {
+            ssh_host: Some("vps-vpn".to_string()),
+            ..Config::default()
+        };
+        let app = App::with_config(config);
+        assert_eq!(app.dashboard_state.server_host, "vps-vpn");
+    }
+
+    #[test]
+    fn test_dashboard_navigation_wraps_with_j() {
+        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
+        app.dashboard_state.table_state.select(Some(1));
+        app.handle_key(make_key(KeyCode::Char('j')));
+        assert_eq!(app.dashboard_state.selected(), Some(0)); // wraps
+    }
+
+    #[test]
+    fn test_dashboard_navigation_wraps_with_k() {
+        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
+        assert_eq!(app.dashboard_state.selected(), Some(0));
+        app.handle_key(make_key(KeyCode::Char('k')));
+        assert_eq!(app.dashboard_state.selected(), Some(1)); // wraps to end
+    }
+
+    #[test]
+    fn test_dashboard_state_loading_default() {
+        let app = App::new(true);
+        assert!(app.dashboard_state.loading);
     }
 }

@@ -165,14 +165,14 @@ src/
 - [x] manual testing: run app, complete setup flow [x] (skipped - not automatable)
 
 ### Task 10: Dashboard view — user list with stats
-- [ ] implement dashboard in `src/ui/dashboard.rs`
-- [ ] server info header: hostname, xray version, total upload/download
-- [ ] user table: name, UUID (truncated), upload, download, online status (green dot/red dot), online count
-- [ ] keyboard navigation: j/k or arrow keys to select user, Enter for detail
-- [ ] `[a]` keybinding hint for add user, `[d]` for delete, `[r]` for refresh, `[q]` for quit
-- [ ] auto-refresh stats on configurable interval (default 5s)
-- [ ] loading spinner while fetching data
-- [ ] manual testing: connect to real server, see user list with live data
+- [x] implement dashboard in `src/ui/dashboard.rs`
+- [x] server info header: hostname, xray version, total upload/download
+- [x] user table: name, UUID (truncated), upload, download, online status (green dot/red dot), online count
+- [x] keyboard navigation: j/k or arrow keys to select user, Enter for detail
+- [x] `[a]` keybinding hint for add user, `[d]` for delete, `[r]` for refresh, `[q]` for quit
+- [x] auto-refresh stats on configurable interval (default 5s)
+- [x] loading spinner while fetching data
+- [x] manual testing: connect to real server, see user list with live data (skipped - not automatable)
 
 ### Task 11: Add user dialog
 - [ ] implement add user dialog in `src/ui/add_user.rs`
