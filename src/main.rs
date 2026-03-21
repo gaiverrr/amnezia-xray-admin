@@ -9,6 +9,7 @@ mod xray;
 
 use clap::Parser;
 use config::{Cli, Config};
+use backend_trait::{LocalBackend, XrayBackend};
 
 fn main() {
     let cli = Cli::parse();
@@ -32,9 +33,11 @@ fn main() {
         }
     };
 
+    let local = cli.local;
+
     // Non-interactive CLI commands
     if cli.list_users {
-        if let Err(e) = runtime.block_on(cli_list_users(&config)) {
+        if let Err(e) = runtime.block_on(cli_list_users(&config, local)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
@@ -42,7 +45,7 @@ fn main() {
     }
 
     if cli.check_server {
-        if let Err(e) = runtime.block_on(cli_check_server(&config)) {
+        if let Err(e) = runtime.block_on(cli_check_server(&config, local)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
@@ -50,7 +53,7 @@ fn main() {
     }
 
     if let Some(ref name) = cli.user_url {
-        if let Err(e) = runtime.block_on(cli_user_url(&config, name)) {
+        if let Err(e) = runtime.block_on(cli_user_url(&config, name, local)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
@@ -58,7 +61,7 @@ fn main() {
     }
 
     if let Some(ref name) = cli.user_qr {
-        if let Err(e) = runtime.block_on(cli_user_qr(&config, name)) {
+        if let Err(e) = runtime.block_on(cli_user_qr(&config, name, local)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
@@ -66,7 +69,7 @@ fn main() {
     }
 
     if cli.online_status {
-        if let Err(e) = runtime.block_on(cli_online_status(&config)) {
+        if let Err(e) = runtime.block_on(cli_online_status(&config, local)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
@@ -74,7 +77,7 @@ fn main() {
     }
 
     if cli.server_info {
-        if let Err(e) = runtime.block_on(cli_server_info(&config)) {
+        if let Err(e) = runtime.block_on(cli_server_info(&config, local)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
@@ -105,31 +108,70 @@ fn main() {
     }
 }
 
-async fn cli_check_server(config: &Config) -> error::Result<()> {
-    let (_, port, user, _) = backend::resolve_connection_info(config)?;
-    eprintln!(
-        "Connecting to {}@{}:{}...",
-        user,
-        config
-            .ssh_host
-            .as_deref()
-            .or(config.host.as_deref())
-            .unwrap_or("?"),
-        port
-    );
+/// Create a backend for CLI commands: either LocalBackend (--local) or SshBackend (default).
+async fn connect_cli_backend(config: &Config, local: bool) -> error::Result<Box<dyn XrayBackend>> {
+    if local {
+        let hostname = get_local_hostname().await;
+        Ok(Box::new(LocalBackend::new(
+            config.container.clone(),
+            hostname,
+        )))
+    } else {
+        let backend = backend::connect_backend(config).await?;
+        Ok(Box::new(backend))
+    }
+}
 
-    let backend = backend::connect_backend(config).await?;
+/// Get the local machine's hostname for vless URL generation.
+async fn get_local_hostname() -> String {
+    // Try to get the primary IP address
+    if let Ok(output) = tokio::process::Command::new("hostname")
+        .arg("-I")
+        .output()
+        .await
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(ip) = stdout.split_whitespace().next() {
+            return ip.to_string();
+        }
+    }
+    // Fallback to hostname
+    if let Ok(output) = tokio::process::Command::new("hostname").output().await {
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !name.is_empty() {
+            return name;
+        }
+    }
+    "localhost".to_string()
+}
+
+async fn cli_check_server(config: &Config, local: bool) -> error::Result<()> {
+    if !local {
+        let (_, port, user, _) = backend::resolve_connection_info(config)?;
+        eprintln!(
+            "Connecting to {}@{}:{}...",
+            user,
+            config
+                .ssh_host
+                .as_deref()
+                .or(config.host.as_deref())
+                .unwrap_or("?"),
+            port
+        );
+    }
+
+    let backend = connect_cli_backend(config, local).await?;
 
     // Ensure API is enabled (idempotent — no restart if already configured)
     eprintln!("Checking API configuration...");
-    let modified = xray::config::ensure_api_enabled(&backend).await?;
+    let modified = xray::config::ensure_api_enabled(backend.as_ref()).await?;
     if modified {
         eprintln!("API was not configured — enabled and container restarted.");
     } else {
         eprintln!("API already configured.");
     }
 
-    let client = xray::client::XrayApiClient::new(&backend);
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
 
     let users = client.list_users().await?;
     let server_info = client.get_server_info().await?;
@@ -140,47 +182,42 @@ async fn cli_check_server(config: &Config) -> error::Result<()> {
         server_info.version
     );
 
-    let _ = backend.close().await;
     Ok(())
 }
 
-async fn cli_user_url(config: &Config, name: &str) -> error::Result<()> {
-    let backend = backend::connect_backend(config).await?;
-    let client = xray::client::XrayApiClient::new(&backend);
+async fn cli_user_url(config: &Config, name: &str, local: bool) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
     let users = client.list_users().await?;
 
     let user = users.iter().find(|u| u.name == name);
     let user = match user {
         Some(u) => u,
         None => {
-            let _ = backend.close().await;
             return Err(error::AppError::Xray(format!("user '{}' not found", name)));
         }
     };
 
-    let vless_url = backend::build_vless_url(&backend, &user.uuid, &user.name).await?;
-    let _ = backend.close().await;
+    let vless_url = backend::build_vless_url(backend.as_ref(), &user.uuid, &user.name).await?;
 
     println!("{}", vless_url);
     Ok(())
 }
 
-async fn cli_user_qr(config: &Config, name: &str) -> error::Result<()> {
-    let backend = backend::connect_backend(config).await?;
-    let client = xray::client::XrayApiClient::new(&backend);
+async fn cli_user_qr(config: &Config, name: &str, local: bool) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
     let users = client.list_users().await?;
 
     let user = users.iter().find(|u| u.name == name);
     let user = match user {
         Some(u) => u,
         None => {
-            let _ = backend.close().await;
             return Err(error::AppError::Xray(format!("user '{}' not found", name)));
         }
     };
 
-    let vless_url = backend::build_vless_url(&backend, &user.uuid, &user.name).await?;
-    let _ = backend.close().await;
+    let vless_url = backend::build_vless_url(backend.as_ref(), &user.uuid, &user.name).await?;
 
     match ui::qr::render_qr_to_lines(&vless_url) {
         Ok(lines) => {
@@ -202,14 +239,13 @@ async fn cli_user_qr(config: &Config, name: &str) -> error::Result<()> {
     Ok(())
 }
 
-async fn cli_online_status(config: &Config) -> error::Result<()> {
-    let backend = backend::connect_backend(config).await?;
-    let client = xray::client::XrayApiClient::new(&backend);
+async fn cli_online_status(config: &Config, local: bool) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
     let users = client.list_users().await?;
 
     if users.is_empty() {
         println!("No users found.");
-        let _ = backend.close().await;
         return Ok(());
     }
 
@@ -229,8 +265,6 @@ async fn cli_online_status(config: &Config) -> error::Result<()> {
         };
         rows.push((name, count, ips));
     }
-
-    let _ = backend.close().await;
 
     // Print table
     println!("{:<30} {:<8} IPs", "NAME", "ONLINE");
@@ -253,9 +287,9 @@ async fn cli_online_status(config: &Config) -> error::Result<()> {
     Ok(())
 }
 
-async fn cli_server_info(config: &Config) -> error::Result<()> {
-    let backend = backend::connect_backend(config).await?;
-    let client = xray::client::XrayApiClient::new(&backend);
+async fn cli_server_info(config: &Config, local: bool) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
 
     let server_info = client.get_server_info().await?;
     let users = client.list_users().await?;
@@ -264,8 +298,6 @@ async fn cli_server_info(config: &Config) -> error::Result<()> {
     } else {
         "unknown"
     };
-
-    let _ = backend.close().await;
 
     println!("Xray version:  v{}", server_info.version);
     println!("API status:    {}", api_status);
@@ -282,21 +314,23 @@ async fn cli_server_info(config: &Config) -> error::Result<()> {
     Ok(())
 }
 
-async fn cli_list_users(config: &Config) -> error::Result<()> {
-    let (_, port, user, _) = backend::resolve_connection_info(config)?;
-    eprintln!(
-        "Connecting to {}@{}:{}...",
-        user,
-        config
-            .ssh_host
-            .as_deref()
-            .or(config.host.as_deref())
-            .unwrap_or("?"),
-        port
-    );
+async fn cli_list_users(config: &Config, local: bool) -> error::Result<()> {
+    if !local {
+        let (_, port, user, _) = backend::resolve_connection_info(config)?;
+        eprintln!(
+            "Connecting to {}@{}:{}...",
+            user,
+            config
+                .ssh_host
+                .as_deref()
+                .or(config.host.as_deref())
+                .unwrap_or("?"),
+            port
+        );
+    }
 
-    let backend = backend::connect_backend(config).await?;
-    let client = xray::client::XrayApiClient::new(&backend);
+    let backend = connect_cli_backend(config, local).await?;
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
     let users = client.list_users().await?;
 
     // Fetch stats for each user
@@ -310,8 +344,6 @@ async fn cli_list_users(config: &Config) -> error::Result<()> {
         }
         users_with_stats.push(user);
     }
-
-    let _ = backend.close().await;
 
     if users_with_stats.is_empty() {
         println!("No users found.");

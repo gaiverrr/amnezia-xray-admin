@@ -129,12 +129,12 @@ Three-phase plan:
 - [x] run tests — must pass before next task
 
 ### Task 10: Implement LocalBackend (docker exec without SSH)
-- [ ] create `LocalBackend` struct that runs `docker exec` via `tokio::process::Command`
-- [ ] implement `XrayBackend` for `LocalBackend`
-- [ ] add `exec_on_host` as local shell command execution
-- [ ] write unit tests for LocalBackend command building
-- [ ] add `--local` CLI flag to use LocalBackend instead of SSH (for testing on VPS)
-- [ ] run tests — must pass before next task
+- [x] create `LocalBackend` struct that runs `docker exec` via `tokio::process::Command`
+- [x] implement `XrayBackend` for `LocalBackend`
+- [x] add `exec_on_host` as local shell command execution
+- [x] write unit tests for LocalBackend command building
+- [x] add `--local` CLI flag to use LocalBackend instead of SSH (for testing on VPS)
+- [x] run tests — must pass before next task
 
 ### Phase 4: Telegram bot
 

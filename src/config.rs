@@ -78,6 +78,10 @@ pub struct Cli {
     /// Show server info (version, traffic, user count, API status) and exit
     #[arg(long = "server-info")]
     pub server_info: bool,
+
+    /// Use local backend (direct docker exec) instead of SSH — for running on VPS
+    #[arg(long = "local")]
+    pub local: bool,
 }
 
 /// Application configuration
@@ -349,6 +353,7 @@ host = "10.0.0.1"
             user_qr: None,
             online_status: false,
             server_info: false,
+            local: false,
         };
         config.merge_cli(&cli);
 
@@ -383,6 +388,7 @@ host = "10.0.0.1"
             user_qr: None,
             online_status: false,
             server_info: false,
+            local: false,
         };
         config.merge_cli(&cli);
 
@@ -410,6 +416,7 @@ host = "10.0.0.1"
             user_qr: None,
             online_status: false,
             server_info: false,
+            local: false,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());
