@@ -1,6 +1,23 @@
 [package]
 name = "amnezia-xray-admin"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+description = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray server"
 
 [dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+russh = "0.48"
+russh-keys = "0.48"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+dirs = "6"
+qrcode = "0.14"
+unicode-width = "0.2"
+base64 = "0.22"
+thiserror = "2"
+async-trait = "0.1"

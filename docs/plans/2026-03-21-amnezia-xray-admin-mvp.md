@@ -81,11 +81,11 @@ src/
 ## Implementation Steps
 
 ### Task 1: Project scaffolding and dependencies
-- [ ] fix Cargo.toml edition (2024 -> 2021) and add all dependencies
-- [ ] create module structure (empty files with mod declarations)
-- [ ] define error types in `src/error.rs` (AppError enum with SSH, Xray, Config, IO variants)
-- [ ] write tests for error type Display/From impls
-- [ ] `cargo build` must succeed
+- [x] fix Cargo.toml edition (2024 -> 2021) and add all dependencies
+- [x] create module structure (empty files with mod declarations)
+- [x] define error types in `src/error.rs` (AppError enum with SSH, Xray, Config, IO variants)
+- [x] write tests for error type Display/From impls
+- [x] `cargo build` must succeed
 
 ### Task 2: Config system
 - [ ] define config struct in `src/config.rs` (host, port, user, key_path, ssh_config_host, container_name)
