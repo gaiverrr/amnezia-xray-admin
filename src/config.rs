@@ -62,6 +62,10 @@ pub struct Cli {
     /// Check server: verify API setup, print version, user count, and exit
     #[arg(long = "check-server")]
     pub check_server: bool,
+
+    /// Get vless:// URL for a user by name and exit
+    #[arg(long = "user-url")]
+    pub user_url: Option<String>,
 }
 
 /// Application configuration
@@ -329,6 +333,7 @@ host = "10.0.0.1"
             container: Some("ctr".to_string()),
             list_users: false,
             check_server: false,
+            user_url: None,
         };
         config.merge_cli(&cli);
 
@@ -359,6 +364,7 @@ host = "10.0.0.1"
             container: None,
             list_users: false,
             check_server: false,
+            user_url: None,
         };
         config.merge_cli(&cli);
 
@@ -382,6 +388,7 @@ host = "10.0.0.1"
             container: None,
             list_users: false,
             check_server: false,
+            user_url: None,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());

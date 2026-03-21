@@ -101,7 +101,7 @@ pub fn resolve_connection_info(
 }
 
 /// Connect to the server using the app config.
-async fn connect(config: &Config) -> Result<SshSession, AppError> {
+pub async fn connect(config: &Config) -> Result<SshSession, AppError> {
     let (hostname, port, user, key_path) = resolve_connection_info(config)?;
     let addr = if hostname.contains(':') {
         // IPv6 address needs brackets
@@ -128,7 +128,7 @@ async fn read_public_key(session: &SshSession) -> Result<String, AppError> {
 }
 
 /// Build a vless:// URL for a user, using live server config for reality params.
-async fn build_vless_url(
+pub async fn build_vless_url(
     session: &SshSession,
     config: &Config,
     uuid: &str,

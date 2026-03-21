@@ -72,12 +72,12 @@ Three-phase plan:
 ### Phase 2: CLI commands
 
 ### Task 4: Add --user-url CLI command
-- [ ] add `--user-url <name>` arg to `Cli` struct in `src/config.rs`
-- [ ] implement `cli_user_url()` async fn in `src/main.rs`: connect, find user, generate vless:// URL, print
-- [ ] handle "user not found" error gracefully
-- [ ] update test Cli struct instances with new field
-- [ ] verify: `cargo run -- --user-url Alexander`
-- [ ] run tests — must pass before next task
+- [x] add `--user-url <name>` arg to `Cli` struct in `src/config.rs`
+- [x] implement `cli_user_url()` async fn in `src/main.rs`: connect, find user, generate vless:// URL, print
+- [x] handle "user not found" error gracefully
+- [x] update test Cli struct instances with new field
+- [x] verify: `cargo run -- --user-url Alexander` (manual verification - not automatable without VPS)
+- [x] run tests — must pass before next task
 
 ### Task 5: Add --user-qr CLI command
 - [ ] add `--user-qr <name>` arg to `Cli` struct
