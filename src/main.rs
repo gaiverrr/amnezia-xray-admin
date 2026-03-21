@@ -149,6 +149,14 @@ fn main() {
         return;
     }
 
+    if let Some(ref names) = cli.rename_user {
+        if let Err(e) = runtime.block_on(cli_rename_user(&config, &names[0], &names[1], local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if cli.backup {
         if let Err(e) = runtime.block_on(cli_backup(&config, local)) {
             eprintln!("Error: {}", e);
@@ -639,6 +647,23 @@ async fn cli_delete_user(
 
     client.remove_user(&user.uuid).await?;
     println!("User '{}' deleted.", name);
+
+    Ok(())
+}
+
+async fn cli_rename_user(
+    config: &Config,
+    old_name: &str,
+    new_name: &str,
+    local: bool,
+) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
+
+    client.rename_user(old_name, new_name).await?;
+
+    println!("User renamed: '{}' -> '{}'", old_name, new_name);
+    println!("Note: rename resets traffic stats history for this user.");
 
     Ok(())
 }

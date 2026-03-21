@@ -130,6 +130,62 @@ impl<'a> XrayApiClient<'a> {
         Ok(())
     }
 
+    /// Rename a user. Updates clientsTable and server.json email, restarts container.
+    ///
+    /// This resets the user's traffic stats because xray tracks stats by email.
+    /// The user's UUID and active connections are preserved.
+    pub async fn rename_user(&self, old_name: &str, new_name: &str) -> Result<()> {
+        let old_email = XrayUser::email_from_name(old_name);
+        let new_email = XrayUser::email_from_name(new_name);
+
+        // Find the user's UUID
+        let table = read_clients_table(self.backend).await?;
+        let config = read_server_config(self.backend).await?;
+
+        let uuid = table
+            .entries
+            .iter()
+            .find(|e| e.user_data.client_name == old_name)
+            .map(|e| e.client_id.clone())
+            .ok_or_else(|| AppError::Xray(format!("user '{}' not found", old_name)))?;
+
+        // Check new name doesn't already exist
+        if table.entries.iter().any(|e| e.user_data.client_name == new_name) {
+            return Err(AppError::Xray(format!(
+                "user '{}' already exists",
+                new_name
+            )));
+        }
+
+        // Auto-backup before mutation
+        self.backup_config().await?;
+
+        // Remove old stats counter from running instance
+        let _ = self.exec_api_rmu(&old_email).await;
+
+        // Update clientsTable
+        let mut table = table;
+        table.rename(&uuid, new_name);
+        self.write_clients_table(&table).await?;
+
+        // Update server.json email
+        let mut config = config;
+        config.update_client_email(&uuid, &new_email)?;
+        self.write_server_config(&config).await?;
+
+        // Restart container to pick up new config
+        let restart_cmd = format!("docker restart {}", self.backend.container_name());
+        let result = self.backend.exec_on_host(&restart_cmd).await?;
+        if !result.success() {
+            return Err(AppError::Xray(format!(
+                "failed to restart container: {}",
+                result.stderr.trim()
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Get traffic stats for a user by email.
     pub async fn get_user_stats(&self, email: &str) -> Result<TrafficStats> {
         let uplink_cmd = build_stats_cmd(email, "uplink")?;

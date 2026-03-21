@@ -111,6 +111,10 @@ pub struct Cli {
     #[arg(long = "delete-user")]
     pub delete_user: Option<String>,
 
+    /// Rename a user: --rename-user <OLD_NAME> <NEW_NAME>
+    #[arg(long = "rename-user", num_args = 2, value_names = ["OLD_NAME", "NEW_NAME"])]
+    pub rename_user: Option<Vec<String>>,
+
     /// Skip interactive confirmation (for --delete-user)
     #[arg(long = "yes")]
     pub yes: bool,
@@ -402,6 +406,7 @@ host = "10.0.0.1"
             backup: false,
             restore: None,
             add_user: None,
+            rename_user: None,
             delete_user: None,
             yes: false,
         };
@@ -447,6 +452,7 @@ host = "10.0.0.1"
             backup: false,
             restore: None,
             add_user: None,
+            rename_user: None,
             delete_user: None,
             yes: false,
         };
@@ -483,6 +489,7 @@ host = "10.0.0.1"
             backup: false,
             restore: None,
             add_user: None,
+            rename_user: None,
             delete_user: None,
             yes: false,
         };
@@ -610,6 +617,29 @@ host = "10.0.0.1"
         let config = Config::load_from(&f.path().to_path_buf()).unwrap();
         assert_eq!(config.telegram_token, None);
         assert_eq!(config.telegram_admin_chat_id, None);
+    }
+
+    #[test]
+    fn test_cli_parse_rename_user() {
+        let cli = Cli::parse_from(["app", "--rename-user", "OldName", "NewName"]);
+        assert_eq!(
+            cli.rename_user,
+            Some(vec!["OldName".to_string(), "NewName".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_cli_parse_rename_user_with_brackets() {
+        let cli = Cli::parse_from([
+            "app",
+            "--rename-user",
+            "Admin [macOS]",
+            "Admin [iPhone]",
+        ]);
+        assert_eq!(
+            cli.rename_user,
+            Some(vec!["Admin [macOS]".to_string(), "Admin [iPhone]".to_string()])
+        );
     }
 
     #[test]

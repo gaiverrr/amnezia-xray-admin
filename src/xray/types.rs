@@ -127,6 +127,31 @@ impl ServerConfig {
         Ok(())
     }
 
+    /// Update a client's email by UUID in the VLESS inbound
+    pub fn update_client_email(
+        &mut self,
+        uuid: &str,
+        new_email: &str,
+    ) -> crate::error::Result<bool> {
+        let inbound = self
+            .find_vless_inbound_mut()
+            .ok_or_else(|| crate::error::AppError::Xray("no VLESS inbound found".into()))?;
+
+        let clients = inbound
+            .get_mut("settings")
+            .and_then(|s| s.get_mut("clients"))
+            .and_then(|c| c.as_array_mut())
+            .ok_or_else(|| crate::error::AppError::Xray("no clients array found".into()))?;
+
+        for client in clients.iter_mut() {
+            if client.get("id").and_then(|v| v.as_str()) == Some(uuid) {
+                client["email"] = serde_json::Value::String(new_email.to_string());
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Remove a client by UUID from the VLESS inbound
     pub fn remove_client(&mut self, uuid: &str) -> crate::error::Result<bool> {
         let inbound = self
@@ -261,6 +286,15 @@ impl ClientsTable {
         });
     }
 
+    /// Rename a client by UUID, returns true if found
+    pub fn rename(&mut self, uuid: &str, new_name: &str) -> bool {
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.client_id == uuid) {
+            entry.user_data.client_name = new_name.to_string();
+            return true;
+        }
+        false
+    }
+
     /// Remove an entry by UUID, returns true if found
     pub fn remove(&mut self, uuid: &str) -> bool {
         let before = self.entries.len();
@@ -387,6 +421,40 @@ mod tests {
     }
 
     #[test]
+    fn test_server_config_update_client_email() {
+        let mut config = ServerConfig::parse(sample_server_json()).unwrap();
+        let updated = config
+            .update_client_email("cccccccc-4444-5555-6666-dddddddddddd", "newalice@vpn")
+            .unwrap();
+        assert!(updated);
+        let clients = config.clients();
+        assert_eq!(clients[1].email, Some("newalice@vpn".to_string()));
+        // First client should be unchanged
+        assert_eq!(clients[0].email, None);
+    }
+
+    #[test]
+    fn test_server_config_update_client_email_nonexistent() {
+        let mut config = ServerConfig::parse(sample_server_json()).unwrap();
+        let updated = config
+            .update_client_email("nonexistent-uuid", "test@vpn")
+            .unwrap();
+        assert!(!updated);
+    }
+
+    #[test]
+    fn test_server_config_update_client_email_adds_email_field() {
+        // First client has no email field — updating should add one
+        let mut config = ServerConfig::parse(sample_server_json()).unwrap();
+        let updated = config
+            .update_client_email("aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb", "bob@vpn")
+            .unwrap();
+        assert!(updated);
+        let clients = config.clients();
+        assert_eq!(clients[0].email, Some("bob@vpn".to_string()));
+    }
+
+    #[test]
     fn test_server_config_remove_nonexistent() {
         let mut config = ServerConfig::parse(sample_server_json()).unwrap();
         let removed = config.remove_client("nonexistent-uuid").unwrap();
@@ -467,6 +535,24 @@ mod tests {
         let removed = table.remove("aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb");
         assert!(removed);
         assert_eq!(table.entries.len(), 1);
+    }
+
+    #[test]
+    fn test_clients_table_rename() {
+        let mut table = ClientsTable::parse(sample_clients_table()).unwrap();
+        let renamed = table.rename("aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb", "robert");
+        assert!(renamed);
+        assert_eq!(
+            table.name_for_uuid("aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"),
+            Some("robert")
+        );
+    }
+
+    #[test]
+    fn test_clients_table_rename_nonexistent() {
+        let mut table = ClientsTable::parse(sample_clients_table()).unwrap();
+        let renamed = table.rename("nonexistent", "newname");
+        assert!(!renamed);
     }
 
     #[test]

@@ -90,8 +90,8 @@ Implement the design spec from `docs/superpowers/specs/2026-03-21-pre-release-po
 - [x] run tests — must pass before next task
 
 ### Task 6: Add --rename-user CLI command
-- [ ] add `--rename-user` arg (takes two values: old name, new name) to `Cli` struct
-- [ ] implement `cli_rename_user()` in `src/main.rs`:
+- [x] add `--rename-user` arg (takes two values: old name, new name) to `Cli` struct
+- [x] implement `cli_rename_user()` in `src/main.rs`:
   - find user by old name
   - backup_config() before changes
   - call `exec_api_rmu` with old email (remove old stats counter)
@@ -99,11 +99,11 @@ Implement the design spec from `docs/superpowers/specs/2026-03-21-pre-release-po
   - update server.json: change email field (old_name@vpn → new_name@vpn)
   - write both files, restart container via `upload_and_restart()`
   - print warning: "Note: rename resets traffic stats history for this user."
-- [ ] add `rename_user()` method to `XrayApiClient`
-- [ ] update test Cli struct instances
-- [ ] write tests for rename logic (clientsTable update, email change)
-- [ ] verify: `cargo run -- --rename-user TestUser NewName`
-- [ ] run tests — must pass before next task
+- [x] add `rename_user()` method to `XrayApiClient`
+- [x] update test Cli struct instances
+- [x] write tests for rename logic (clientsTable update, email change)
+- [x] verify: `cargo run -- --rename-user TestUser NewName` (skipped - requires VPS connection)
+- [x] run tests — must pass before next task
 
 ### Task 7: Improve --help with examples
 - [ ] replace `long_about` in `Cli` struct with `after_help` containing usage examples
