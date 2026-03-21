@@ -12,6 +12,9 @@ use tokio::sync::Mutex;
 use crate::backend_trait::XrayBackend;
 use crate::config::Config;
 use crate::error::Result;
+use crate::ui::dashboard::format_bytes;
+use crate::xray::client::{ServerInfo, XrayApiClient};
+use crate::xray::types::{TrafficStats, XrayUser};
 
 /// State shared across all Telegram handlers.
 pub struct BotState {
@@ -27,6 +30,10 @@ pub enum Command {
     Start,
     /// Show available commands
     Help,
+    /// List users with traffic stats
+    Users,
+    /// Server info and online users
+    Status,
 }
 
 /// Check if a chat ID is the admin. Returns true if no admin is set yet (first-time setup).
@@ -72,6 +79,56 @@ pub fn welcome_text(is_new_admin: bool) -> String {
     }
 }
 
+/// Format the /users response: list users with traffic stats.
+pub fn format_users_message(users: &[(XrayUser, TrafficStats, u32)]) -> String {
+    if users.is_empty() {
+        return "No users found.".to_string();
+    }
+
+    let mut lines = Vec::new();
+    lines.push("👥 Users:".to_string());
+    lines.push(String::new());
+
+    for (user, stats, online_count) in users {
+        let name = if user.name.is_empty() {
+            &user.uuid[..std::cmp::min(8, user.uuid.len())]
+        } else {
+            &user.name
+        };
+        let online_indicator = if *online_count > 0 {
+            format!("🟢 {}", online_count)
+        } else {
+            "⚪".to_string()
+        };
+        lines.push(format!(
+            "{} {} ↑{} ↓{}",
+            online_indicator,
+            name,
+            format_bytes(stats.uplink),
+            format_bytes(stats.downlink),
+        ));
+    }
+
+    lines.join("\n")
+}
+
+/// Format the /status response: server info and online users summary.
+pub fn format_status_message(
+    server_info: &ServerInfo,
+    user_count: usize,
+    online_count: usize,
+) -> String {
+    let mut lines = Vec::new();
+    lines.push("📊 Server Status:".to_string());
+    lines.push(String::new());
+    lines.push(format!("Xray version: v{}", server_info.version));
+    lines.push(format!("Users: {} ({} online)", user_count, online_count));
+    lines.push(format!("Upload: {}", format_bytes(server_info.uplink)));
+    lines.push(format!("Download: {}", format_bytes(server_info.downlink)));
+
+    lines.join("\n")
+}
+
 /// Handle incoming bot commands.
 async fn handle_command(
     bot: Bot,
@@ -81,16 +138,18 @@ async fn handle_command(
 ) -> ResponseResult<()> {
     let chat_id = msg.chat.id;
 
-    let mut config = state.config.lock().await;
+    // Check admin access (hold lock briefly)
+    {
+        let mut config = state.config.lock().await;
 
-    if !is_admin_or_unset(&config, chat_id) {
-        bot.send_message(chat_id, "Access denied. Only the admin can use this bot.")
-            .await?;
-        return Ok(());
-    }
+        if !is_admin_or_unset(&config, chat_id) {
+            bot.send_message(chat_id, "Access denied. Only the admin can use this bot.")
+                .await?;
+            return Ok(());
+        }
 
-    match cmd {
-        Command::Start => {
+        // Handle /start which needs to write config
+        if let Command::Start = &cmd {
             let is_new = config.telegram_admin_chat_id.is_none();
             if is_new {
                 config.telegram_admin_chat_id = Some(chat_id.0);
@@ -100,13 +159,63 @@ async fn handle_command(
                 log::info!("Admin registered: chat_id={}", chat_id.0);
             }
             bot.send_message(chat_id, welcome_text(is_new)).await?;
+            return Ok(());
         }
+    }
+    // Config lock is dropped here — safe to do async backend work
+
+    match cmd {
+        Command::Start => unreachable!(), // handled above
         Command::Help => {
             bot.send_message(chat_id, help_text()).await?;
+        }
+        Command::Users => {
+            let text = match cmd_users(&state).await {
+                Ok(t) => t,
+                Err(e) => format!("Error: {}", e),
+            };
+            bot.send_message(chat_id, text).await?;
+        }
+        Command::Status => {
+            let text = match cmd_status(&state).await {
+                Ok(t) => t,
+                Err(e) => format!("Error: {}", e),
+            };
+            bot.send_message(chat_id, text).await?;
         }
     }
 
     Ok(())
+}
+
+/// Execute /users command: list users with stats.
+async fn cmd_users(state: &BotState) -> std::result::Result<String, crate::error::AppError> {
+    let client = XrayApiClient::new(state.backend.as_ref());
+    let users = client.list_users().await?;
+
+    let mut user_data = Vec::new();
+    for user in users {
+        let stats = client.get_user_stats(&user.email).await.unwrap_or_default();
+        let online = client.get_online_count(&user.email).await.unwrap_or(0);
+        user_data.push((user, stats, online));
+    }
+
+    Ok(format_users_message(&user_data))
+}
+
+/// Execute /status command: server info + online summary.
+async fn cmd_status(state: &BotState) -> std::result::Result<String, crate::error::AppError> {
+    let client = XrayApiClient::new(state.backend.as_ref());
+    let server_info = client.get_server_info().await?;
+    let users = client.list_users().await?;
+
+    let mut online_total = 0usize;
+    for user in &users {
+        let count = client.get_online_count(&user.email).await.unwrap_or(0);
+        online_total += count as usize;
+    }
+
+    Ok(format_status_message(&server_info, users.len(), online_total))
 }
 
 /// Start the Telegram bot and block until shutdown.
@@ -194,6 +303,8 @@ mod tests {
         // teloxide BotCommand.command contains just the name (no slash)
         assert!(descriptions.contains("start"), "commands: {}", descriptions);
         assert!(descriptions.contains("help"), "commands: {}", descriptions);
+        assert!(descriptions.contains("users"), "commands: {}", descriptions);
+        assert!(descriptions.contains("status"), "commands: {}", descriptions);
     }
 
     #[test]
@@ -201,6 +312,98 @@ mod tests {
         let text = help_text();
         assert!(!text.is_empty());
         assert!(text.lines().count() >= 5);
+    }
+
+    #[test]
+    fn test_format_users_message_empty() {
+        let text = format_users_message(&[]);
+        assert_eq!(text, "No users found.");
+    }
+
+    #[test]
+    fn test_format_users_message_with_users() {
+        let users = vec![
+            (
+                XrayUser {
+                    uuid: "aaaa-bbbb-cccc".to_string(),
+                    name: "Alice".to_string(),
+                    email: "Alice@vpn".to_string(),
+                    flow: "xtls-rprx-vision".to_string(),
+                    stats: TrafficStats::default(),
+                    online_count: 0,
+                },
+                TrafficStats { uplink: 1024 * 1024 * 100, downlink: 1024 * 1024 * 1024 * 2 },
+                1,
+            ),
+            (
+                XrayUser {
+                    uuid: "dddd-eeee-ffff".to_string(),
+                    name: "Bob".to_string(),
+                    email: "Bob@vpn".to_string(),
+                    flow: "xtls-rprx-vision".to_string(),
+                    stats: TrafficStats::default(),
+                    online_count: 0,
+                },
+                TrafficStats { uplink: 0, downlink: 0 },
+                0,
+            ),
+        ];
+        let text = format_users_message(&users);
+        assert!(text.contains("Alice"), "text: {}", text);
+        assert!(text.contains("Bob"), "text: {}", text);
+        // Alice is online (count=1)
+        assert!(text.contains("🟢 1"), "text: {}", text);
+        // Bob is offline (count=0)
+        assert!(text.contains("⚪"), "text: {}", text);
+        // Traffic stats present
+        assert!(text.contains("100.0 MB"), "text: {}", text);
+        assert!(text.contains("2.0 GB"), "text: {}", text);
+    }
+
+    #[test]
+    fn test_format_users_message_unnamed_user() {
+        let users = vec![(
+            XrayUser {
+                uuid: "12345678-abcd-efgh".to_string(),
+                name: String::new(),
+                email: "@vpn".to_string(),
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            },
+            TrafficStats::default(),
+            0,
+        )];
+        let text = format_users_message(&users);
+        // Should show truncated UUID for unnamed users
+        assert!(text.contains("12345678"), "text: {}", text);
+    }
+
+    #[test]
+    fn test_format_status_message() {
+        let info = ServerInfo {
+            version: "1.8.4".to_string(),
+            uplink: 1024 * 1024 * 500,
+            downlink: 1024 * 1024 * 1024 * 10,
+        };
+        let text = format_status_message(&info, 5, 2);
+        assert!(text.contains("v1.8.4"), "text: {}", text);
+        assert!(text.contains("5"), "text: {}", text);
+        assert!(text.contains("2 online"), "text: {}", text);
+        assert!(text.contains("500.0 MB"), "text: {}", text);
+        assert!(text.contains("10.0 GB"), "text: {}", text);
+    }
+
+    #[test]
+    fn test_format_status_message_zero_online() {
+        let info = ServerInfo {
+            version: "1.8.0".to_string(),
+            uplink: 0,
+            downlink: 0,
+        };
+        let text = format_status_message(&info, 3, 0);
+        assert!(text.contains("0 online"), "text: {}", text);
+        assert!(text.contains("3"), "text: {}", text);
     }
 
     #[test]

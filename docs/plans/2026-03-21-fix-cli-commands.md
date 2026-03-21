@@ -148,11 +148,11 @@ Three-phase plan:
 - [x] run tests — 296 tests pass, clippy clean
 
 ### Task 12: Telegram /users and /status commands
-- [ ] implement `/users` — list users with stats (like --list-users but formatted for Telegram)
-- [ ] implement `/status` — server info (version, traffic, user count, online users)
-- [ ] format with Telegram markdown (monospace for tables)
-- [ ] write tests for message formatting
-- [ ] run tests — must pass before next task
+- [x] implement `/users` — list users with stats (like --list-users but formatted for Telegram)
+- [x] implement `/status` — server info (version, traffic, user count, online users)
+- [x] format with Telegram markdown (monospace for tables)
+- [x] write tests for message formatting
+- [x] run tests — 301 tests pass, clippy clean
 
 ### Task 13: Telegram /add and /delete commands
 - [ ] implement `/add <name>` — add user, return UUID + vless:// URL
