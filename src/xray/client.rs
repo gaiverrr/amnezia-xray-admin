@@ -61,8 +61,11 @@ impl<'a> XrayApiClient<'a> {
 
     /// Add a new user with the given name. Returns the generated UUID.
     pub async fn add_user(&self, name: &str) -> Result<String> {
-        let uuid = Uuid::new_v4().to_string();
+        // Validate name before any mutations to avoid partial failures
         let email = XrayUser::email_from_name(name);
+        validated_email(&email)?;
+
+        let uuid = Uuid::new_v4().to_string();
 
         // 1. Call xray api adu to add user to running instance
         let user_json = build_adu_json(&uuid, &email, VLESS_INBOUND_TAG);

@@ -232,6 +232,12 @@ impl SetupState {
                     if field == SetupField::Port && !c.is_ascii_digit() {
                         return true;
                     }
+                    // For container field, only allow Docker-safe characters [a-zA-Z0-9_.-]
+                    if field == SetupField::Container
+                        && !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+                    {
+                        return true;
+                    }
                     value.push(c);
                     true
                 } else {

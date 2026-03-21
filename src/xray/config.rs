@@ -6,6 +6,7 @@
 use super::types::{ClientsTable, ServerConfig};
 use crate::error::{AppError, Result};
 use crate::ssh::SshSession;
+use base64::Engine;
 use serde_json::json;
 
 pub(crate) const SERVER_CONFIG_PATH: &str = "/opt/amnezia/xray/server.json";
@@ -129,9 +130,9 @@ fn tag_vless_inbound(config: &mut ServerConfig) -> Result<()> {
         .find_vless_inbound_mut()
         .ok_or_else(|| AppError::Xray("no VLESS inbound found".into()))?;
 
-    if inbound.get("tag").is_none() {
-        inbound["tag"] = json!("vless-in");
-    }
+    // Always set the tag to "vless-in" to ensure consistency with API commands
+    // that reference this tag (build_adu_json, build_inbound_stats_cmd).
+    inbound["tag"] = json!("vless-in");
 
     Ok(())
 }
@@ -174,9 +175,9 @@ pub async fn upload_and_restart(
 ) -> Result<()> {
     let json = config.to_json();
 
-    // Escape single quotes in JSON for shell safety
-    let escaped = json.replace('\'', "'\\''");
-    let write_cmd = format!("printf '%s' '{}' > {}", escaped, SERVER_CONFIG_PATH);
+    // Use base64 encoding to safely transfer JSON over shell
+    let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
+    let write_cmd = format!("sh -c 'echo {} | base64 -d > {}'", b64, SERVER_CONFIG_PATH);
     let result = session.exec_command(&write_cmd).await?;
     if !result.success() {
         return Err(AppError::Xray(format!(
@@ -553,8 +554,8 @@ mod tests {
             .iter()
             .find(|ib| ib["protocol"] == "vless")
             .unwrap();
-        // Should keep existing tag, not overwrite
-        assert_eq!(vless["tag"], "my-custom-tag");
+        // Should normalize tag to "vless-in" for consistency with API commands
+        assert_eq!(vless["tag"], "vless-in");
     }
 
     #[test]
