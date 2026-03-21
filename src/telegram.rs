@@ -163,6 +163,9 @@ pub fn validate_user_name(name: &str) -> Option<String> {
     if trimmed.chars().any(|c| c.is_control()) {
         return Some("Name must not contain control characters.".to_string());
     }
+    if trimmed.contains('@') || trimmed.contains(">>>") {
+        return Some("Name must not contain '@' or '>>>'.".to_string());
+    }
     None
 }
 
@@ -827,6 +830,16 @@ mod tests {
 
         assert_eq!(confirm_data, "delete_confirm:test-uuid-abc");
         assert_eq!(cancel_data, "delete_cancel:test-uuid-abc");
+    }
+
+    #[test]
+    fn test_validate_user_name_at_sign() {
+        assert!(validate_user_name("foo@bar").is_some());
+    }
+
+    #[test]
+    fn test_validate_user_name_triple_arrow() {
+        assert!(validate_user_name("foo>>>bar").is_some());
     }
 
     #[test]

@@ -376,6 +376,17 @@ fn urlencode_fragment(s: &str) -> String {
 /// }
 /// ```
 pub fn parse_stat_value(output: &str) -> Option<u64> {
+    // Try JSON parsing first (handles compact single-line JSON)
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(output) {
+        if let Some(val) = v
+            .get("stat")
+            .and_then(|s| s.get("value"))
+            .and_then(|v| v.as_i64())
+        {
+            return Some(val.max(0) as u64);
+        }
+    }
+    // Fallback to line-based parsing (proto text format)
     for line in output.lines() {
         let trimmed = line.trim().trim_matches(',');
         // Handle both text format (value: 123) and JSON format ("value": 123)
@@ -811,6 +822,18 @@ stat: {
     fn test_parse_stat_value_with_whitespace() {
         let output = "  value:   42  \n";
         assert_eq!(parse_stat_value(output), Some(42));
+    }
+
+    #[test]
+    fn test_parse_stat_value_compact_json() {
+        let output = r#"{"stat":{"name":"user>>>test@vpn>>>traffic>>>uplink","value":999}}"#;
+        assert_eq!(parse_stat_value(output), Some(999));
+    }
+
+    #[test]
+    fn test_parse_stat_value_json_negative() {
+        let output = r#"{"stat":{"name":"test","value":-5}}"#;
+        assert_eq!(parse_stat_value(output), Some(0));
     }
 
     #[test]
