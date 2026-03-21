@@ -98,6 +98,10 @@ pub struct Cli {
     /// Create a timestamped backup of server.json and clientsTable
     #[arg(long = "backup")]
     pub backup: bool,
+
+    /// Restore server.json and clientsTable from a backup. Optionally specify a timestamp (YYYYMMDD-HHMMSS); defaults to latest.
+    #[arg(long = "restore", num_args = 0..=1, default_missing_value = "")]
+    pub restore: Option<String>,
 }
 
 /// Application configuration
@@ -384,6 +388,7 @@ host = "10.0.0.1"
             telegram_token: None,
             deploy_bot: false,
             backup: false,
+            restore: None,
         };
         config.merge_cli(&cli);
 
@@ -425,6 +430,7 @@ host = "10.0.0.1"
             telegram_token: None,
             deploy_bot: false,
             backup: false,
+            restore: None,
         };
         config.merge_cli(&cli);
 
@@ -457,6 +463,7 @@ host = "10.0.0.1"
             telegram_token: None,
             deploy_bot: false,
             backup: false,
+            restore: None,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());

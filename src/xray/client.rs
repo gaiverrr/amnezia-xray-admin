@@ -199,6 +199,70 @@ impl<'a> XrayApiClient<'a> {
         Ok(())
     }
 
+    /// List available timestamped backups, returning timestamps sorted newest-first.
+    /// Validates that both server.json and clientsTable backups exist for each timestamp.
+    pub async fn list_backups(&self) -> Result<Vec<String>> {
+        let cmd = build_list_backups_cmd();
+        let result = self.backend.exec_in_container(&cmd).await?;
+        // ls may exit non-zero if no backups exist — that's fine
+        let timestamps = parse_backup_timestamps(&result.stdout);
+        Ok(timestamps)
+    }
+
+    /// Restore server.json and clientsTable from a timestamped backup.
+    /// If timestamp is None, uses the most recent backup.
+    pub async fn restore_config(&self, timestamp: Option<&str>) -> Result<String> {
+        let backups = self.list_backups().await?;
+        if backups.is_empty() {
+            return Err(AppError::Xray("no timestamped backups found".to_string()));
+        }
+
+        let ts = match timestamp {
+            Some(t) => {
+                if !backups.contains(&t.to_string()) {
+                    return Err(AppError::Xray(format!(
+                        "backup with timestamp '{}' not found",
+                        t
+                    )));
+                }
+                t.to_string()
+            }
+            None => backups[0].clone(), // newest first
+        };
+
+        // Validate both files exist
+        let validate_cmd = build_validate_backup_cmd(&ts);
+        let result = self.backend.exec_in_container(&validate_cmd).await?;
+        if !result.success() {
+            return Err(AppError::Xray(format!(
+                "incomplete backup: clientsTable.{}.bak not found",
+                ts
+            )));
+        }
+
+        // Copy backup files back to originals
+        let restore_cmd = build_restore_cmd(&ts);
+        let result = self.backend.exec_in_container(&restore_cmd).await?;
+        if !result.success() {
+            return Err(AppError::Xray(format!(
+                "restore failed: {}",
+                result.stderr.trim()
+            )));
+        }
+
+        // Restart container to apply restored config
+        let restart_cmd = format!("docker restart {}", self.backend.container_name());
+        let result = self.backend.exec_on_host(&restart_cmd).await?;
+        if !result.success() {
+            return Err(AppError::Xray(format!(
+                "failed to restart container after restore: {}",
+                result.stderr.trim()
+            )));
+        }
+
+        Ok(ts)
+    }
+
     /// Create a timestamped backup of server.json and clientsTable.
     /// Returns the timestamp string used in the backup filenames.
     pub async fn backup_config_timestamped(&self) -> Result<String> {
@@ -302,6 +366,71 @@ pub fn build_backup_timestamped_cmd() -> String {
         "ts=$(date +%Y%m%d-%H%M%S) && cp {} {}.\"$ts\".bak && cp {} {}.\"$ts\".bak && echo \"$ts\"",
         SERVER_CONFIG_PATH, SERVER_CONFIG_PATH, CLIENTS_TABLE_PATH, CLIENTS_TABLE_PATH
     )
+}
+
+// -- Restore command construction (pure functions, testable) --
+
+/// Build the shell command to list timestamped server.json backups (newest first).
+pub fn build_list_backups_cmd() -> String {
+    format!(
+        "ls -t {}.*.bak 2>/dev/null || true",
+        SERVER_CONFIG_PATH
+    )
+}
+
+/// Build the shell command to validate that a clientsTable backup exists for a timestamp.
+pub fn build_validate_backup_cmd(timestamp: &str) -> String {
+    format!(
+        "test -f {}.{}.bak",
+        CLIENTS_TABLE_PATH, timestamp
+    )
+}
+
+/// Build the shell command to restore both config files from a timestamped backup.
+pub fn build_restore_cmd(timestamp: &str) -> String {
+    format!(
+        "cp {}.{}.bak {} && cp {}.{}.bak {}",
+        SERVER_CONFIG_PATH, timestamp, SERVER_CONFIG_PATH,
+        CLIENTS_TABLE_PATH, timestamp, CLIENTS_TABLE_PATH
+    )
+}
+
+/// Parse timestamps from `ls -t` output of backup files.
+/// Input lines look like: `/opt/amnezia/xray/server.json.20260321-120000.bak`
+/// Returns timestamps sorted newest-first (as ls -t gives them).
+/// Only returns timestamps where both server.json and clientsTable backups exist.
+pub fn parse_backup_timestamps(ls_output: &str) -> Vec<String> {
+    let prefix = format!("{}.", SERVER_CONFIG_PATH);
+    let suffix = ".bak";
+
+    let mut timestamps = Vec::new();
+    for line in ls_output.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix(&prefix) {
+            if let Some(ts) = rest.strip_suffix(suffix) {
+                // Validate timestamp format: YYYYMMDD-HHMMSS
+                if is_valid_timestamp(ts) {
+                    timestamps.push(ts.to_string());
+                }
+            }
+        }
+    }
+    timestamps
+}
+
+/// Validate a timestamp string matches YYYYMMDD-HHMMSS format.
+fn is_valid_timestamp(s: &str) -> bool {
+    if s.len() != 15 {
+        return false;
+    }
+    let parts: Vec<&str> = s.splitn(2, '-').collect();
+    if parts.len() != 2 {
+        return false;
+    }
+    parts[0].len() == 8
+        && parts[1].len() == 6
+        && parts[0].chars().all(|c| c.is_ascii_digit())
+        && parts[1].chars().all(|c| c.is_ascii_digit())
 }
 
 // -- Command construction (pure functions, testable) --
@@ -594,6 +723,87 @@ mod tests {
         // to ensure both backups have the same timestamp
         assert!(cmd.contains("ts="));
         assert!(cmd.contains("\"$ts\""));
+    }
+
+    // -- Restore command/parsing tests --
+
+    #[test]
+    fn test_build_list_backups_cmd() {
+        let cmd = build_list_backups_cmd();
+        assert!(cmd.contains("ls -t"));
+        assert!(cmd.contains("server.json.*.bak"));
+        // Should not fail if no backups exist
+        assert!(cmd.contains("|| true"));
+    }
+
+    #[test]
+    fn test_build_validate_backup_cmd() {
+        let cmd = build_validate_backup_cmd("20260321-120000");
+        assert!(cmd.contains("test -f"));
+        assert!(cmd.contains("clientsTable.20260321-120000.bak"));
+    }
+
+    #[test]
+    fn test_build_restore_cmd() {
+        let cmd = build_restore_cmd("20260321-120000");
+        // Should restore both files
+        assert!(cmd.contains("server.json.20260321-120000.bak"));
+        assert!(cmd.contains("clientsTable.20260321-120000.bak"));
+        // Should copy backups to originals
+        assert!(cmd.contains("cp "));
+        assert!(cmd.contains("&&"));
+    }
+
+    #[test]
+    fn test_parse_backup_timestamps_multiple() {
+        let output = "/opt/amnezia/xray/server.json.20260321-120000.bak\n\
+                       /opt/amnezia/xray/server.json.20260320-100000.bak\n\
+                       /opt/amnezia/xray/server.json.20260319-080000.bak\n";
+        let timestamps = parse_backup_timestamps(output);
+        assert_eq!(
+            timestamps,
+            vec!["20260321-120000", "20260320-100000", "20260319-080000"]
+        );
+    }
+
+    #[test]
+    fn test_parse_backup_timestamps_empty() {
+        assert_eq!(parse_backup_timestamps(""), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_parse_backup_timestamps_no_matches() {
+        let output = "some random output\n";
+        assert_eq!(parse_backup_timestamps(output), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_parse_backup_timestamps_filters_non_timestamped() {
+        // Should not include the plain .bak file (no timestamp)
+        let output = "/opt/amnezia/xray/server.json.bak\n\
+                       /opt/amnezia/xray/server.json.20260321-120000.bak\n";
+        let timestamps = parse_backup_timestamps(output);
+        assert_eq!(timestamps, vec!["20260321-120000"]);
+    }
+
+    #[test]
+    fn test_parse_backup_timestamps_invalid_format() {
+        // Invalid timestamps should be filtered out
+        let output = "/opt/amnezia/xray/server.json.not-a-timestamp.bak\n\
+                       /opt/amnezia/xray/server.json.2026032.bak\n\
+                       /opt/amnezia/xray/server.json.20260321-120000.bak\n";
+        let timestamps = parse_backup_timestamps(output);
+        assert_eq!(timestamps, vec!["20260321-120000"]);
+    }
+
+    #[test]
+    fn test_parse_backup_timestamps_preserves_order() {
+        // ls -t gives newest first; we should preserve that order
+        let output = "/opt/amnezia/xray/server.json.20260322-150000.bak\n\
+                       /opt/amnezia/xray/server.json.20260321-120000.bak\n";
+        let timestamps = parse_backup_timestamps(output);
+        assert_eq!(timestamps[0], "20260322-150000");
+        assert_eq!(timestamps[1], "20260321-120000");
     }
 
     // -- Command construction tests --

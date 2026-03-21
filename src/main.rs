@@ -140,6 +140,19 @@ fn main() {
         return;
     }
 
+    if let Some(ref restore_ts) = cli.restore {
+        let ts = if restore_ts.is_empty() {
+            None
+        } else {
+            Some(restore_ts.as_str())
+        };
+        if let Err(e) = runtime.block_on(cli_restore(&config, ts, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // Initialize terminal
     let mut terminal = match app::init_terminal() {
         Ok(t) => t,
@@ -519,6 +532,37 @@ async fn cli_backup(config: &Config, local: bool) -> error::Result<()> {
     println!("Backup created:");
     println!("  server.json.{}.bak", timestamp);
     println!("  clientsTable.{}.bak", timestamp);
+
+    Ok(())
+}
+
+async fn cli_restore(
+    config: &Config,
+    timestamp: Option<&str>,
+    local: bool,
+) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
+
+    // List available backups first
+    let backups = client.list_backups().await?;
+    if backups.is_empty() {
+        eprintln!("No timestamped backups found.");
+        return Ok(());
+    }
+
+    eprintln!("Available backups:");
+    for (i, ts) in backups.iter().enumerate() {
+        let marker = if i == 0 { " (latest)" } else { "" };
+        eprintln!("  {}{}", ts, marker);
+    }
+
+    let ts = client.restore_config(timestamp).await?;
+
+    println!("Restored from backup {}:", ts);
+    println!("  server.json.{}.bak -> server.json", ts);
+    println!("  clientsTable.{}.bak -> clientsTable", ts);
+    println!("Container restarted.");
 
     Ok(())
 }

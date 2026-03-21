@@ -50,19 +50,19 @@ Implement the design spec from `docs/superpowers/specs/2026-03-21-pre-release-po
 - [x] run tests — must pass before next task
 
 ### Task 3: Add --restore CLI command
-- [ ] add `--restore` flag (optional value) to `Cli` struct
-- [ ] implement `cli_restore()` in `src/main.rs`:
+- [x] add `--restore` flag (optional value) to `Cli` struct
+- [x] implement `cli_restore()` in `src/main.rs`:
   - list backups via `exec_in_container("ls -t /opt/amnezia/xray/server.json.*.bak")`
   - parse timestamps from filenames
   - validate both server.json.{ts}.bak and clientsTable.{ts}.bak exist
   - if no timestamp given: use latest; if timestamp given: use that one
   - copy .bak files back to originals via `exec_in_container("cp ...")`
   - restart container via `exec_on_host("docker restart <container>")`
-- [ ] handle error: "Incomplete backup: clientsTable.{ts}.bak not found"
-- [ ] update test Cli struct instances
-- [ ] write tests for timestamp parsing and backup listing logic
-- [ ] verify: `cargo run -- --restore`
-- [ ] run tests — must pass before next task
+- [x] handle error: "Incomplete backup: clientsTable.{ts}.bak not found"
+- [x] update test Cli struct instances
+- [x] write tests for timestamp parsing and backup listing logic
+- [x] verify: `cargo run -- --restore` (skipped - requires VPS connection)
+- [x] run tests — must pass before next task
 
 ### Task 4: Add --add-user CLI command
 - [ ] add `--add-user <name>` arg to `Cli` struct
