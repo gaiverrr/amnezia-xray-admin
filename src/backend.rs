@@ -155,21 +155,27 @@ pub fn spawn_fetch_dashboard(
     runtime: &tokio::runtime::Handle,
     config: Config,
     tx: mpsc::Sender<BackendMsg>,
+    api_check_done: bool,
 ) {
     runtime.spawn(async move {
-        let result = fetch_dashboard_data(&config).await;
+        let result = fetch_dashboard_data(&config, api_check_done).await;
         let _ = tx.send(BackendMsg::DashboardData(result));
     });
 }
 
-async fn fetch_dashboard_data(config: &Config) -> Result<DashboardData, String> {
+async fn fetch_dashboard_data(
+    config: &Config,
+    api_check_done: bool,
+) -> Result<DashboardData, String> {
     let session = connect(config).await.map_err(|e| e.to_string())?;
 
     // Ensure the Xray API is enabled (adds api/stats/policy sections if missing).
-    // This is idempotent — skips if already enabled.
-    ensure_api_enabled(&session, &config.container)
-        .await
-        .map_err(|e| e.to_string())?;
+    // Only runs on the first successful refresh — skipped thereafter.
+    if !api_check_done {
+        ensure_api_enabled(&session, &config.container)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 
     let client = XrayApiClient::new(&session);
 

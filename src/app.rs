@@ -53,6 +53,8 @@ pub struct App {
     pending_refresh: bool,
     /// Whether we've done the initial data load
     initial_load_done: bool,
+    /// Whether ensure_api_enabled has already succeeded (skip on subsequent refreshes)
+    api_check_done: bool,
     /// Whether a mutation completed and we need to refresh once the current fetch finishes
     refresh_after_mutation: bool,
     /// Name of the user being added (prevents duplicate submissions and stale error routing)
@@ -88,6 +90,7 @@ impl App {
             backend_tx: tx,
             pending_refresh: false,
             initial_load_done: false,
+            api_check_done: false,
             refresh_after_mutation: false,
             pending_add_name: None,
             pending_delete_uuid: None,
@@ -127,6 +130,7 @@ impl App {
             backend_tx: tx,
             pending_refresh: false,
             initial_load_done: false,
+            api_check_done: false,
             refresh_after_mutation: false,
             pending_add_name: None,
             pending_delete_uuid: None,
@@ -425,7 +429,12 @@ impl App {
         self.pending_refresh = true;
         self.last_refresh = Instant::now();
         self.status_message = "Refreshing...".to_string();
-        backend::spawn_fetch_dashboard(&self.runtime, self.config.clone(), self.backend_tx.clone());
+        backend::spawn_fetch_dashboard(
+            &self.runtime,
+            self.config.clone(),
+            self.backend_tx.clone(),
+            self.api_check_done,
+        );
     }
 
     /// Process any pending backend messages
@@ -449,6 +458,7 @@ impl App {
                             self.dashboard_state.total_download = data.server_info.downlink;
                             self.dashboard_state.loading = false;
                             self.initial_load_done = true;
+                            self.api_check_done = true;
                             self.status_message =
                                 format!("Last update: {}", chrono_free_timestamp());
                         }
