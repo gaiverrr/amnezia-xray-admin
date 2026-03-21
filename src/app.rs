@@ -13,6 +13,7 @@ use crate::ui::add_user::{self, AddUserResult, AddUserState};
 use crate::ui::dashboard::{self, DashboardState};
 use crate::ui::setup::{self, SetupState};
 use crate::ui::theme;
+use crate::ui::user_detail::{self, DetailMode, UserDetailState};
 
 /// Screens in the application
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +37,7 @@ pub struct App {
     pub setup_state: SetupState,
     pub dashboard_state: DashboardState,
     pub add_user_state: AddUserState,
+    pub user_detail_state: UserDetailState,
     pub config: Config,
 }
 
@@ -53,6 +55,7 @@ impl App {
             setup_state: SetupState::default(),
             dashboard_state: DashboardState::default(),
             add_user_state: AddUserState::default(),
+            user_detail_state: UserDetailState::default(),
             config: Config::default(),
         }
     }
@@ -79,6 +82,7 @@ impl App {
             setup_state: SetupState::from_config(&config),
             dashboard_state,
             add_user_state: AddUserState::default(),
+            user_detail_state: UserDetailState::default(),
             config,
         }
     }
@@ -120,7 +124,8 @@ impl App {
                 self.dashboard_state.select_previous();
             }
             KeyCode::Enter => {
-                if self.dashboard_state.selected_user().is_some() {
+                if let Some(user) = self.dashboard_state.selected_user() {
+                    self.user_detail_state.open(user.clone());
                     self.screen = Screen::UserDetail;
                 }
             }
@@ -129,9 +134,9 @@ impl App {
                 self.screen = Screen::AddUser;
             }
             KeyCode::Char('d') => {
-                if self.dashboard_state.selected_user().is_some() {
+                if let Some(user) = self.dashboard_state.selected_user() {
+                    self.user_detail_state.open(user.clone());
                     self.screen = Screen::UserDetail;
-                    // Delete confirmation happens in user detail view
                 }
             }
             _ => {}
@@ -187,8 +192,28 @@ impl App {
     }
 
     fn handle_user_detail_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => self.screen = Screen::Dashboard,
+        // Let the detail state handle input first
+        if self.user_detail_state.handle_key(key) {
+            return;
+        }
+
+        // Keys not consumed by user_detail_state
+        match &self.user_detail_state.mode {
+            DetailMode::View => match key.code {
+                KeyCode::Esc => {
+                    self.user_detail_state.close();
+                    self.screen = Screen::Dashboard;
+                }
+                KeyCode::Char('q') => {
+                    self.screen = Screen::QrView;
+                }
+                _ => {}
+            },
+            DetailMode::DeleteSuccess | DetailMode::DeleteError(_) => {
+                // Any key returns to dashboard
+                self.user_detail_state.close();
+                self.screen = Screen::Dashboard;
+            }
             _ => {}
         }
     }
@@ -275,6 +300,9 @@ impl App {
                     // Draw dashboard underneath, then overlay the dialog
                     dashboard::draw(&mut self.dashboard_state, frame, chunks[1]);
                     add_user::draw(&self.add_user_state, frame, chunks[1]);
+                }
+                Screen::UserDetail => {
+                    user_detail::draw(&self.user_detail_state, frame, chunks[1]);
                 }
                 _ => Self::draw_placeholder_widget(frame, chunks[1], screen_label),
             }
@@ -509,11 +537,11 @@ mod tests {
     }
 
     #[test]
-    fn test_user_detail_q_returns_to_dashboard() {
+    fn test_user_detail_q_goes_to_qr_view() {
         let mut app = App::new(true);
         app.screen = Screen::UserDetail;
         app.handle_key(make_key(KeyCode::Char('q')));
-        assert_eq!(app.screen, Screen::Dashboard);
+        assert_eq!(app.screen, Screen::QrView);
     }
 
     #[test]
@@ -905,5 +933,119 @@ mod tests {
         app.add_user_state.set_error("connection failed".to_string());
         app.handle_key(make_key(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Dashboard);
+    }
+
+    // --- User detail integration tests ---
+
+    fn app_with_detail_user() -> App {
+        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
+        // Open detail for alice (selected by default at index 0)
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::UserDetail);
+        assert_eq!(app.user_detail_state.user_name(), Some("alice"));
+        app
+    }
+
+    #[test]
+    fn test_dashboard_enter_opens_detail_with_user() {
+        let app = app_with_detail_user();
+        assert_eq!(app.screen, Screen::UserDetail);
+        assert_eq!(app.user_detail_state.user.as_ref().unwrap().name, "alice");
+    }
+
+    #[test]
+    fn test_user_detail_esc_returns_and_closes() {
+        let mut app = app_with_detail_user();
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.screen, Screen::Dashboard);
+        assert!(app.user_detail_state.user.is_none());
+    }
+
+    #[test]
+    fn test_user_detail_q_goes_to_qr() {
+        let mut app = app_with_detail_user();
+        app.handle_key(make_key(KeyCode::Char('q')));
+        assert_eq!(app.screen, Screen::QrView);
+    }
+
+    #[test]
+    fn test_user_detail_d_enters_delete_confirm() {
+        let mut app = app_with_detail_user();
+        app.handle_key(make_key(KeyCode::Char('d')));
+        assert_eq!(app.screen, Screen::UserDetail);
+        assert_eq!(app.user_detail_state.mode, DetailMode::DeleteConfirm);
+    }
+
+    #[test]
+    fn test_user_detail_delete_confirm_esc_returns_to_view() {
+        let mut app = app_with_detail_user();
+        app.handle_key(make_key(KeyCode::Char('d'))); // enter delete confirm
+        app.handle_key(make_key(KeyCode::Esc)); // cancel
+        assert_eq!(app.screen, Screen::UserDetail);
+        assert_eq!(app.user_detail_state.mode, DetailMode::View);
+    }
+
+    #[test]
+    fn test_user_detail_delete_confirm_typing() {
+        let mut app = app_with_detail_user();
+        app.handle_key(make_key(KeyCode::Char('d'))); // enter delete confirm
+        app.handle_key(make_key(KeyCode::Char('a')));
+        app.handle_key(make_key(KeyCode::Char('l')));
+        app.handle_key(make_key(KeyCode::Char('i')));
+        assert_eq!(app.user_detail_state.delete_input, "ali");
+    }
+
+    #[test]
+    fn test_user_detail_delete_confirm_enter_wrong_name() {
+        let mut app = app_with_detail_user();
+        app.handle_key(make_key(KeyCode::Char('d')));
+        app.handle_key(make_key(KeyCode::Char('b')));
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(!app.user_detail_state.delete_confirmed);
+    }
+
+    #[test]
+    fn test_user_detail_delete_confirm_enter_correct_name() {
+        let mut app = app_with_detail_user();
+        app.handle_key(make_key(KeyCode::Char('d')));
+        for c in "alice".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(app.user_detail_state.delete_confirmed);
+    }
+
+    #[test]
+    fn test_user_detail_c_sets_clipboard_flag() {
+        let mut app = app_with_detail_user();
+        app.handle_key(make_key(KeyCode::Char('c')));
+        // Flag was set and can be taken
+        assert!(app.user_detail_state.take_clipboard_copied());
+    }
+
+    #[test]
+    fn test_user_detail_delete_success_any_key_returns() {
+        let mut app = app_with_detail_user();
+        app.user_detail_state.set_delete_success();
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.screen, Screen::Dashboard);
+        assert!(app.user_detail_state.user.is_none());
+    }
+
+    #[test]
+    fn test_user_detail_delete_error_any_key_returns() {
+        let mut app = app_with_detail_user();
+        app.user_detail_state.set_delete_error("fail".to_string());
+        app.handle_key(make_key(KeyCode::Char('x')));
+        assert_eq!(app.screen, Screen::Dashboard);
+        assert!(app.user_detail_state.user.is_none());
+    }
+
+    #[test]
+    fn test_dashboard_d_opens_detail() {
+        let mut app = app_with_users(vec![make_test_user("alice")]);
+        app.handle_key(make_key(KeyCode::Char('d')));
+        assert_eq!(app.screen, Screen::UserDetail);
+        assert_eq!(app.user_detail_state.user_name(), Some("alice"));
     }
 }

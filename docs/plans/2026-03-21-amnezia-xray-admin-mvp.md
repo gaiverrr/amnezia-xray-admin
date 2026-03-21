@@ -184,12 +184,12 @@ src/
 - [x] manual testing: add a test user, verify appears in list (skipped - not automatable)
 
 ### Task 12: User detail panel and delete confirmation
-- [ ] implement user detail in `src/ui/user_detail.rs`
-- [ ] show: full UUID, name, creation date, upload/download, online IPs with timestamps
-- [ ] `[q]` to show QR code, `[d]` to delete with confirmation
-- [ ] delete confirmation: "Are you sure? Type user name to confirm" (prevents accidental deletion)
-- [ ] `[c]` to copy vless:// URL to clipboard (if terminal supports OSC 52)
-- [ ] manual testing: view user details, delete a test user
+- [x] implement user detail in `src/ui/user_detail.rs`
+- [x] show: full UUID, name, creation date, upload/download, online IPs with timestamps
+- [x] `[q]` to show QR code, `[d]` to delete with confirmation
+- [x] delete confirmation: "Are you sure? Type user name to confirm" (prevents accidental deletion)
+- [x] `[c]` to copy vless:// URL to clipboard (if terminal supports OSC 52)
+- [x] manual testing: view user details, delete a test user (skipped - not automatable)
 
 ### Task 13: QR code view
 - [ ] implement QR display in `src/ui/qr.rs`
