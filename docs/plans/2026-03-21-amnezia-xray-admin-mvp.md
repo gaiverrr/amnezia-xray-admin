@@ -97,14 +97,14 @@ src/
 - [x] run tests — must pass before next task
 
 ### Task 3: SSH connection layer
-- [ ] implement SSH connection in `src/ssh.rs` using russh
-- [ ] support direct host:port connection with key auth
-- [ ] support ssh-agent authentication
-- [ ] parse `~/.ssh/config` to resolve Host aliases (hostname, port, user, identity file)
-- [ ] implement `exec_command()` — run command on remote, return stdout/stderr
-- [ ] implement `exec_in_container()` — wrapper for `docker exec <container> <cmd>`
-- [ ] write tests for SSH config parsing (unit tests with mock config content)
-- [ ] run tests — must pass before next task
+- [x] implement SSH connection in `src/ssh.rs` using russh
+- [x] support direct host:port connection with key auth
+- [x] support ssh-agent authentication
+- [x] parse `~/.ssh/config` to resolve Host aliases (hostname, port, user, identity file)
+- [x] implement `exec_command()` — run command on remote, return stdout/stderr
+- [x] implement `exec_in_container()` — wrapper for `docker exec <container> <cmd>`
+- [x] write tests for SSH config parsing (unit tests with mock config content)
+- [x] run tests — must pass before next task
 
 ### Task 4: Xray data types and server config parsing
 - [ ] define types in `src/xray/types.rs`: `XrayUser`, `ClientEntry`, `ServerConfig`, `TrafficStats`
