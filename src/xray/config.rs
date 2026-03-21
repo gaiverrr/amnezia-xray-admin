@@ -246,10 +246,9 @@ pub async fn ensure_api_enabled(backend: &dyn XrayBackend) -> Result<bool> {
 
 /// Poll `xray version` inside the container until it succeeds or timeout.
 async fn wait_for_xray_ready(backend: &dyn XrayBackend) -> Result<()> {
-    let check_cmd = format!("docker exec {} xray version", backend.container_name());
     for _ in 0..10 {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        if let Ok(result) = backend.exec_on_host(&check_cmd).await {
+        if let Ok(result) = backend.exec_in_container("xray version").await {
             if result.success() {
                 return Ok(());
             }
