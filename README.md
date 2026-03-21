@@ -29,7 +29,7 @@ brew install amnezia-xray-admin
 
 ### Cargo install
 
-Requires [Rust 1.70+](https://rustup.rs/).
+Requires [Rust 1.70+](https://rustup.rs/). On Linux, a C compiler (`gcc`, `make`, `perl`) is also needed.
 
 ```sh
 cargo install --git https://github.com/gaiverrr/amnezia-xray-admin
@@ -177,10 +177,12 @@ Contributions are welcome! Please:
 ### How to release
 
 1. Update version in `Cargo.toml` and add a section to `CHANGELOG.md`
-2. Commit and tag: `git tag -a v0.X.0 -m "v0.X.0"`
-3. Push with tags: `git push origin main --tags`
-4. GitHub Actions builds release binaries automatically and creates a GitHub Release
-5. Update the Homebrew formula in [gaiverrr/homebrew-tap](https://github.com/gaiverrr/homebrew-tap) with the new tarball URL and SHA256
+2. Run tests: `cargo test && cargo clippy && cargo fmt --check`
+3. Commit: `git commit -am "chore: bump version to v0.X.0"`
+4. Tag: `git tag -a v0.X.0 -m "v0.X.0"`
+5. Push: `git push origin main --tags`
+6. GitHub Actions builds release binaries automatically and creates a GitHub Release
+7. Update the Homebrew formula in [gaiverrr/homebrew-tap](https://github.com/gaiverrr/homebrew-tap) with the new tarball URL and SHA256
 
 ## License
 

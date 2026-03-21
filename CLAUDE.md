@@ -97,4 +97,4 @@ To publish a new release (e.g. v0.2.0):
    - Update `sha256` (download tarball, run `shasum -a 256`)
    - Push to homebrew-tap repo
 
-CI runs on every push/PR via `.github/workflows/ci.yml` (test + clippy + fmt on ubuntu + macos).
+CI runs on pushes to main and on all pull requests via `.github/workflows/ci.yml` (test + clippy + fmt on ubuntu + macos).
