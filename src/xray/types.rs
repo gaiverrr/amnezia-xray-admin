@@ -267,6 +267,13 @@ impl ClientsTable {
         serde_json::to_string_pretty(&self.entries).expect("valid JSON")
     }
 
+    /// Check if a client with the given name exists
+    pub fn has_name(&self, name: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|e| e.user_data.client_name == name)
+    }
+
     /// Find a name for a given UUID
     pub fn name_for_uuid(&self, uuid: &str) -> Option<&str> {
         self.entries

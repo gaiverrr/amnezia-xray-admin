@@ -62,18 +62,19 @@ impl<'a> XrayApiClient<'a> {
         }
         let email = XrayUser::email_from_name(name);
 
-        // Auto-backup before mutation
-        self.backup_config().await?;
-
         let uuid = Uuid::new_v4().to_string();
 
         // 1. Persist to server.json on disk first
         let mut config = read_server_config(self.backend).await?;
 
-        // Check for duplicate email in existing clients
+        // Check for duplicate email in existing clients (before backup to avoid
+        // overwriting the rolling backup on no-op duplicate attempts)
         if config.has_client_email(&email) {
             return Err(AppError::Xray(format!("user '{}' already exists", name)));
         }
+
+        // Auto-backup before mutation (after validation)
+        self.backup_config().await?;
         let client = ServerJsonClient {
             id: uuid.clone(),
             flow: "xtls-rprx-vision".to_string(),
@@ -102,10 +103,8 @@ impl<'a> XrayApiClient<'a> {
     /// access is already revoked — avoiding the worse failure mode of
     /// a user appearing deleted in the UI while still having live access.
     pub async fn remove_user(&self, uuid: &str) -> Result<()> {
-        // Auto-backup before mutation
-        self.backup_config().await?;
-
-        // Find the user's email first
+        // Find the user's email first (validate before backup to avoid
+        // overwriting the rolling backup on no-op "not found" attempts)
         let config = read_server_config(self.backend).await?;
         let table = read_clients_table(self.backend).await?;
 
@@ -116,6 +115,9 @@ impl<'a> XrayApiClient<'a> {
             .and_then(|c| c.email.clone())
             .or_else(|| table.name_for_uuid(uuid).map(XrayUser::email_from_name))
             .ok_or_else(|| AppError::Xray(format!("user {} not found", uuid)))?;
+
+        // Auto-backup before mutation (after validation)
+        self.backup_config().await?;
 
         // 1. Remove from running Xray instance via API first (revoke access)
         self.exec_api_rmu(&email).await?;

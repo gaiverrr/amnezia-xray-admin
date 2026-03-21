@@ -568,8 +568,9 @@ async fn cli_restore(config: &Config, timestamp: Option<&str>, local: bool) -> e
     // List available backups first
     let backups = client.list_backups().await?;
     if backups.is_empty() {
-        eprintln!("No timestamped backups found.");
-        return Ok(());
+        return Err(error::AppError::Xray(
+            "no timestamped backups found".to_string(),
+        ));
     }
 
     eprintln!("Available backups:");
@@ -589,16 +590,49 @@ async fn cli_restore(config: &Config, timestamp: Option<&str>, local: bool) -> e
 }
 
 async fn cli_add_user(config: &Config, name: &str, local: bool) -> error::Result<()> {
+    if name.trim().is_empty() {
+        return Err(error::AppError::Xray(
+            "user name cannot be empty".to_string(),
+        ));
+    }
+
     let backend = connect_cli_backend(config, local).await?;
+
+    // Pre-check: reject duplicate names before potentially bootstrapping the API,
+    // so we don't trigger a backup + restart for a no-op duplicate attempt.
+    // Check both server.json emails (normalized configs) and clientsTable names
+    // (pre-bootstrap configs where emails haven't been backfilled yet).
+    let email = xray::types::XrayUser::email_from_name(name);
+    let server_config = xray::config::read_server_config(backend.as_ref()).await?;
+    let clients_table = xray::config::read_clients_table(backend.as_ref()).await?;
+    if server_config.has_client_email(&email) || clients_table.has_name(name) {
+        return Err(error::AppError::Xray(format!(
+            "user '{}' already exists",
+            name
+        )));
+    }
+    drop(server_config);
+    drop(clients_table);
+
+    // Ensure API is enabled (idempotent — no restart if already configured)
+    let modified = xray::config::ensure_api_enabled(backend.as_ref()).await?;
+    if modified {
+        eprintln!("API was not configured — enabled and container restarted.");
+    }
+
     let client = xray::client::XrayApiClient::new(backend.as_ref());
 
     let uuid = client.add_user(name).await?;
-    let vless_url = backend::build_vless_url(backend.as_ref(), &uuid, name).await?;
 
     println!("User added successfully.");
     println!("Name:  {}", name);
     println!("UUID:  {}", uuid);
-    println!("URL:   {}", vless_url);
+
+    // URL generation is best-effort: if it fails, the user was still added successfully.
+    match backend::build_vless_url(backend.as_ref(), &uuid, name).await {
+        Ok(vless_url) => println!("URL:   {}", vless_url),
+        Err(e) => eprintln!("Warning: URL generation failed: {}. Use --user-url to retry.", e),
+    }
 
     Ok(())
 }
