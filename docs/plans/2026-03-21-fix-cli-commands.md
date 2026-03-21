@@ -169,11 +169,11 @@ Three-phase plan:
 - [x] run tests — 319 tests pass, clippy clean
 
 ### Task 15: Docker image and deployment scripts
-- [ ] create `Dockerfile` (multi-stage: rust builder → minimal runtime with docker CLI)
-- [ ] create `docker-compose.yml` with docker.sock mount and env vars
-- [ ] create `deploy/install.sh` — one-command install script for VPS
-- [ ] test Docker build locally
-- [ ] run tests — must pass before next task
+- [x] create `Dockerfile` (multi-stage: rust builder → minimal runtime with docker CLI)
+- [x] create `docker-compose.yml` with docker.sock mount and env vars
+- [x] create `deploy/install.sh` — one-command install script for VPS
+- [x] test Docker build locally
+- [x] run tests — 319 tests pass
 
 ### Task 16: TUI "Setup Telegram Bot" screen
 - [ ] add "Telegram Bot" option to TUI dashboard (new keybinding, e.g. [t])

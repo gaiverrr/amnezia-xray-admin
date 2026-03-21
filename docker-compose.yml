@@ -1,0 +1,10 @@
+services:
+  axadmin-bot:
+    image: axadmin:latest
+    build: .
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+    command: --telegram-bot --local --container ${XRAY_CONTAINER:-amnezia-xray}
