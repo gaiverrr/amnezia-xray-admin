@@ -74,12 +74,12 @@ brew install amnezia-xray-admin
 - [x] run tests — must pass before next task
 
 ### Task 5: Set up GitHub Actions release workflow
-- [ ] create `.github/workflows/release.yml`: triggered on tag push `v*`
-- [ ] build release binaries: linux-x86_64, linux-aarch64, macos-x86_64, macos-aarch64
-- [ ] use `cross` for Linux cross-compilation (or `cargo build --target`)
-- [ ] create GitHub Release with binaries attached
-- [ ] generate SHA256 checksums for each binary
-- [ ] run tests — must pass before next task
+- [x] create `.github/workflows/release.yml`: triggered on tag push `v*`
+- [x] build release binaries: linux-x86_64, linux-aarch64, macos-x86_64, macos-aarch64
+- [x] use `cross` for Linux cross-compilation (or `cargo build --target`)
+- [x] create GitHub Release with binaries attached
+- [x] generate SHA256 checksums for each binary
+- [x] run tests — must pass before next task
 
 ### Task 6: Create Homebrew tap
 - [ ] create `gaiverrr/homebrew-tap` repo on GitHub (via `gh repo create`)
