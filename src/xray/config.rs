@@ -162,6 +162,7 @@ fn add_email_to_clients(config: &mut ServerConfig, clients_table: &ClientsTable)
 
         let email = format!("{}@vpn", name);
         client["email"] = json!(email);
+        client["level"] = json!(0);
     }
 
     Ok(())
