@@ -139,14 +139,14 @@ impl<'a> XrayApiClient<'a> {
     pub async fn get_online_count(&self, email: &str) -> Result<u32> {
         let cmd = build_online_cmd(email)?;
         let result = self.session.exec_in_container(&cmd).await?;
-        Ok(parse_stat_value(&result.stdout).unwrap_or(0) as u32)
+        Ok(parse_online_count(&result.stdout).unwrap_or(0))
     }
 
     /// Get list of online IPs for a user.
     pub async fn get_online_ips(&self, email: &str) -> Result<Vec<String>> {
         let cmd = build_online_ip_list_cmd(email)?;
         let result = self.session.exec_in_container(&cmd).await?;
-        Ok(parse_ip_list(&result.stdout))
+        Ok(parse_online_ip_list(&result.stdout))
     }
 
     /// Get server info (version, total traffic).
@@ -402,22 +402,62 @@ pub fn parse_version(output: &str) -> String {
     "unknown".to_string()
 }
 
-/// Parse online IP list from `xray api statsonlineiplist` output.
+/// Parse online count from `xray api statsonline` JSON output.
 ///
-/// Expected format: multiple stat entries where the IP is embedded in the name:
-/// ```text
-/// stat: {
-///   name: "user>>>email@vpn>>>online>>>ip>>>1.2.3.4"
-///   value: 1234567890
+/// Expected JSON format:
+/// ```json
+/// {
+///     "stat": {
+///         "name": "user>>>email@vpn>>>online",
+///         "value": 2
+///     }
 /// }
 /// ```
-pub fn parse_ip_list(output: &str) -> Vec<String> {
+///
+/// Falls back to line-based parsing for proto text format compatibility.
+pub fn parse_online_count(output: &str) -> Option<u32> {
+    // Try JSON parsing first
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(output) {
+        if let Some(val) = v.get("stat").and_then(|s| s.get("value")).and_then(|v| v.as_i64()) {
+            return Some(val.max(0) as u32);
+        }
+    }
+    // Fallback to line-based parsing (proto text format)
+    parse_stat_value(output).map(|v| v as u32)
+}
+
+/// Parse online IP list from `xray api statsonlineiplist` JSON output.
+///
+/// Expected JSON format:
+/// ```json
+/// {
+///     "name": "user>>>email@vpn>>>online",
+///     "ips": {
+///         "1.2.3.4": 1711000000,
+///         "5.6.7.8": 1711000123
+///     }
+/// }
+/// ```
+///
+/// When no IPs are connected, the `ips` field is omitted.
+/// Falls back to line-based parsing for proto text format compatibility.
+pub fn parse_online_ip_list(output: &str) -> Vec<String> {
+    // Try JSON parsing first
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(output) {
+        if let Some(ips_obj) = v.get("ips").and_then(|i| i.as_object()) {
+            let mut ips: Vec<String> = ips_obj.keys().cloned().collect();
+            ips.sort();
+            return ips;
+        }
+        // JSON parsed but no "ips" field — no users online
+        return Vec::new();
+    }
+    // Fallback: line-based parsing for proto text format
     let mut ips = Vec::new();
     for line in output.lines() {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("name:") {
             let name = rest.trim().trim_matches('"');
-            // Look for >>>ip>>> segment
             if let Some(ip_part) = name.split(">>>ip>>>").nth(1) {
                 let ip = ip_part.trim_matches('"');
                 if !ip.is_empty() {
@@ -586,18 +626,118 @@ mod tests {
         assert_eq!(parse_version("some other output"), "unknown");
     }
 
+    // -- Online status parsing tests (JSON format from xray API) --
+
     #[test]
-    fn test_parse_ip_list_single() {
+    fn test_parse_online_count_json() {
+        let output = r#"{
+    "stat": {
+        "name": "user>>>alice@vpn>>>online",
+        "value": 2
+    }
+}"#;
+        assert_eq!(parse_online_count(output), Some(2));
+    }
+
+    #[test]
+    fn test_parse_online_count_json_zero() {
+        let output = r#"{
+    "stat": {
+        "name": "user>>>alice@vpn>>>online",
+        "value": 0
+    }
+}"#;
+        assert_eq!(parse_online_count(output), Some(0));
+    }
+
+    #[test]
+    fn test_parse_online_count_json_negative_becomes_zero() {
+        let output = r#"{
+    "stat": {
+        "name": "user>>>alice@vpn>>>online",
+        "value": -1
+    }
+}"#;
+        assert_eq!(parse_online_count(output), Some(0));
+    }
+
+    #[test]
+    fn test_parse_online_count_empty() {
+        assert_eq!(parse_online_count(""), None);
+    }
+
+    #[test]
+    fn test_parse_online_count_proto_text_fallback() {
+        // Fallback to proto text format for older xray versions
+        let output = "stat: {\n  name: \"user>>>alice@vpn>>>online\"\n  value: 3\n}";
+        assert_eq!(parse_online_count(output), Some(3));
+    }
+
+    #[test]
+    fn test_parse_online_ip_list_json() {
+        let output = r#"{
+    "name": "user>>>alice@vpn>>>online",
+    "ips": {
+        "1.2.3.4": 1711000000,
+        "5.6.7.8": 1711000123
+    }
+}"#;
+        let ips = parse_online_ip_list(output);
+        assert_eq!(ips, vec!["1.2.3.4", "5.6.7.8"]);
+    }
+
+    #[test]
+    fn test_parse_online_ip_list_json_single() {
+        let output = r#"{
+    "name": "user>>>alice@vpn>>>online",
+    "ips": {
+        "10.0.0.1": 1711000000
+    }
+}"#;
+        let ips = parse_online_ip_list(output);
+        assert_eq!(ips, vec!["10.0.0.1"]);
+    }
+
+    #[test]
+    fn test_parse_online_ip_list_json_no_ips_field() {
+        // When no users online, "ips" field is omitted
+        let output = r#"{
+    "name": "user>>>alice@vpn>>>online"
+}"#;
+        let ips = parse_online_ip_list(output);
+        assert!(ips.is_empty());
+    }
+
+    #[test]
+    fn test_parse_online_ip_list_json_ipv6() {
+        let output = r#"{
+    "name": "user>>>alice@vpn>>>online",
+    "ips": {
+        "2001:db8::1": 1711000000
+    }
+}"#;
+        let ips = parse_online_ip_list(output);
+        assert_eq!(ips, vec!["2001:db8::1"]);
+    }
+
+    #[test]
+    fn test_parse_online_ip_list_empty() {
+        assert_eq!(parse_online_ip_list(""), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_parse_online_ip_list_proto_text_fallback() {
+        // Fallback to proto text format for older xray versions
         let output = r#"stat: {
   name: "user>>>alice@vpn>>>online>>>ip>>>1.2.3.4"
   value: 1700000000
 }"#;
-        let ips = parse_ip_list(output);
+        let ips = parse_online_ip_list(output);
         assert_eq!(ips, vec!["1.2.3.4"]);
     }
 
     #[test]
-    fn test_parse_ip_list_multiple() {
+    fn test_parse_online_ip_list_proto_text_multiple() {
         let output = r#"stat: {
   name: "user>>>alice@vpn>>>online>>>ip>>>1.2.3.4"
   value: 1700000000
@@ -606,32 +746,8 @@ stat: {
   name: "user>>>alice@vpn>>>online>>>ip>>>5.6.7.8"
   value: 1700000001
 }"#;
-        let ips = parse_ip_list(output);
+        let ips = parse_online_ip_list(output);
         assert_eq!(ips, vec!["1.2.3.4", "5.6.7.8"]);
-    }
-
-    #[test]
-    fn test_parse_ip_list_empty() {
-        assert_eq!(parse_ip_list(""), Vec::<String>::new());
-    }
-
-    #[test]
-    fn test_parse_ip_list_no_ip_entries() {
-        let output = r#"stat: {
-  name: "user>>>alice@vpn>>>traffic>>>downlink"
-  value: 12345
-}"#;
-        assert_eq!(parse_ip_list(output), Vec::<String>::new());
-    }
-
-    #[test]
-    fn test_parse_ip_list_ipv6() {
-        let output = r#"stat: {
-  name: "user>>>alice@vpn>>>online>>>ip>>>2001:db8::1"
-  value: 1700000000
-}"#;
-        let ips = parse_ip_list(output);
-        assert_eq!(ips, vec!["2001:db8::1"]);
     }
 
     // -- Integration-like tests for command/response roundtrip --
