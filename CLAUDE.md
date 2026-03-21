@@ -7,39 +7,70 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 cargo build                    # dev build
 cargo build --release          # release build
-cargo test                     # all 267 tests
+cargo test                     # all 350 tests
 cargo test xray::client        # run tests in one module
 cargo test test_build_rmu      # run a single test by name
-cargo clippy                   # lint (expect dead_code warnings - backend not fully wired)
+cargo clippy                   # lint (expect dead_code warnings in telegram module)
 cargo fmt --check              # format check
 cargo run                      # launch TUI
 cargo run -- --ssh-host vps-vpn --container amnezia-xray  # with CLI args
 ```
 
+### CLI commands (non-interactive)
+
+```bash
+cargo run -- --list-users                          # list users with traffic stats
+cargo run -- --check-server                        # verify API setup, print xray version
+cargo run -- --user-url <name>                     # print vless:// URL for a user
+cargo run -- --user-qr <name>                      # render QR code in terminal
+cargo run -- --online-status                       # show online users and IPs
+cargo run -- --server-info                         # xray version, traffic, user count
+cargo run -- --local --list-users                  # use local docker exec (on VPS)
+cargo run -- --telegram-bot --local --container c  # run Telegram bot daemon
+cargo run -- --deploy-bot --token <TOKEN>          # deploy bot to VPS via SSH
+```
+
 ## Architecture
 
-**Async TUI pattern**: Synchronous ratatui event loop + tokio runtime for background SSH/Xray operations. Communication via `mpsc` channel (`BackendMsg` enum).
+**Three execution modes**: TUI (interactive dashboard), CLI (one-shot commands), Telegram bot (daemon on VPS).
 
+**Backend abstraction** (`XrayBackend` trait) enables all modes to share xray operation code:
 ```
-main.rs → App (state machine + event loop)
-             ├── backend.rs (spawns async tasks on tokio, sends results via mpsc)
-             ├── ui/ (screen rendering: setup, dashboard, user_detail, add_user, qr)
-             └── xray/ (client.rs → ssh.rs → remote docker exec → xray API)
+                    ┌─────────────────┐
+                    │  XrayApiClient  │  (list/add/remove users, stats, online)
+                    └────────┬────────┘
+                             │ uses
+                    ┌────────▼────────┐
+                    │  XrayBackend    │  (trait: exec_in_container, exec_on_host)
+                    └────┬───────┬────┘
+              ┌──────────▼┐  ┌──▼──────────┐
+              │ SshBackend │  │LocalBackend │
+              │ (remote)   │  │(on VPS)     │
+              └────────────┘  └─────────────┘
+              Used by:          Used by:
+              - TUI              - Telegram bot (--local)
+              - CLI (remote)     - CLI --local
 ```
+
+**Async TUI pattern**: Synchronous ratatui event loop + tokio runtime for background operations. Communication via `mpsc` channel (`BackendMsg` enum).
 
 **Key flow**: TUI calls `backend::spawn_*()` → tokio task runs SSH commands → sends `BackendMsg` back → `App::process_backend_messages()` updates state → next `draw()` renders.
 
 **Guard flags** (`pending_refresh`, `pending_add_name`, etc.) prevent duplicate async operations. `refresh_after_mutation` handles stale fetch results after add/delete.
 
+**Telegram bot**: Uses `teloxide` framework. Runs as `--telegram-bot` mode with `LocalBackend` on VPS. First `/start` sender becomes admin (auto-detect). Commands: /users, /status, /add, /delete, /url, /qr.
+
 ## Module Responsibilities
 
 - **config.rs**: TOML config at `~/.config/amnezia-xray-admin/config.toml`, clap CLI args, merge logic
 - **ssh.rs**: Pure-Rust SSH via russh. Parses `~/.ssh/config`, TOFU known_hosts verification, `exec_command()` / `exec_in_container()`
+- **backend_trait.rs**: `XrayBackend` trait + `SshBackend` and `LocalBackend` implementations
 - **xray/types.rs**: Data types (`XrayUser`, `ServerConfig`, `ClientsTable`). `ServerConfig` wraps `serde_json::Value` to preserve unknown fields
 - **xray/config.rs**: `ensure_api_enabled()` — one-time server.json transformation (adds stats/policy/api sections, emails, level:0)
 - **xray/client.rs**: `XrayApiClient` — list/add/remove users, stats, online status. Commands run via `docker exec <container> xray api ...`
 - **backend.rs**: Async task spawners, `BackendMsg` enum, connection helpers
-- **app.rs**: 5-screen state machine (Setup→Dashboard→UserDetail/AddUser/QrView), event loop with 250ms poll + 5s auto-refresh
+- **telegram.rs**: Telegram bot module using teloxide. Commands: /start, /help, /users, /status, /add, /delete, /url, /qr
+- **app.rs**: 6-screen state machine (Setup→Dashboard→UserDetail/AddUser/QrView/TelegramSetup), event loop with 250ms poll + 5s auto-refresh
 
 ## Important Design Details
 

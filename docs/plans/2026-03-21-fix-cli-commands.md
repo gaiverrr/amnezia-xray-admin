@@ -203,8 +203,8 @@ Three-phase plan:
 - [x] run full test suite + clippy — 350 tests pass, clippy clean (dead_code warnings expected)
 
 ### Task 19: [Final] Update documentation
-- [ ] update CLAUDE.md with new CLI commands and architecture
-- [ ] update README with:
+- [x] update CLAUDE.md with new CLI commands and architecture
+- [x] update README with:
   - CLI usage examples
   - Telegram bot setup (via TUI and CLI)
   - Docker deployment instructions
