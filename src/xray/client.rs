@@ -160,15 +160,10 @@ impl<'a> XrayApiClient<'a> {
         // Auto-backup before mutation
         self.backup_config().await?;
 
-        // Remove old stats counter from running instance
-        let _ = self.exec_api_rmu(&old_email).await;
-
-        // Update clientsTable
+        // Mutate both in memory first, validate before any writes
         let mut table = table;
         table.rename(&uuid, new_name);
-        self.write_clients_table(&table).await?;
 
-        // Update server.json email
         let mut config = config;
         let updated = config.update_client_email(&uuid, &new_email)?;
         if !updated {
@@ -177,6 +172,12 @@ impl<'a> XrayApiClient<'a> {
                 uuid
             )));
         }
+
+        // Remove old stats counter from running instance
+        let _ = self.exec_api_rmu(&old_email).await;
+
+        // Write both files (both in-memory mutations already validated)
+        self.write_clients_table(&table).await?;
         self.write_server_config(&config).await?;
 
         // Restart container to pick up new config
@@ -413,7 +414,7 @@ impl<'a> XrayApiClient<'a> {
 /// Build the shell command for auto-backup (overwrites latest .bak).
 pub fn build_backup_cmd() -> String {
     format!(
-        "cp {} {}.bak && cp {} {}.bak",
+        "sh -c 'cp {} {}.bak && cp {} {}.bak'",
         SERVER_CONFIG_PATH, SERVER_CONFIG_PATH, CLIENTS_TABLE_PATH, CLIENTS_TABLE_PATH
     )
 }
@@ -422,7 +423,7 @@ pub fn build_backup_cmd() -> String {
 /// Uses `$(date +%Y%m%d-%H%M%S)` so the timestamp is generated server-side.
 pub fn build_backup_timestamped_cmd() -> String {
     format!(
-        "ts=$(date +%Y%m%d-%H%M%S) && cp {} {}.\"$ts\".bak && cp {} {}.\"$ts\".bak && echo \"$ts\"",
+        "sh -c 'ts=$(date +%Y%m%d-%H%M%S) && cp {} {}.\"$ts\".bak && cp {} {}.\"$ts\".bak && echo \"$ts\"'",
         SERVER_CONFIG_PATH, SERVER_CONFIG_PATH, CLIENTS_TABLE_PATH, CLIENTS_TABLE_PATH
     )
 }
@@ -432,7 +433,7 @@ pub fn build_backup_timestamped_cmd() -> String {
 /// Build the shell command to list timestamped server.json backups (newest first).
 pub fn build_list_backups_cmd() -> String {
     format!(
-        "ls -t {}.*.bak 2>/dev/null || true",
+        "sh -c 'ls -t {}.*.bak 2>/dev/null || true'",
         SERVER_CONFIG_PATH
     )
 }
@@ -448,7 +449,7 @@ pub fn build_validate_backup_cmd(timestamp: &str) -> String {
 /// Build the shell command to restore both config files from a timestamped backup.
 pub fn build_restore_cmd(timestamp: &str) -> String {
     format!(
-        "cp {}.{}.bak {} && cp {}.{}.bak {}",
+        "sh -c 'cp {}.{}.bak {} && cp {}.{}.bak {}'",
         SERVER_CONFIG_PATH, timestamp, SERVER_CONFIG_PATH,
         CLIENTS_TABLE_PATH, timestamp, CLIENTS_TABLE_PATH
     )
