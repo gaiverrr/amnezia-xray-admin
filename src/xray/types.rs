@@ -144,9 +144,22 @@ impl ServerConfig {
         Ok(clients.len() < before)
     }
 
-    /// Check if the API section is already configured
+    /// Check if the API section is correctly configured with required tag and services
     pub fn has_api(&self) -> bool {
-        self.raw.get("api").is_some()
+        let Some(api) = self.raw.get("api") else {
+            return false;
+        };
+        let has_tag = api.get("tag").and_then(|t| t.as_str()) == Some("api");
+        let Some(services) = api.get("services").and_then(|s| s.as_array()) else {
+            return false;
+        };
+        let has_handler = services
+            .iter()
+            .any(|s| s.as_str() == Some("HandlerService"));
+        let has_stats = services
+            .iter()
+            .any(|s| s.as_str() == Some("StatsService"));
+        has_tag && has_handler && has_stats
     }
 
     pub(crate) fn find_vless_inbound(&self) -> Option<&serde_json::Value> {
@@ -388,8 +401,38 @@ mod tests {
         let config = ServerConfig::parse(sample_server_json()).unwrap();
         assert!(!config.has_api());
 
-        let with_api = ServerConfig::parse(r#"{"api":{"tag":"api"},"inbounds":[]}"#).unwrap();
+        // Incomplete api section (missing services) should return false
+        let incomplete =
+            ServerConfig::parse(r#"{"api":{"tag":"api"},"inbounds":[]}"#).unwrap();
+        assert!(!incomplete.has_api());
+
+        // Missing one service should return false
+        let partial = ServerConfig::parse(
+            r#"{"api":{"tag":"api","services":["HandlerService"]},"inbounds":[]}"#,
+        )
+        .unwrap();
+        assert!(!partial.has_api());
+
+        // Complete api section should return true
+        let with_api = ServerConfig::parse(
+            r#"{"api":{"tag":"api","services":["HandlerService","StatsService"]},"inbounds":[]}"#,
+        )
+        .unwrap();
         assert!(with_api.has_api());
+
+        // Wrong tag should return false even with correct services
+        let wrong_tag = ServerConfig::parse(
+            r#"{"api":{"tag":"wrong","services":["HandlerService","StatsService"]},"inbounds":[]}"#,
+        )
+        .unwrap();
+        assert!(!wrong_tag.has_api());
+
+        // Missing tag should return false
+        let no_tag = ServerConfig::parse(
+            r#"{"api":{"services":["HandlerService","StatsService"]},"inbounds":[]}"#,
+        )
+        .unwrap();
+        assert!(!no_tag.has_api());
     }
 
     #[test]

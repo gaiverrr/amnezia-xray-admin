@@ -350,8 +350,8 @@ pub fn spawn_deploy_bot(
 }
 
 pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> {
-    use base64::Engine;
     use crate::ui::telegram_setup::generate_compose_yaml;
+    use base64::Engine;
 
     let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
 
@@ -364,8 +364,10 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
     // Write docker-compose.yml
     let compose = generate_compose_yaml(token, &config.container);
     let compose_b64 = base64::engine::general_purpose::STANDARD.encode(compose.as_bytes());
+    // Use subshell with umask to create the file with restricted permissions
+    // from the start, avoiding a window where the token is world-readable.
     let write_cmd = format!(
-        "echo '{}' | base64 -d > /opt/axadmin/docker-compose.yml",
+        "(umask 077 && echo '{}' | base64 -d > /opt/axadmin/docker-compose.yml)",
         compose_b64
     );
     let result = backend
@@ -378,11 +380,6 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
             result.stderr.trim()
         ));
     }
-    // Restrict permissions — file contains the Telegram bot token
-    backend
-        .exec_on_host("chmod 600 /opt/axadmin/docker-compose.yml")
-        .await
-        .map_err(|e| format!("Failed to set compose file permissions: {}", e))?;
 
     // Write Dockerfile
     let dockerfile = include_str!("../Dockerfile");
@@ -404,8 +401,12 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
 
     // Upload source files for Docker build context
     for filename in &["Cargo.toml", "Cargo.lock"] {
-        let content = std::fs::read_to_string(filename)
-            .map_err(|e| format!("Failed to read {}: {} (run --deploy-bot from the repo directory)", filename, e))?;
+        let content = std::fs::read_to_string(filename).map_err(|e| {
+            format!(
+                "Failed to read {}: {} (run --deploy-bot from the repo directory)",
+                filename, e
+            )
+        })?;
         let content_b64 = base64::engine::general_purpose::STANDARD.encode(content.as_bytes());
         let cmd = format!(
             "echo '{}' | base64 -d > /opt/axadmin/{}",
@@ -416,7 +417,11 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
             .await
             .map_err(|e| format!("Failed to upload {}: {}", filename, e))?;
         if !result.success() {
-            return Err(format!("Failed to upload {}: {}", filename, result.stderr.trim()));
+            return Err(format!(
+                "Failed to upload {}: {}",
+                filename,
+                result.stderr.trim()
+            ));
         }
     }
 
@@ -425,15 +430,19 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
         .args(["cf", "-", "src/"])
         .output()
         .await
-        .map_err(|e| format!("Failed to tar src/: {} (run --deploy-bot from the repo directory)", e))?;
+        .map_err(|e| {
+            format!(
+                "Failed to tar src/: {} (run --deploy-bot from the repo directory)",
+                e
+            )
+        })?;
     if !tar_output.status.success() {
-        return Err("Failed to tar src/ directory. Run --deploy-bot from the repo directory.".to_string());
+        return Err(
+            "Failed to tar src/ directory. Run --deploy-bot from the repo directory.".to_string(),
+        );
     }
     let tar_b64 = base64::engine::general_purpose::STANDARD.encode(&tar_output.stdout);
-    let upload_src_cmd = format!(
-        "echo '{}' | base64 -d | tar xf - -C /opt/axadmin/",
-        tar_b64
-    );
+    let upload_src_cmd = format!("echo '{}' | base64 -d | tar xf - -C /opt/axadmin/", tar_b64);
     let result = backend
         .exec_on_host(&upload_src_cmd)
         .await
@@ -448,7 +457,7 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
         .await
         .map_err(|e| format!("Docker build failed: {}", e))?;
     if !result.success() {
-        return Err(format!("Docker build failed: {}", result.stderr.trim()));
+        return Err(format!("Docker build failed: {}", result.combined_output()));
     }
 
     // Stop existing and start
@@ -460,7 +469,7 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
         .await
         .map_err(|e| format!("Docker start failed: {}", e))?;
     if !result.success() {
-        return Err(format!("Docker start failed: {}", result.stderr.trim()));
+        return Err(format!("Docker start failed: {}", result.combined_output()));
     }
 
     // Verify
@@ -471,11 +480,18 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
 
     let _ = backend.close().await;
 
+    if !result.success() {
+        return Err(format!(
+            "Verification failed: {}",
+            result.combined_output()
+        ));
+    }
+
     let status = result.stdout.trim().to_string();
     if status.contains("Up") || status.contains("running") {
         Ok("Bot deployed and running! Send /start to your bot.".to_string())
     } else {
-        Ok(format!("Bot container created. Status: {}", status))
+        Err(format!("Bot container not running. Status: {}", status))
     }
 }
 

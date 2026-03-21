@@ -179,10 +179,7 @@ pub fn draw(state: &TelegramSetupState, frame: &mut ratatui::Frame, area: Rect) 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::border_style())
-        .title(Span::styled(
-            " Telegram Bot Setup ",
-            theme::accent_style(),
-        ))
+        .title(Span::styled(" Telegram Bot Setup ", theme::accent_style()))
         .style(theme::text_style());
 
     let inner = block.inner(area);
@@ -191,13 +188,13 @@ pub fn draw(state: &TelegramSetupState, frame: &mut ratatui::Frame, area: Rect) 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6),  // instructions
-            Constraint::Length(1),  // spacer
-            Constraint::Length(1),  // token input
-            Constraint::Length(1),  // spacer
-            Constraint::Length(1),  // deploy button
-            Constraint::Length(1),  // spacer
-            Constraint::Length(3),  // deploy status
+            Constraint::Length(6), // instructions
+            Constraint::Length(1), // spacer
+            Constraint::Length(1), // token input
+            Constraint::Length(1), // spacer
+            Constraint::Length(1), // deploy button
+            Constraint::Length(1), // spacer
+            Constraint::Length(3), // deploy status
             Constraint::Min(0),    // padding
         ])
         .split(inner);
@@ -247,7 +244,7 @@ fn draw_token_input(state: &TelegramSetupState, frame: &mut ratatui::Frame, area
             Constraint::Length(2),  // margin
             Constraint::Length(14), // label
             Constraint::Length(2),  // separator
-            Constraint::Min(20),   // input
+            Constraint::Min(20),    // input
         ])
         .split(area);
 

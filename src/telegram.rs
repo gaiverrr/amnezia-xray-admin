@@ -89,12 +89,7 @@ pub fn welcome_text(is_new_admin: bool) -> String {
         ]
         .join("\n")
     } else {
-        [
-            "Welcome back!",
-            "",
-            "Use /help to see available commands.",
-        ]
-        .join("\n")
+        ["Welcome back!", "", "Use /help to see available commands."].join("\n")
     }
 }
 
@@ -144,7 +139,10 @@ pub fn format_add_message(name: &str, uuid: &str, vless_url: &str) -> String {
 
 /// Format the /delete confirmation prompt.
 pub fn format_delete_confirm_message(name: &str) -> String {
-    format!("⚠️ Delete user '{}'?\n\nThis will revoke their access immediately.", name)
+    format!(
+        "⚠️ Delete user '{}'?\n\nThis will revoke their access immediately.",
+        name
+    )
 }
 
 /// Format the /delete success response.
@@ -174,10 +172,8 @@ pub fn delete_confirmation_keyboard(user_uuid: &str) -> InlineKeyboardMarkup {
         "Yes, delete",
         format!("{}{}", DELETE_CONFIRM_PREFIX, user_uuid),
     );
-    let cancel = InlineKeyboardButton::callback(
-        "Cancel",
-        format!("{}{}", DELETE_CANCEL_PREFIX, user_uuid),
-    );
+    let cancel =
+        InlineKeyboardButton::callback("Cancel", format!("{}{}", DELETE_CANCEL_PREFIX, user_uuid));
     InlineKeyboardMarkup::new(vec![vec![confirm, cancel]])
 }
 
@@ -302,8 +298,7 @@ async fn handle_command(
                             .await?;
                     }
                     Err(e) => {
-                        bot.send_message(chat_id, format!("Error: {}", e))
-                            .await?;
+                        bot.send_message(chat_id, format!("Error: {}", e)).await?;
                     }
                 }
             }
@@ -331,8 +326,7 @@ async fn handle_command(
                         bot.send_photo(chat_id, input).caption(caption).await?;
                     }
                     Err(e) => {
-                        bot.send_message(chat_id, format!("Error: {}", e))
-                            .await?;
+                        bot.send_message(chat_id, format!("Error: {}", e)).await?;
                     }
                 }
             }
@@ -364,8 +358,7 @@ async fn cmd_add(
 ) -> std::result::Result<String, crate::error::AppError> {
     let client = XrayApiClient::new(state.backend.as_ref());
     let uuid = client.add_user(name).await?;
-    let vless_url =
-        backend::build_vless_url(state.backend.as_ref(), &uuid, name).await?;
+    let vless_url = backend::build_vless_url(state.backend.as_ref(), &uuid, name).await?;
     Ok(format_add_message(name, &uuid, &vless_url))
 }
 
@@ -419,8 +412,7 @@ async fn cmd_url(
         .find(|u| u.name == name)
         .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
 
-    let vless_url =
-        backend::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
+    let vless_url = backend::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
     Ok(format_url_message(name, &vless_url))
 }
 
@@ -437,8 +429,7 @@ async fn cmd_qr(
         .find(|u| u.name == name)
         .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
 
-    let vless_url =
-        backend::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
+    let vless_url = backend::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
 
     let png_bytes = render_qr_to_png(&vless_url, 8)
         .map_err(|e| crate::error::AppError::Xray(format!("QR generation failed: {}", e)))?;
@@ -453,11 +444,7 @@ pub fn format_url_message(name: &str, vless_url: &str) -> String {
 }
 
 /// Handle callback queries from inline keyboard buttons (e.g., delete confirmation).
-async fn handle_callback(
-    bot: Bot,
-    q: CallbackQuery,
-    state: Arc<BotState>,
-) -> ResponseResult<()> {
+async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> ResponseResult<()> {
     let data = match q.data {
         Some(ref d) => d.as_str(),
         None => return Ok(()),
@@ -512,7 +499,11 @@ async fn cmd_status(state: &BotState) -> std::result::Result<String, crate::erro
         online_total += count as usize;
     }
 
-    Ok(format_status_message(&server_info, users.len(), online_total))
+    Ok(format_status_message(
+        &server_info,
+        users.len(),
+        online_total,
+    ))
 }
 
 /// Start the Telegram bot and block until shutdown.
@@ -538,12 +529,12 @@ pub async fn run_bot(token: &str, backend: Box<dyn XrayBackend>, config: Config)
                     async move { handle_command(bot, msg, cmd, state).await }
                 }),
         )
-        .branch(Update::filter_callback_query().endpoint(
-            move |bot: Bot, q: CallbackQuery| {
+        .branch(
+            Update::filter_callback_query().endpoint(move |bot: Bot, q: CallbackQuery| {
                 let state = Arc::clone(&state_cb);
                 async move { handle_callback(bot, q, state).await }
-            },
-        ));
+            }),
+        );
 
     Dispatcher::builder(bot, handler)
         .enable_ctrlc_handler()
@@ -608,14 +599,26 @@ mod tests {
     #[test]
     fn test_bot_commands_parse() {
         let cmds = Command::bot_commands();
-        let descriptions: String = cmds.iter().map(|c| c.command.as_str()).collect::<Vec<_>>().join(",");
+        let descriptions: String = cmds
+            .iter()
+            .map(|c| c.command.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
         // teloxide BotCommand.command contains just the name (no slash)
         assert!(descriptions.contains("start"), "commands: {}", descriptions);
         assert!(descriptions.contains("help"), "commands: {}", descriptions);
         assert!(descriptions.contains("users"), "commands: {}", descriptions);
-        assert!(descriptions.contains("status"), "commands: {}", descriptions);
+        assert!(
+            descriptions.contains("status"),
+            "commands: {}",
+            descriptions
+        );
         assert!(descriptions.contains("add"), "commands: {}", descriptions);
-        assert!(descriptions.contains("delete"), "commands: {}", descriptions);
+        assert!(
+            descriptions.contains("delete"),
+            "commands: {}",
+            descriptions
+        );
     }
 
     #[test]
@@ -643,7 +646,10 @@ mod tests {
                     stats: TrafficStats::default(),
                     online_count: 0,
                 },
-                TrafficStats { uplink: 1024 * 1024 * 100, downlink: 1024 * 1024 * 1024 * 2 },
+                TrafficStats {
+                    uplink: 1024 * 1024 * 100,
+                    downlink: 1024 * 1024 * 1024 * 2,
+                },
                 1,
             ),
             (
@@ -655,7 +661,10 @@ mod tests {
                     stats: TrafficStats::default(),
                     online_count: 0,
                 },
-                TrafficStats { uplink: 0, downlink: 0 },
+                TrafficStats {
+                    uplink: 0,
+                    downlink: 0,
+                },
                 0,
             ),
         ];
@@ -845,7 +854,11 @@ mod tests {
     #[test]
     fn test_bot_commands_include_url_and_qr() {
         let cmds = Command::bot_commands();
-        let descriptions: String = cmds.iter().map(|c| c.command.as_str()).collect::<Vec<_>>().join(",");
+        let descriptions: String = cmds
+            .iter()
+            .map(|c| c.command.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
         assert!(descriptions.contains("url"), "commands: {}", descriptions);
         assert!(descriptions.contains("qr"), "commands: {}", descriptions);
     }

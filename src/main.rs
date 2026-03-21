@@ -8,9 +8,9 @@ mod telegram;
 mod ui;
 mod xray;
 
+use backend_trait::{LocalBackend, XrayBackend};
 use clap::Parser;
 use config::{Cli, Config};
-use backend_trait::{LocalBackend, XrayBackend};
 
 fn main() {
     let cli = Cli::parse();
@@ -87,11 +87,19 @@ fn main() {
 
     if cli.telegram_bot {
         if !local {
-            eprintln!("Error: --telegram-bot requires --local flag (must run on the VPS, not over SSH)");
-            eprintln!("Deploy the bot to VPS with: cargo run -- --deploy-bot --telegram-token <TOKEN>");
+            eprintln!(
+                "Error: --telegram-bot requires --local flag (must run on the VPS, not over SSH)"
+            );
+            eprintln!(
+                "Deploy the bot to VPS with: cargo run -- --deploy-bot --telegram-token <TOKEN>"
+            );
             std::process::exit(1);
         }
-        let token = match cli.telegram_token.clone().or_else(|| config.telegram_token.clone()) {
+        let token = match cli
+            .telegram_token
+            .clone()
+            .or_else(|| config.telegram_token.clone())
+        {
             Some(t) => t,
             None => {
                 eprintln!("Error: --telegram-token or TELEGRAM_TOKEN env var is required");
@@ -106,7 +114,11 @@ fn main() {
     }
 
     if cli.deploy_bot {
-        let token = match cli.telegram_token.clone().or_else(|| config.telegram_token.clone()) {
+        let token = match cli
+            .telegram_token
+            .clone()
+            .or_else(|| config.telegram_token.clone())
+        {
             Some(t) => t,
             None => {
                 eprintln!("Error: --telegram-token or TELEGRAM_TOKEN env var is required for --deploy-bot");
@@ -158,9 +170,32 @@ async fn connect_cli_backend(config: &Config, local: bool) -> error::Result<Box<
     }
 }
 
-/// Get the local machine's hostname for vless URL generation.
+/// Get the server's public IP for vless URL generation.
+///
+/// In --local mode (especially inside Docker), `hostname -I` returns the
+/// container's private IP, which is unusable for VPN clients. Instead, query
+/// an external service for the real public IP first.
 async fn get_local_hostname() -> String {
-    // Try to get the primary IP address
+    // Try to get the public IP via external service (works from inside Docker)
+    for url in &[
+        "https://ifconfig.me",
+        "https://icanhazip.com",
+        "https://api.ipify.org",
+    ] {
+        if let Ok(output) = tokio::process::Command::new("curl")
+            .args(["-sf", "--max-time", "5", url])
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !ip.is_empty() && looks_like_ip(&ip) {
+                    return ip;
+                }
+            }
+        }
+    }
+    // Fallback to hostname -I (useful when running directly on VPS without internet issues)
     if let Ok(output) = tokio::process::Command::new("hostname")
         .arg("-I")
         .output()
@@ -171,7 +206,7 @@ async fn get_local_hostname() -> String {
             return ip.to_string();
         }
     }
-    // Fallback to hostname
+    // Last resort fallback
     if let Ok(output) = tokio::process::Command::new("hostname").output().await {
         let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if !name.is_empty() {
@@ -179,6 +214,15 @@ async fn get_local_hostname() -> String {
         }
     }
     "localhost".to_string()
+}
+
+/// Basic check that a string looks like an IPv4 or IPv6 address.
+fn looks_like_ip(s: &str) -> bool {
+    // Must not contain HTML or spaces (rate-limit pages, error messages)
+    if s.contains('<') || s.contains(' ') || s.len() > 45 {
+        return false;
+    }
+    s.parse::<std::net::IpAddr>().is_ok()
 }
 
 async fn cli_check_server(config: &Config, local: bool) -> error::Result<()> {
@@ -211,12 +255,21 @@ async fn cli_check_server(config: &Config, local: bool) -> error::Result<()> {
 
     let users = client.list_users().await?;
     let server_info = client.get_server_info().await?;
+    let api_ok = client.probe_stats_api().await.unwrap_or(false);
 
-    println!(
-        "API enabled, {} users, xray v{}",
-        users.len(),
-        server_info.version
-    );
+    if api_ok {
+        println!(
+            "API enabled, {} users, xray v{}",
+            users.len(),
+            server_info.version
+        );
+    } else {
+        println!(
+            "API degraded (stats API unreachable), {} users, xray v{}",
+            users.len(),
+            server_info.version
+        );
+    }
 
     Ok(())
 }
@@ -329,8 +382,15 @@ async fn cli_server_info(config: &Config, local: bool) -> error::Result<()> {
 
     let server_info = client.get_server_info().await?;
     let users = client.list_users().await?;
-    let api_status = if server_info.version != "unknown" {
+    // Check API status by probing the stats endpoint — `xray version` works
+    // without the API, so a successful version alone does not prove the
+    // runtime API is healthy.  `probe_stats_api` checks the command exit code
+    // instead of silently falling back to zero.
+    let api_ok = client.probe_stats_api().await.unwrap_or(false);
+    let api_status = if api_ok {
         "enabled"
+    } else if server_info.version != "unknown" {
+        "degraded (version ok, stats API unreachable)"
     } else {
         "unknown"
     };
@@ -422,6 +482,22 @@ async fn cli_list_users(config: &Config, local: bool) -> error::Result<()> {
 async fn cli_telegram_bot(config: &Config, token: &str, local: bool) -> error::Result<()> {
     env_logger::init();
     let backend = connect_cli_backend(config, local).await?;
+
+    // Ensure the Xray API is configured before starting the bot.
+    // On a fresh server, the API may not be enabled yet — without this,
+    // commands like /add would fail on the runtime API call.
+    eprintln!("Checking Xray API configuration...");
+    match xray::config::ensure_api_enabled(backend.as_ref()).await {
+        Ok(true) => eprintln!("API was not configured — enabled and container restarted."),
+        Ok(false) => eprintln!("API already configured."),
+        Err(e) => {
+            return Err(error::AppError::Xray(format!(
+                "failed to ensure Xray API is enabled (bot cannot operate without it): {}",
+                e
+            )));
+        }
+    }
+
     telegram::run_bot(token, backend, config.clone()).await
 }
 

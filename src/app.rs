@@ -98,9 +98,7 @@ impl App {
             add_user_state: AddUserState::default(),
             user_detail_state: UserDetailState::default(),
             qr_view_state: QrViewState::default(),
-            telegram_setup_state: TelegramSetupState::from_token(
-                config.telegram_token.as_deref(),
-            ),
+            telegram_setup_state: TelegramSetupState::from_token(config.telegram_token.as_deref()),
             config,
             runtime,
             backend_rx: rx,
@@ -189,9 +187,8 @@ impl App {
                 }
             }
             KeyCode::Char('t') => {
-                self.telegram_setup_state = TelegramSetupState::from_token(
-                    self.config.telegram_token.as_deref(),
-                );
+                self.telegram_setup_state =
+                    TelegramSetupState::from_token(self.config.telegram_token.as_deref());
                 self.screen = Screen::TelegramSetup;
             }
             _ => {}
@@ -423,8 +420,9 @@ impl App {
             let token = self.telegram_setup_state.token.trim().to_string();
 
             if !telegram_setup::is_valid_token(&token) {
-                self.telegram_setup_state.deploy_status =
-                    telegram_setup::DeployStatus::Error("Invalid token format (expected digits:secret)".to_string());
+                self.telegram_setup_state.deploy_status = telegram_setup::DeployStatus::Error(
+                    "Invalid token format (expected digits:secret)".to_string(),
+                );
                 return;
             }
 
@@ -658,7 +656,8 @@ impl App {
                             Err(e) => {
                                 self.telegram_setup_state.deploy_status =
                                     telegram_setup::DeployStatus::Error(truncate_msg(&e, 60));
-                                self.status_message = format!("Deploy failed: {}", truncate_msg(&e, 60));
+                                self.status_message =
+                                    format!("Deploy failed: {}", truncate_msg(&e, 60));
                             }
                         }
                     }
@@ -813,9 +812,7 @@ impl App {
             Screen::UserDetail => "[Esc] back  [d]elete  [c]opy URL  [q] QR code".to_string(),
             Screen::AddUser => "[Enter] confirm  [Esc] cancel".to_string(),
             Screen::QrView => "[Esc/q] back".to_string(),
-            Screen::TelegramSetup => {
-                "[Tab] next field  [Enter] confirm  [Esc] back".to_string()
-            }
+            Screen::TelegramSetup => "[Tab] next field  [Enter] confirm  [Esc] back".to_string(),
         }
     }
 }
@@ -1308,7 +1305,7 @@ mod tests {
         app.pending_deploy = true;
 
         let _ = app.backend_tx.send(BackendMsg::DeployBot(Ok(
-            "Bot deployed and running!".to_string(),
+            "Bot deployed and running!".to_string()
         )));
 
         app.process_backend_messages();
@@ -1328,9 +1325,9 @@ mod tests {
         app.screen = Screen::TelegramSetup;
         app.pending_deploy = true;
 
-        let _ = app.backend_tx.send(BackendMsg::DeployBot(Err(
-            "connection refused".to_string(),
-        )));
+        let _ = app
+            .backend_tx
+            .send(BackendMsg::DeployBot(Err("connection refused".to_string())));
 
         app.process_backend_messages();
 

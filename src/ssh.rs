@@ -29,6 +29,20 @@ impl CommandOutput {
     pub fn success(&self) -> bool {
         self.exit_code == 0
     }
+
+    /// Return stdout + stderr combined, preferring whichever is non-empty.
+    /// Useful when commands use `2>&1` which merges stderr into stdout.
+    pub fn combined_output(&self) -> String {
+        let stdout = self.stdout.trim();
+        let stderr = self.stderr.trim();
+        if !stderr.is_empty() && !stdout.is_empty() {
+            format!("{}\n{}", stdout, stderr)
+        } else if !stdout.is_empty() {
+            stdout.to_string()
+        } else {
+            stderr.to_string()
+        }
+    }
 }
 
 /// Path to the known_hosts file

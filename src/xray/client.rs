@@ -151,6 +151,15 @@ impl<'a> XrayApiClient<'a> {
         Ok(parse_online_ip_list(&result.stdout))
     }
 
+    /// Probe whether the xray stats API is reachable.
+    /// Unlike `get_online_count` / `get_server_info`, this checks the command
+    /// exit code rather than silently falling back to zero.
+    pub async fn probe_stats_api(&self) -> Result<bool> {
+        let cmd = build_inbound_stats_cmd(VLESS_INBOUND_TAG, "uplink")?;
+        let result = self.backend.exec_in_container(&cmd).await?;
+        Ok(result.success())
+    }
+
     /// Get server info (version, total traffic).
     pub async fn get_server_info(&self) -> Result<ServerInfo> {
         let version_result = self.backend.exec_in_container("xray version").await?;
