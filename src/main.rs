@@ -56,6 +56,14 @@ fn main() {
         return;
     }
 
+    if let Some(ref name) = cli.user_qr {
+        if let Err(e) = runtime.block_on(cli_user_qr(&config, name)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // Initialize terminal
     let mut terminal = match app::init_terminal() {
         Ok(t) => t,
@@ -137,6 +145,43 @@ async fn cli_user_url(config: &Config, name: &str) -> error::Result<()> {
     let _ = session.close().await;
 
     println!("{}", vless_url);
+    Ok(())
+}
+
+async fn cli_user_qr(config: &Config, name: &str) -> error::Result<()> {
+    let session = backend::connect(config).await?;
+    let client = xray::client::XrayApiClient::new(&session);
+    let users = client.list_users().await?;
+
+    let user = users.iter().find(|u| u.name == name);
+    let user = match user {
+        Some(u) => u,
+        None => {
+            let _ = session.close().await;
+            return Err(error::AppError::Xray(format!(
+                "user '{}' not found",
+                name
+            )));
+        }
+    };
+
+    let vless_url = backend::build_vless_url(&session, config, &user.uuid, &user.name).await?;
+    let _ = session.close().await;
+
+    match ui::qr::render_qr_to_lines(&vless_url) {
+        Ok(lines) => {
+            for line in &lines {
+                println!("{}", line);
+            }
+            println!();
+            println!("{}", name);
+            println!("{}", vless_url);
+        }
+        Err(e) => {
+            return Err(error::AppError::Xray(format!("QR generation failed: {}", e)));
+        }
+    }
+
     Ok(())
 }
 

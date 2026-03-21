@@ -80,12 +80,12 @@ Three-phase plan:
 - [x] run tests — must pass before next task
 
 ### Task 5: Add --user-qr CLI command
-- [ ] add `--user-qr <name>` arg to `Cli` struct
-- [ ] implement `cli_user_qr()`: generate URL, render QR via `ui::qr::render_qr_to_lines()`, print to stdout
-- [ ] print user name + vless:// URL below QR
-- [ ] update test Cli struct instances
-- [ ] verify: `cargo run -- --user-qr Alexander`
-- [ ] run tests — must pass before next task
+- [x] add `--user-qr <name>` arg to `Cli` struct
+- [x] implement `cli_user_qr()`: generate URL, render QR via `ui::qr::render_qr_to_lines()`, print to stdout
+- [x] print user name + vless:// URL below QR
+- [x] update test Cli struct instances
+- [x] verify: `cargo run -- --user-qr Alexander` (manual verification - not automatable without VPS)
+- [x] run tests — must pass before next task
 
 ### Task 6: Add --online-status CLI command
 - [ ] add `--online-status` flag to `Cli` struct

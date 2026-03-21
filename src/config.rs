@@ -66,6 +66,10 @@ pub struct Cli {
     /// Get vless:// URL for a user by name and exit
     #[arg(long = "user-url")]
     pub user_url: Option<String>,
+
+    /// Show QR code for a user's vless:// URL in terminal and exit
+    #[arg(long = "user-qr")]
+    pub user_qr: Option<String>,
 }
 
 /// Application configuration
@@ -334,6 +338,7 @@ host = "10.0.0.1"
             list_users: false,
             check_server: false,
             user_url: None,
+            user_qr: None,
         };
         config.merge_cli(&cli);
 
@@ -365,6 +370,7 @@ host = "10.0.0.1"
             list_users: false,
             check_server: false,
             user_url: None,
+            user_qr: None,
         };
         config.merge_cli(&cli);
 
@@ -389,6 +395,7 @@ host = "10.0.0.1"
             list_users: false,
             check_server: false,
             user_url: None,
+            user_qr: None,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());
