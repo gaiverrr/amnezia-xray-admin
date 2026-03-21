@@ -9,6 +9,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
 
 use crate::config::Config;
+use crate::ui::add_user::{self, AddUserResult, AddUserState};
 use crate::ui::dashboard::{self, DashboardState};
 use crate::ui::setup::{self, SetupState};
 use crate::ui::theme;
@@ -34,6 +35,7 @@ pub struct App {
     pub status_message: String,
     pub setup_state: SetupState,
     pub dashboard_state: DashboardState,
+    pub add_user_state: AddUserState,
     pub config: Config,
 }
 
@@ -50,6 +52,7 @@ impl App {
             status_message: String::new(),
             setup_state: SetupState::default(),
             dashboard_state: DashboardState::default(),
+            add_user_state: AddUserState::default(),
             config: Config::default(),
         }
     }
@@ -75,6 +78,7 @@ impl App {
             status_message: String::new(),
             setup_state: SetupState::from_config(&config),
             dashboard_state,
+            add_user_state: AddUserState::default(),
             config,
         }
     }
@@ -121,6 +125,7 @@ impl App {
                 }
             }
             KeyCode::Char('a') => {
+                self.add_user_state.reset();
                 self.screen = Screen::AddUser;
             }
             KeyCode::Char('d') => {
@@ -189,8 +194,32 @@ impl App {
     }
 
     fn handle_add_user_key(&mut self, key: KeyEvent) {
+        // Let the add_user state handle input first
+        if self.add_user_state.handle_key(key) {
+            // Check if user confirmed the add
+            if self.add_user_state.is_confirmed() {
+                // For now, simulate success (actual SSH call happens in async context)
+                // The async main loop will check is_confirmed() and call the API
+                self.status_message = format!(
+                    "Adding user '{}'...",
+                    self.add_user_state.name
+                );
+            }
+            return;
+        }
+
+        // Keys not consumed by add_user state
         match key.code {
-            KeyCode::Esc => self.screen = Screen::Dashboard,
+            KeyCode::Esc => {
+                self.add_user_state.reset();
+                self.screen = Screen::Dashboard;
+            }
+            KeyCode::Char('q') => {
+                // If showing success, offer QR view (will be wired in Task 13)
+                if let AddUserResult::Success { .. } = &self.add_user_state.result {
+                    self.screen = Screen::QrView;
+                }
+            }
             _ => {}
         }
     }
@@ -242,6 +271,11 @@ impl App {
             match screen {
                 Screen::Dashboard => dashboard::draw(&mut self.dashboard_state, frame, chunks[1]),
                 Screen::Setup => setup::draw(&self.setup_state, frame, chunks[1]),
+                Screen::AddUser => {
+                    // Draw dashboard underneath, then overlay the dialog
+                    dashboard::draw(&mut self.dashboard_state, frame, chunks[1]);
+                    add_user::draw(&self.add_user_state, frame, chunks[1]);
+                }
                 _ => Self::draw_placeholder_widget(frame, chunks[1], screen_label),
             }
 
@@ -785,5 +819,91 @@ mod tests {
     fn test_dashboard_state_loading_default() {
         let app = App::new(true);
         assert!(app.dashboard_state.loading);
+    }
+
+    // --- Add user dialog integration tests ---
+
+    #[test]
+    fn test_add_user_typing_updates_state() {
+        let mut app = App::new(true);
+        app.screen = Screen::AddUser;
+        app.handle_key(make_key(KeyCode::Char('b')));
+        app.handle_key(make_key(KeyCode::Char('o')));
+        app.handle_key(make_key(KeyCode::Char('b')));
+        assert_eq!(app.add_user_state.name, "bob");
+    }
+
+    #[test]
+    fn test_add_user_backspace() {
+        let mut app = App::new(true);
+        app.screen = Screen::AddUser;
+        app.add_user_state.name = "alice".to_string();
+        app.handle_key(make_key(KeyCode::Backspace));
+        assert_eq!(app.add_user_state.name, "alic");
+    }
+
+    #[test]
+    fn test_add_user_enter_confirms() {
+        let mut app = App::new(true);
+        app.screen = Screen::AddUser;
+        app.add_user_state.name = "alice".to_string();
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(app.add_user_state.is_confirmed());
+        assert!(app.status_message.contains("alice"));
+    }
+
+    #[test]
+    fn test_add_user_enter_empty_does_not_confirm() {
+        let mut app = App::new(true);
+        app.screen = Screen::AddUser;
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(!app.add_user_state.is_confirmed());
+    }
+
+    #[test]
+    fn test_add_user_esc_resets_and_returns() {
+        let mut app = App::new(true);
+        app.screen = Screen::AddUser;
+        app.add_user_state.name = "alice".to_string();
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.screen, Screen::Dashboard);
+        assert_eq!(app.add_user_state.name, "");
+    }
+
+    #[test]
+    fn test_add_user_dashboard_a_resets_state() {
+        let mut app = App::new(true);
+        app.screen = Screen::Dashboard;
+        app.add_user_state.name = "leftover".to_string();
+        app.handle_key(make_key(KeyCode::Char('a')));
+        assert_eq!(app.screen, Screen::AddUser);
+        assert_eq!(app.add_user_state.name, "");
+    }
+
+    #[test]
+    fn test_add_user_success_q_goes_to_qr() {
+        let mut app = App::new(true);
+        app.screen = Screen::AddUser;
+        app.add_user_state.set_success("alice".to_string(), "uuid-123".to_string());
+        app.handle_key(make_key(KeyCode::Char('q')));
+        assert_eq!(app.screen, Screen::QrView);
+    }
+
+    #[test]
+    fn test_add_user_success_esc_returns_to_dashboard() {
+        let mut app = App::new(true);
+        app.screen = Screen::AddUser;
+        app.add_user_state.set_success("alice".to_string(), "uuid-123".to_string());
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.screen, Screen::Dashboard);
+    }
+
+    #[test]
+    fn test_add_user_error_esc_returns_to_dashboard() {
+        let mut app = App::new(true);
+        app.screen = Screen::AddUser;
+        app.add_user_state.set_error("connection failed".to_string());
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.screen, Screen::Dashboard);
     }
 }

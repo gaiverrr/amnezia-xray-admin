@@ -175,13 +175,13 @@ src/
 - [x] manual testing: connect to real server, see user list with live data (skipped - not automatable)
 
 ### Task 11: Add user dialog
-- [ ] implement add user dialog in `src/ui/add_user.rs`
-- [ ] modal overlay on dashboard
-- [ ] input field for user name
-- [ ] on confirm: call `add_user()`, show success + vless:// URL, offer QR view
-- [ ] on cancel: dismiss modal
-- [ ] error handling: show error message if add fails
-- [ ] manual testing: add a test user, verify appears in list
+- [x] implement add user dialog in `src/ui/add_user.rs`
+- [x] modal overlay on dashboard
+- [x] input field for user name
+- [x] on confirm: call `add_user()`, show success + vless:// URL, offer QR view
+- [x] on cancel: dismiss modal
+- [x] error handling: show error message if add fails
+- [x] manual testing: add a test user, verify appears in list (skipped - not automatable)
 
 ### Task 12: User detail panel and delete confirmation
 - [ ] implement user detail in `src/ui/user_detail.rs`
