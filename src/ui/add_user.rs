@@ -5,6 +5,15 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use super::theme;
 
+/// Maximum allowed length for a user name
+const MAX_NAME_LENGTH: usize = 32;
+
+/// Check if a character is valid for a user name.
+/// Only allows alphanumeric, hyphen, and underscore to prevent shell injection.
+fn is_valid_name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
+}
+
 /// Result of an add-user operation
 #[derive(Debug, Clone)]
 pub enum AddUserResult {
@@ -42,13 +51,19 @@ impl AddUserState {
     /// Handle a key event, returns true if the event was consumed
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
         // If showing a result, any key dismisses
-        if matches!(self.result, AddUserResult::Success { .. } | AddUserResult::Error(_)) {
+        if matches!(
+            self.result,
+            AddUserResult::Success { .. } | AddUserResult::Error(_)
+        ) {
             return false; // let app.rs handle Esc/Enter to go back
         }
 
         match key.code {
             KeyCode::Char(c) => {
-                self.name.push(c);
+                // Only allow safe characters to prevent shell injection
+                if is_valid_name_char(c) && self.name.len() < MAX_NAME_LENGTH {
+                    self.name.push(c);
+                }
                 true
             }
             KeyCode::Backspace => {
@@ -141,7 +156,10 @@ fn draw_input(state: &AddUserState, frame: &mut ratatui::Frame, area: Rect) {
 
     let input_display = format!("  > {}_", state.name);
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(input_display, theme::title_style()))),
+        Paragraph::new(Line::from(Span::styled(
+            input_display,
+            theme::title_style(),
+        ))),
         rows[3],
     );
 

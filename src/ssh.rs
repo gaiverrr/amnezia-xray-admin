@@ -480,11 +480,11 @@ Host myhost
 
     #[test]
     fn test_load_ssh_config_returns_map() {
-        // This tests that load_ssh_config doesn't panic.
-        // It may return entries or empty map depending on the system.
+        // Verify load_ssh_config returns a valid HashMap without panicking.
         let configs = load_ssh_config();
-        // Just verify it returns without error
-        let _ = configs.len();
+        // On any system, the result should be a HashMap (possibly empty)
+        // Verify it's actually a usable collection
+        assert!(configs.len() < 10_000, "unreasonably large SSH config");
     }
 
     #[test]

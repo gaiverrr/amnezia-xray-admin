@@ -128,22 +128,12 @@ impl UserDetailState {
 
     /// Check if delete was confirmed and consume the flag
     pub fn take_delete_confirmed(&mut self) -> bool {
-        if self.delete_confirmed {
-            self.delete_confirmed = false;
-            true
-        } else {
-            false
-        }
+        std::mem::replace(&mut self.delete_confirmed, false)
     }
 
     /// Check if clipboard copy was requested and consume the flag
     pub fn take_clipboard_copied(&mut self) -> bool {
-        if self.clipboard_copied {
-            self.clipboard_copied = false;
-            true
-        } else {
-            false
-        }
+        std::mem::replace(&mut self.clipboard_copied, false)
     }
 
     /// Set deletion result
@@ -203,7 +193,13 @@ pub fn draw(state: &UserDetailState, frame: &mut ratatui::Frame, area: Rect) {
     };
 
     match &state.mode {
-        DetailMode::View => draw_view(user, &state.online_ips, state.clipboard_copied, frame, inner),
+        DetailMode::View => draw_view(
+            user,
+            &state.online_ips,
+            state.clipboard_copied,
+            frame,
+            inner,
+        ),
         DetailMode::DeleteConfirm => draw_delete_confirm(user, &state.delete_input, frame, inner),
         DetailMode::DeleteSuccess => draw_delete_success(user, frame, inner),
         DetailMode::DeleteError(msg) => draw_delete_error(user, msg, frame, inner),
@@ -220,17 +216,17 @@ fn draw_view(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // spacer
-            Constraint::Length(1),  // name
-            Constraint::Length(1),  // uuid
-            Constraint::Length(1),  // email
-            Constraint::Length(1),  // spacer
-            Constraint::Length(1),  // traffic header
-            Constraint::Length(1),  // upload
-            Constraint::Length(1),  // download
-            Constraint::Length(1),  // spacer
-            Constraint::Length(1),  // online header
-            Constraint::Length(1),  // online count
+            Constraint::Length(1), // spacer
+            Constraint::Length(1), // name
+            Constraint::Length(1), // uuid
+            Constraint::Length(1), // email
+            Constraint::Length(1), // spacer
+            Constraint::Length(1), // traffic header
+            Constraint::Length(1), // upload
+            Constraint::Length(1), // download
+            Constraint::Length(1), // spacer
+            Constraint::Length(1), // online header
+            Constraint::Length(1), // online count
             Constraint::Min(1),    // online IPs + hints
         ])
         .split(area);
@@ -317,7 +313,7 @@ fn draw_view(
         .constraints([
             Constraint::Length(ip_lines_count + 1), // IPs area
             Constraint::Min(0),                     // spacer
-            Constraint::Length(1),                   // keybind hints
+            Constraint::Length(1),                  // keybind hints
         ])
         .split(remaining);
 
@@ -708,7 +704,10 @@ mod tests {
         let mut state = UserDetailState::default();
         state.open(make_test_user());
         state.set_delete_error("connection lost".to_string());
-        assert_eq!(state.mode, DetailMode::DeleteError("connection lost".to_string()));
+        assert_eq!(
+            state.mode,
+            DetailMode::DeleteError("connection lost".to_string())
+        );
     }
 
     #[test]

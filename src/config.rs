@@ -11,11 +11,23 @@ const DEFAULT_SSH_USER: &str = "root";
 /// Default container name
 const DEFAULT_CONTAINER: &str = "amnezia-xray";
 
+/// Validate that a container name contains only safe characters.
+/// Docker container names allow `[a-zA-Z0-9][a-zA-Z0-9_.-]`.
+fn is_valid_container_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+}
+
 /// CLI arguments for amnezia-xray-admin
 #[derive(Parser, Debug)]
 #[command(name = "amnezia-xray-admin")]
 #[command(about = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray server")]
-#[command(long_about = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray (VLESS + XTLS-Reality) server.\n\nConnects to your VPS via SSH, talks to the Xray gRPC API for live user management\nand traffic stats. No container restarts needed.\n\nOn first run, a setup wizard guides you through the SSH connection.\nConfig is saved to ~/.config/amnezia-xray-admin/config.toml.\n\nExamples:\n  amnezia-xray-admin                        # Use saved config or start setup wizard\n  amnezia-xray-admin --ssh-host vps-vpn     # Connect using SSH config alias\n  amnezia-xray-admin --host 1.2.3.4 --key ~/.ssh/id_ed25519")]
+#[command(
+    long_about = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray (VLESS + XTLS-Reality) server.\n\nConnects to your VPS via SSH, talks to the Xray gRPC API for live user management\nand traffic stats. No container restarts needed.\n\nOn first run, a setup wizard guides you through the SSH connection.\nConfig is saved to ~/.config/amnezia-xray-admin/config.toml.\n\nExamples:\n  amnezia-xray-admin                        # Use saved config or start setup wizard\n  amnezia-xray-admin --ssh-host vps-vpn     # Connect using SSH config alias\n  amnezia-xray-admin --host 1.2.3.4 --key ~/.ssh/id_ed25519"
+)]
 #[command(version)]
 pub struct Cli {
     /// SSH host (IP or hostname) to connect to
@@ -111,6 +123,12 @@ impl Config {
         }
         let content = fs::read_to_string(path)?;
         let config: Config = toml::from_str(&content)?;
+        if !is_valid_container_name(&config.container) {
+            return Err(AppError::Config(format!(
+                "invalid container name '{}': only alphanumeric, hyphen, underscore, and dot allowed",
+                config.container
+            )));
+        }
         Ok(config)
     }
 
@@ -157,7 +175,9 @@ impl Config {
             self.ssh_host = Some(ssh_host.clone());
         }
         if let Some(ref container) = cli.container {
-            self.container = container.clone();
+            if is_valid_container_name(container) {
+                self.container = container.clone();
+            }
         }
     }
 
@@ -388,10 +408,8 @@ host = "10.0.0.1"
 
     #[test]
     fn test_config_path_returns_valid_path() {
-        let path = Config::config_path();
-        // This should succeed on any system with a home directory
-        if let Ok(p) = path {
-            assert!(p.ends_with("amnezia-xray-admin/config.toml"));
-        }
+        let path = Config::config_path()
+            .expect("config_path should succeed on systems with a home directory");
+        assert!(path.ends_with("amnezia-xray-admin/config.toml"));
     }
 }

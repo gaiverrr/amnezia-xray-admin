@@ -5,7 +5,10 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 use crate::ui::theme;
 use crate::xray::types::XrayUser;
 
-const SPINNER_FRAMES: &[char] = &['\u{280b}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283c}', '\u{2834}', '\u{2826}', '\u{2827}', '\u{2807}', '\u{280f}'];
+const SPINNER_FRAMES: &[char] = &[
+    '\u{280b}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283c}', '\u{2834}', '\u{2826}', '\u{2827}',
+    '\u{2807}', '\u{280f}',
+];
 
 /// Dashboard state holding user data and UI state
 pub struct DashboardState {
@@ -129,11 +132,7 @@ pub fn format_bytes(bytes: u64) -> String {
 
 /// Truncate UUID to first 8 characters
 pub fn truncate_uuid(uuid: &str) -> &str {
-    if uuid.len() > 8 {
-        &uuid[..8]
-    } else {
-        uuid
-    }
+    uuid.get(..8).unwrap_or(uuid)
 }
 
 /// Draw the dashboard view
@@ -142,7 +141,7 @@ pub fn draw(state: &mut DashboardState, frame: &mut ratatui::Frame, area: Rect) 
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(4), // server info header
-            Constraint::Min(1),   // user table
+            Constraint::Min(1),    // user table
         ])
         .split(area);
 
@@ -327,7 +326,10 @@ mod tests {
     #[test]
     fn test_format_bytes_gb() {
         assert_eq!(format_bytes(1024 * 1024 * 1024), "1.0 GB");
-        assert_eq!(format_bytes(2 * 1024 * 1024 * 1024 + 512 * 1024 * 1024), "2.5 GB");
+        assert_eq!(
+            format_bytes(2 * 1024 * 1024 * 1024 + 512 * 1024 * 1024),
+            "2.5 GB"
+        );
     }
 
     #[test]
@@ -337,7 +339,10 @@ mod tests {
 
     #[test]
     fn test_truncate_uuid_long() {
-        assert_eq!(truncate_uuid("aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"), "aaaaaaaa");
+        assert_eq!(
+            truncate_uuid("aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"),
+            "aaaaaaaa"
+        );
     }
 
     #[test]
@@ -468,7 +473,7 @@ mod tests {
             make_user("charlie", "ccc", 0, 0, 0),
         ]);
         state.table_state.select(Some(2)); // select last
-        // Shrink list
+                                           // Shrink list
         state.set_users(vec![make_user("alice", "aaa", 0, 0, 0)]);
         assert_eq!(state.selected(), Some(0)); // clamped
     }

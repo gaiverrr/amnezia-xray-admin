@@ -261,16 +261,22 @@ pub fn build_online_ip_list_cmd(email: &str) -> String {
 ///
 /// Format: `vless://<uuid>@<host>:<port>?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=<sni>&fp=chrome&pbk=<pubkey>&sid=<shortid>#<name>`
 pub fn generate_vless_url(params: &VlessUrlParams) -> String {
-    let fragment = urlencod_fragment(&params.name);
+    let fragment = urlencode_fragment(&params.name);
+    // Wrap IPv6 addresses in brackets per RFC 2732
+    let host = if params.host.contains(':') {
+        format!("[{}]", params.host)
+    } else {
+        params.host.clone()
+    };
     format!(
         "vless://{}@{}:{}?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni={}&fp=chrome&pbk={}&sid={}#{}",
-        params.uuid, params.host, params.port, params.sni, params.public_key, params.short_id, fragment
+        params.uuid, host, params.port, params.sni, params.public_key, params.short_id, fragment
     )
 }
 
 /// Percent-encode a fragment string for use in a URL.
 /// Only encodes characters that are not allowed in URL fragments.
-fn urlencod_fragment(s: &str) -> String {
+fn urlencode_fragment(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     for ch in s.chars() {
         match ch {
@@ -700,28 +706,28 @@ stat: {
             name: "test".to_string(),
         };
         let url = generate_vless_url(&params);
-        assert!(url.contains("@2001:db8::1:443"));
+        assert!(url.contains("@[2001:db8::1]:443"));
     }
 
     #[test]
-    fn test_urlencod_fragment_plain() {
-        assert_eq!(urlencod_fragment("alice"), "alice");
+    fn test_urlencode_fragment_plain() {
+        assert_eq!(urlencode_fragment("alice"), "alice");
     }
 
     #[test]
-    fn test_urlencod_fragment_spaces() {
-        assert_eq!(urlencod_fragment("my phone"), "my%20phone");
+    fn test_urlencode_fragment_spaces() {
+        assert_eq!(urlencode_fragment("my phone"), "my%20phone");
     }
 
     #[test]
-    fn test_urlencod_fragment_unicode() {
-        let encoded = urlencod_fragment("тест");
+    fn test_urlencode_fragment_unicode() {
+        let encoded = urlencode_fragment("тест");
         assert!(encoded.contains('%'));
         assert!(!encoded.contains("тест"));
     }
 
     #[test]
-    fn test_urlencod_fragment_allowed_chars() {
-        assert_eq!(urlencod_fragment("a-b_c.d~e"), "a-b_c.d~e");
+    fn test_urlencode_fragment_allowed_chars() {
+        assert_eq!(urlencode_fragment("a-b_c.d~e"), "a-b_c.d~e");
     }
 }

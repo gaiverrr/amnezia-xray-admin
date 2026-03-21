@@ -91,7 +91,7 @@ pub fn draw(state: &QrViewState, frame: &mut ratatui::Frame, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(qr_height.max(1)), // QR area
+            Constraint::Min(qr_height.max(1)),      // QR area
             Constraint::Length(url_section_height), // URL area
         ])
         .split(inner);

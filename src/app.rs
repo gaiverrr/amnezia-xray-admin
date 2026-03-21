@@ -140,6 +140,7 @@ impl App {
             KeyCode::Char('d') => {
                 if let Some(user) = self.dashboard_state.selected_user() {
                     self.user_detail_state.open(user.clone());
+                    self.user_detail_state.mode = DetailMode::DeleteConfirm;
                     self.screen = Screen::UserDetail;
                 }
             }
@@ -195,6 +196,16 @@ impl App {
     fn handle_user_detail_key(&mut self, key: KeyEvent) {
         // Let the detail state handle input first
         if self.user_detail_state.handle_key(key) {
+            // Check if clipboard copy was requested
+            if self.user_detail_state.take_clipboard_copied() {
+                if let Some(ref user) = self.user_detail_state.user {
+                    let url = format!("vless://{}@server:443#{}", user.uuid, user.name);
+                    let osc52 = user_detail::osc52_copy(&url);
+                    // Write OSC 52 escape sequence to terminal
+                    print!("{}", osc52);
+                    self.status_message = "Copied to clipboard (OSC 52)".to_string();
+                }
+            }
             return;
         }
 
@@ -1013,11 +1024,12 @@ mod tests {
     }
 
     #[test]
-    fn test_user_detail_c_sets_clipboard_flag() {
+    fn test_user_detail_c_triggers_clipboard_copy() {
         let mut app = app_with_detail_user();
         app.handle_key(make_key(KeyCode::Char('c')));
-        // Flag was set and can be taken
-        assert!(app.user_detail_state.take_clipboard_copied());
+        // Flag was consumed by handle_user_detail_key which writes OSC52
+        assert!(!app.user_detail_state.take_clipboard_copied());
+        assert_eq!(app.status_message, "Copied to clipboard (OSC 52)");
     }
 
     #[test]

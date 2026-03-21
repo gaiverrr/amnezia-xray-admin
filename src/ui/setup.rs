@@ -435,15 +435,7 @@ fn draw_test_result(state: &SetupState, frame: &mut ratatui::Frame, area: Rect) 
         TestResult::Error(msg) => (format!("  Error: {}", msg), theme::alert_style()),
     };
 
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(0), Constraint::Min(1)])
-        .split(area);
-
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(text, style))),
-        cols[1],
-    );
+    frame.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
 }
 
 #[cfg(test)]
