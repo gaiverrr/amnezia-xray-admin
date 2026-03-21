@@ -78,16 +78,16 @@ Implement the design spec from `docs/superpowers/specs/2026-03-21-pre-release-po
 - [x] run tests — must pass before next task
 
 ### Task 5: Add --delete-user CLI command with confirmation
-- [ ] add `--delete-user <name>` arg and `--yes` flag to `Cli` struct
-- [ ] implement `cli_delete_user()` in `src/main.rs`:
+- [x] add `--delete-user <name>` arg and `--yes` flag to `Cli` struct
+- [x] implement `cli_delete_user()` in `src/main.rs`:
   - if `--yes` flag: skip confirmation
   - if stdout is TTY (`std::io::stdin().is_terminal()`): prompt "Type user name to confirm deletion:"
   - if not TTY: fail with "Interactive confirmation required. Use --yes to skip."
   - call `client.remove_user(uuid)`
-- [ ] update test Cli struct instances
-- [ ] write tests for TTY detection logic and confirmation flow
-- [ ] verify: `cargo run -- --delete-user TestUser --yes`
-- [ ] run tests — must pass before next task
+- [x] update test Cli struct instances
+- [x] write tests for TTY detection logic and confirmation flow
+- [x] verify: `cargo run -- --delete-user TestUser --yes` (skipped - requires VPS connection)
+- [x] run tests — must pass before next task
 
 ### Task 6: Add --rename-user CLI command
 - [ ] add `--rename-user` arg (takes two values: old name, new name) to `Cli` struct

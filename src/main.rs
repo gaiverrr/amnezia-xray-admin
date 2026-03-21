@@ -11,6 +11,7 @@ mod xray;
 use backend_trait::{LocalBackend, XrayBackend};
 use clap::Parser;
 use config::{Cli, Config};
+use std::io::IsTerminal;
 
 fn main() {
     let cli = Cli::parse();
@@ -134,6 +135,14 @@ fn main() {
 
     if let Some(ref name) = cli.add_user {
         if let Err(e) = runtime.block_on(cli_add_user(&config, name, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if let Some(ref name) = cli.delete_user {
+        if let Err(e) = runtime.block_on(cli_delete_user(&config, name, local, cli.yes)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
@@ -586,6 +595,50 @@ async fn cli_add_user(config: &Config, name: &str, local: bool) -> error::Result
     println!("Name:  {}", name);
     println!("UUID:  {}", uuid);
     println!("URL:   {}", vless_url);
+
+    Ok(())
+}
+
+async fn cli_delete_user(
+    config: &Config,
+    name: &str,
+    local: bool,
+    yes: bool,
+) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
+    let users = client.list_users().await?;
+
+    let user = users.iter().find(|u| u.name == name);
+    let user = match user {
+        Some(u) => u,
+        None => {
+            return Err(error::AppError::Xray(format!("user '{}' not found", name)));
+        }
+    };
+
+    if !yes {
+        if !std::io::stdin().is_terminal() {
+            return Err(error::AppError::Config(
+                "Interactive confirmation required. Use --yes to skip.".to_string(),
+            ));
+        }
+        eprintln!(
+            "Are you sure you want to delete user '{}'? Type the user name to confirm:",
+            name
+        );
+        let mut input = String::new();
+        std::io::stdin()
+            .read_line(&mut input)
+            .map_err(error::AppError::Io)?;
+        if input.trim() != name {
+            eprintln!("Name does not match. Deletion cancelled.");
+            return Ok(());
+        }
+    }
+
+    client.remove_user(&user.uuid).await?;
+    println!("User '{}' deleted.", name);
 
     Ok(())
 }

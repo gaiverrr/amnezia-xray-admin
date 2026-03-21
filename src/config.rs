@@ -106,6 +106,14 @@ pub struct Cli {
     /// Add a new user and print their vless:// URL
     #[arg(long = "add-user")]
     pub add_user: Option<String>,
+
+    /// Delete a user by name
+    #[arg(long = "delete-user")]
+    pub delete_user: Option<String>,
+
+    /// Skip interactive confirmation (for --delete-user)
+    #[arg(long = "yes")]
+    pub yes: bool,
 }
 
 /// Application configuration
@@ -394,6 +402,8 @@ host = "10.0.0.1"
             backup: false,
             restore: None,
             add_user: None,
+            delete_user: None,
+            yes: false,
         };
         config.merge_cli(&cli);
 
@@ -437,6 +447,8 @@ host = "10.0.0.1"
             backup: false,
             restore: None,
             add_user: None,
+            delete_user: None,
+            yes: false,
         };
         config.merge_cli(&cli);
 
@@ -471,6 +483,8 @@ host = "10.0.0.1"
             backup: false,
             restore: None,
             add_user: None,
+            delete_user: None,
+            yes: false,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());
@@ -596,5 +610,35 @@ host = "10.0.0.1"
         let config = Config::load_from(&f.path().to_path_buf()).unwrap();
         assert_eq!(config.telegram_token, None);
         assert_eq!(config.telegram_admin_chat_id, None);
+    }
+
+    #[test]
+    fn test_cli_parse_delete_user() {
+        let cli = Cli::parse_from(["app", "--delete-user", "Alice"]);
+        assert_eq!(cli.delete_user, Some("Alice".to_string()));
+        assert!(!cli.yes);
+    }
+
+    #[test]
+    fn test_cli_parse_delete_user_with_yes() {
+        let cli = Cli::parse_from(["app", "--delete-user", "Bob", "--yes"]);
+        assert_eq!(cli.delete_user, Some("Bob".to_string()));
+        assert!(cli.yes);
+    }
+
+    #[test]
+    fn test_cli_parse_yes_without_delete() {
+        let cli = Cli::parse_from(["app", "--yes"]);
+        assert!(cli.yes);
+        assert_eq!(cli.delete_user, None);
+    }
+
+    #[test]
+    fn test_cli_delete_user_with_brackets() {
+        let cli = Cli::parse_from(["app", "--delete-user", "Admin [macOS Tahoe]", "--yes"]);
+        assert_eq!(
+            cli.delete_user,
+            Some("Admin [macOS Tahoe]".to_string())
+        );
     }
 }
