@@ -4,10 +4,10 @@ use crate::error::{AppError, Result};
 use super::config::{
     read_clients_table, read_server_config, CLIENTS_TABLE_PATH, SERVER_CONFIG_PATH,
 };
-use log::info;
 use super::types::{
     ClientsTable, ServerConfig, ServerJsonClient, TrafficStats, VlessUrlParams, XrayUser,
 };
+use log::info;
 
 use base64::Engine;
 use uuid::Uuid;
@@ -57,6 +57,9 @@ impl<'a> XrayApiClient<'a> {
     /// failure mode of a user existing in runtime but missing from disk.
     pub async fn add_user(&self, name: &str) -> Result<String> {
         // Validate name before any mutations to avoid partial failures
+        if name.trim().is_empty() {
+            return Err(AppError::Xray("user name cannot be empty".to_string()));
+        }
         let email = XrayUser::email_from_name(name);
 
         // Auto-backup before mutation
@@ -135,6 +138,9 @@ impl<'a> XrayApiClient<'a> {
     /// This resets the user's traffic stats because xray tracks stats by email.
     /// The user's UUID is preserved; active connections are dropped during restart.
     pub async fn rename_user(&self, old_name: &str, new_name: &str) -> Result<()> {
+        if new_name.trim().is_empty() {
+            return Err(AppError::Xray("new user name cannot be empty".to_string()));
+        }
         let old_email = XrayUser::email_from_name(old_name);
         let new_email = XrayUser::email_from_name(new_name);
 
@@ -150,7 +156,11 @@ impl<'a> XrayApiClient<'a> {
             .ok_or_else(|| AppError::Xray(format!("user '{}' not found", old_name)))?;
 
         // Check new name doesn't already exist
-        if table.entries.iter().any(|e| e.user_data.client_name == new_name) {
+        if table
+            .entries
+            .iter()
+            .any(|e| e.user_data.client_name == new_name)
+        {
             return Err(AppError::Xray(format!(
                 "user '{}' already exists",
                 new_name
@@ -440,18 +450,19 @@ pub fn build_list_backups_cmd() -> String {
 
 /// Build the shell command to validate that a clientsTable backup exists for a timestamp.
 pub fn build_validate_backup_cmd(timestamp: &str) -> String {
-    format!(
-        "test -f {}.{}.bak",
-        CLIENTS_TABLE_PATH, timestamp
-    )
+    format!("test -f {}.{}.bak", CLIENTS_TABLE_PATH, timestamp)
 }
 
 /// Build the shell command to restore both config files from a timestamped backup.
 pub fn build_restore_cmd(timestamp: &str) -> String {
     format!(
         "sh -c 'cp {}.{}.bak {} && cp {}.{}.bak {}'",
-        SERVER_CONFIG_PATH, timestamp, SERVER_CONFIG_PATH,
-        CLIENTS_TABLE_PATH, timestamp, CLIENTS_TABLE_PATH
+        SERVER_CONFIG_PATH,
+        timestamp,
+        SERVER_CONFIG_PATH,
+        CLIENTS_TABLE_PATH,
+        timestamp,
+        CLIENTS_TABLE_PATH
     )
 }
 

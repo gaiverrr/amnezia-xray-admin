@@ -73,10 +73,7 @@ pub fn add_hint(msg: &str) -> String {
     if (lower.contains("no such container") || lower.contains("is not running"))
         && lower.contains("docker")
     {
-        return format!(
-            "{}. Check container name with 'docker ps' on your VPS",
-            msg
-        );
+        return format!("{}. Check container name with 'docker ps' on your VPS", msg);
     }
 
     // SSH connection errors

@@ -126,8 +126,7 @@ impl XrayBackend for LocalBackend {
         // Enrich docker-level errors with hints (container not found, not running)
         if !output.success() {
             let stderr_lower = output.stderr.to_lowercase();
-            if stderr_lower.contains("no such container")
-                || stderr_lower.contains("is not running")
+            if stderr_lower.contains("no such container") || stderr_lower.contains("is not running")
             {
                 return Err(AppError::Xray(crate::error::add_hint(&format!(
                     "docker exec failed: {}",

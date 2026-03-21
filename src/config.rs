@@ -56,8 +56,7 @@ EXAMPLES:
 
   Telegram bot:
     amnezia-xray-admin --deploy-bot --telegram-token <TOKEN>
-    amnezia-xray-admin --telegram-bot --local --container amnezia-xray"
-)]
+    amnezia-xray-admin --telegram-bot --local --container amnezia-xray")]
 #[command(version)]
 pub struct Cli {
     /// SSH host (IP or hostname) to connect to
@@ -659,15 +658,13 @@ host = "10.0.0.1"
 
     #[test]
     fn test_cli_parse_rename_user_with_brackets() {
-        let cli = Cli::parse_from([
-            "app",
-            "--rename-user",
-            "Admin [macOS]",
-            "Admin [iPhone]",
-        ]);
+        let cli = Cli::parse_from(["app", "--rename-user", "Admin [macOS]", "Admin [iPhone]"]);
         assert_eq!(
             cli.rename_user,
-            Some(vec!["Admin [macOS]".to_string(), "Admin [iPhone]".to_string()])
+            Some(vec![
+                "Admin [macOS]".to_string(),
+                "Admin [iPhone]".to_string()
+            ])
         );
     }
 
@@ -695,9 +692,6 @@ host = "10.0.0.1"
     #[test]
     fn test_cli_delete_user_with_brackets() {
         let cli = Cli::parse_from(["app", "--delete-user", "Admin [macOS Tahoe]", "--yes"]);
-        assert_eq!(
-            cli.delete_user,
-            Some("Admin [macOS Tahoe]".to_string())
-        );
+        assert_eq!(cli.delete_user, Some("Admin [macOS Tahoe]".to_string()));
     }
 }

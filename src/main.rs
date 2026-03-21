@@ -561,11 +561,7 @@ async fn cli_backup(config: &Config, local: bool) -> error::Result<()> {
     Ok(())
 }
 
-async fn cli_restore(
-    config: &Config,
-    timestamp: Option<&str>,
-    local: bool,
-) -> error::Result<()> {
+async fn cli_restore(config: &Config, timestamp: Option<&str>, local: bool) -> error::Result<()> {
     let backend = connect_cli_backend(config, local).await?;
     let client = xray::client::XrayApiClient::new(backend.as_ref());
 
@@ -607,12 +603,7 @@ async fn cli_add_user(config: &Config, name: &str, local: bool) -> error::Result
     Ok(())
 }
 
-async fn cli_delete_user(
-    config: &Config,
-    name: &str,
-    local: bool,
-    yes: bool,
-) -> error::Result<()> {
+async fn cli_delete_user(config: &Config, name: &str, local: bool, yes: bool) -> error::Result<()> {
     let backend = connect_cli_backend(config, local).await?;
     let client = xray::client::XrayApiClient::new(backend.as_ref());
     let users = client.list_users().await?;

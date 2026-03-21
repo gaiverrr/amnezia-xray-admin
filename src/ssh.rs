@@ -315,12 +315,10 @@ impl SshSession {
             port,
         };
 
-        let mut handle = client::connect(config, addr, handler)
-            .await
-            .map_err(|e| {
-                let msg = format!("connection failed: {}", e);
-                AppError::Ssh(crate::error::add_hint(&msg))
-            })?;
+        let mut handle = client::connect(config, addr, handler).await.map_err(|e| {
+            let msg = format!("connection failed: {}", e);
+            AppError::Ssh(crate::error::add_hint(&msg))
+        })?;
 
         let authenticated = if let Some(key_path) = key_path {
             let key = load_secret_key(key_path, None)
@@ -337,7 +335,9 @@ impl SshSession {
         };
 
         if !authenticated {
-            return Err(AppError::Ssh(crate::error::add_hint("authentication failed")));
+            return Err(AppError::Ssh(crate::error::add_hint(
+                "authentication failed",
+            )));
         }
 
         Ok(Self {
@@ -355,13 +355,10 @@ impl SshSession {
                 AppError::Ssh(crate::error::add_hint(&msg))
             })?;
 
-        let identities = agent
-            .request_identities()
-            .await
-            .map_err(|e| {
-                let msg = format!("ssh-agent list keys failed: {}", e);
-                AppError::Ssh(crate::error::add_hint(&msg))
-            })?;
+        let identities = agent.request_identities().await.map_err(|e| {
+            let msg = format!("ssh-agent list keys failed: {}", e);
+            AppError::Ssh(crate::error::add_hint(&msg))
+        })?;
 
         for key in identities {
             match handle
@@ -437,8 +434,7 @@ impl SshSession {
         // Enrich docker-level errors with hints (container not found, not running)
         if !output.success() {
             let stderr_lower = output.stderr.to_lowercase();
-            if stderr_lower.contains("no such container")
-                || stderr_lower.contains("is not running")
+            if stderr_lower.contains("no such container") || stderr_lower.contains("is not running")
             {
                 return Err(AppError::Xray(crate::error::add_hint(&format!(
                     "docker exec failed: {}",
