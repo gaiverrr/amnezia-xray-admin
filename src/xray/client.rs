@@ -74,6 +74,11 @@ impl<'a> XrayApiClient<'a> {
 
         // 1. Persist to server.json on disk first
         let mut config = read_server_config(self.session).await?;
+
+        // Check for duplicate email in existing clients
+        if config.has_client_email(&email) {
+            return Err(AppError::Xray(format!("user '{}' already exists", name)));
+        }
         let client = ServerJsonClient {
             id: uuid.clone(),
             flow: "xtls-rprx-vision".to_string(),

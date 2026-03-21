@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{self, Write as _};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -282,6 +282,7 @@ impl App {
                     if let Some(ref url) = self.user_detail_state.cached_vless_url {
                         let osc52 = user_detail::osc52_copy(url);
                         print!("{}", osc52);
+                        let _ = io::stdout().flush();
                         self.status_message = "Copied to clipboard (OSC 52)".to_string();
                     } else {
                         // Spawn URL generation and copy when ready
@@ -548,6 +549,7 @@ impl App {
                             VlessUrlIntent::Clipboard => {
                                 let osc52 = user_detail::osc52_copy(&added.vless_url);
                                 print!("{}", osc52);
+                                let _ = io::stdout().flush();
                                 self.status_message = "Copied to clipboard (OSC 52)".to_string();
                             }
                             VlessUrlIntent::Qr => {

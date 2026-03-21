@@ -95,6 +95,11 @@ impl ServerConfig {
             .unwrap_or_default()
     }
 
+    /// Check if a client with the given email already exists in the VLESS inbound.
+    pub fn has_client_email(&self, email: &str) -> bool {
+        self.clients().iter().any(|c| c.email.as_deref() == Some(email))
+    }
+
     /// Add a client to the VLESS inbound
     pub fn add_client(&mut self, client: &ServerJsonClient) -> crate::error::Result<()> {
         let inbound = self
@@ -159,7 +164,7 @@ impl ServerConfig {
             .and_then(|sn| sn.as_array())
             .and_then(|arr| arr.first())
             .and_then(|v| v.as_str())
-            .unwrap_or("")
+            .filter(|s| !s.is_empty())?
             .to_string();
 
         let short_id = reality
@@ -167,7 +172,7 @@ impl ServerConfig {
             .and_then(|si| si.as_array())
             .and_then(|arr| arr.first())
             .and_then(|v| v.as_str())
-            .unwrap_or("")
+            .filter(|s| !s.is_empty())?
             .to_string();
 
         Some(RealityParams { sni, short_id })

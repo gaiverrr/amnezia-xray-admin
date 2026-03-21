@@ -402,9 +402,20 @@ impl SshSession {
     }
 }
 
-/// Parse host and port from an address string like "1.2.3.4:22".
+/// Parse host and port from an address string like "1.2.3.4:22" or "[::1]:22".
 fn parse_host_port(addr: &str) -> (&str, u16) {
+    // Handle bracketed IPv6: [::1]:22
+    if let Some(bracket_end) = addr.find("]:") {
+        let host = &addr[..bracket_end + 1]; // includes the closing bracket
+        let port = addr[bracket_end + 2..].parse().unwrap_or(22);
+        return (host, port);
+    }
+    // Non-bracketed: only split on colon if there is exactly one (avoids bare IPv6)
     if let Some(colon_idx) = addr.rfind(':') {
+        if addr[..colon_idx].contains(':') {
+            // Multiple colons means bare IPv6 address with no port
+            return (addr, 22);
+        }
         let host = &addr[..colon_idx];
         let port = addr[colon_idx + 1..].parse().unwrap_or(22);
         (host, port)
