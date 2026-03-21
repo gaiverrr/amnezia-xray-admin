@@ -397,6 +397,46 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
         ));
     }
 
+    // Upload source files for Docker build context
+    for filename in &["Cargo.toml", "Cargo.lock"] {
+        let content = std::fs::read_to_string(filename)
+            .map_err(|e| format!("Failed to read {}: {} (run --deploy-bot from the repo directory)", filename, e))?;
+        let content_b64 = base64::engine::general_purpose::STANDARD.encode(content.as_bytes());
+        let cmd = format!(
+            "echo '{}' | base64 -d > /opt/axadmin/{}",
+            content_b64, filename
+        );
+        let result = backend
+            .exec_on_host(&cmd)
+            .await
+            .map_err(|e| format!("Failed to upload {}: {}", filename, e))?;
+        if !result.success() {
+            return Err(format!("Failed to upload {}: {}", filename, result.stderr.trim()));
+        }
+    }
+
+    // Upload src/ directory as tar archive
+    let tar_output = tokio::process::Command::new("tar")
+        .args(["cf", "-", "src/"])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to tar src/: {} (run --deploy-bot from the repo directory)", e))?;
+    if !tar_output.status.success() {
+        return Err("Failed to tar src/ directory. Run --deploy-bot from the repo directory.".to_string());
+    }
+    let tar_b64 = base64::engine::general_purpose::STANDARD.encode(&tar_output.stdout);
+    let upload_src_cmd = format!(
+        "echo '{}' | base64 -d | tar xf - -C /opt/axadmin/",
+        tar_b64
+    );
+    let result = backend
+        .exec_on_host(&upload_src_cmd)
+        .await
+        .map_err(|e| format!("Failed to upload src/: {}", e))?;
+    if !result.success() {
+        return Err(format!("Failed to upload src/: {}", result.stderr.trim()));
+    }
+
     // Build image
     let result = backend
         .exec_on_host("cd /opt/axadmin && docker compose build 2>&1")

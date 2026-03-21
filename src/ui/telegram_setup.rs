@@ -15,6 +15,7 @@ pub enum TelegramField {
 impl TelegramField {
     pub const ALL: [TelegramField; 2] = [TelegramField::Token, TelegramField::DeployToVps];
 
+    #[allow(dead_code)]
     pub fn is_button(&self) -> bool {
         matches!(self, TelegramField::DeployToVps)
     }
@@ -22,6 +23,7 @@ impl TelegramField {
 
 /// Deployment progress steps
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum DeployStatus {
     None,
     Connecting,
@@ -123,6 +125,7 @@ impl TelegramSetupState {
     }
 
     /// Reset the state
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.deploy_status = DeployStatus::None;
         self.deploy_requested = false;
@@ -156,6 +159,7 @@ pub fn generate_compose_yaml(token: &str, container: &str) -> String {
         r#"services:
   axadmin-bot:
     image: axadmin:latest
+    build: .
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -165,48 +169,6 @@ pub fn generate_compose_yaml(token: &str, container: &str) -> String {
 "#,
         token, container
     )
-}
-
-/// Generate the sequence of shell commands to deploy the bot on VPS
-pub fn deploy_commands(container: &str) -> Vec<(&'static str, String)> {
-    vec![
-        (
-            "Creating directory",
-            "mkdir -p /opt/axadmin".to_string(),
-        ),
-        (
-            "Stopping existing bot",
-            "cd /opt/axadmin && docker compose down 2>/dev/null; true".to_string(),
-        ),
-        (
-            "Building Docker image",
-            format!(
-                "cd /opt/axadmin && docker build -t axadmin:latest -f- . <<'DOCKERFILE'\n\
-                FROM rust:latest AS builder\n\
-                WORKDIR /app\n\
-                RUN apt-get update && apt-get install -y git\n\
-                RUN git clone https://github.com/user/amnezia-xray-admin.git . || true\n\
-                COPY Cargo.toml Cargo.lock ./\n\
-                COPY src/ src/\n\
-                RUN cargo build --release --bin amnezia-xray-admin\n\
-                FROM debian:trixie-slim\n\
-                RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates docker.io && rm -rf /var/lib/apt/lists/*\n\
-                COPY --from=builder /app/target/release/amnezia-xray-admin /usr/local/bin/amnezia-xray-admin\n\
-                ENTRYPOINT [\"amnezia-xray-admin\"]\n\
-                CMD [\"--telegram-bot\", \"--local\", \"--container\", \"{}\"]\n\
-                DOCKERFILE",
-                container
-            ),
-        ),
-        (
-            "Starting bot",
-            "cd /opt/axadmin && docker compose up -d".to_string(),
-        ),
-        (
-            "Verifying",
-            "cd /opt/axadmin && docker compose ps --format '{{.Status}}' | head -1".to_string(),
-        ),
-    ]
 }
 
 /// Draw the Telegram bot setup screen
@@ -554,14 +516,6 @@ mod tests {
         assert!(yaml.contains("TELEGRAM_TOKEN=123:abc"));
         assert!(yaml.contains("--container amnezia-xray"));
         assert!(yaml.contains("docker.sock"));
-    }
-
-    #[test]
-    fn test_deploy_commands_nonempty() {
-        let cmds = deploy_commands("amnezia-xray");
-        assert!(!cmds.is_empty());
-        // Should include mkdir, docker compose down, build, up, verify
-        assert!(cmds.len() >= 4);
     }
 
     #[test]

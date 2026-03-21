@@ -86,8 +86,8 @@ fn main() {
     }
 
     if cli.telegram_bot {
-        let token = match cli.telegram_token {
-            Some(ref t) => t.clone(),
+        let token = match cli.telegram_token.clone().or_else(|| config.telegram_token.clone()) {
+            Some(t) => t,
             None => {
                 eprintln!("Error: --telegram-token or TELEGRAM_TOKEN env var is required");
                 std::process::exit(1);
@@ -390,7 +390,7 @@ async fn cli_list_users(config: &Config, local: bool) -> error::Result<()> {
 
     for user in &users_with_stats {
         let name = if user.name.is_empty() {
-            &user.uuid[..8]
+            &user.uuid[..std::cmp::min(8, user.uuid.len())]
         } else {
             &user.name
         };

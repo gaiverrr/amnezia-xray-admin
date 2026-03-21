@@ -27,7 +27,7 @@ cargo run -- --online-status                       # show online users and IPs
 cargo run -- --server-info                         # xray version, traffic, user count
 cargo run -- --local --list-users                  # use local docker exec (on VPS)
 cargo run -- --telegram-bot --local --container c  # run Telegram bot daemon
-cargo run -- --deploy-bot --token <TOKEN>          # deploy bot to VPS via SSH
+cargo run -- --deploy-bot --telegram-token <TOKEN>  # deploy bot to VPS via SSH
 ```
 
 ## Architecture
@@ -70,7 +70,9 @@ cargo run -- --deploy-bot --token <TOKEN>          # deploy bot to VPS via SSH
 - **xray/client.rs**: `XrayApiClient` — list/add/remove users, stats, online status. Commands run via `docker exec <container> xray api ...`
 - **backend.rs**: Async task spawners, `BackendMsg` enum, connection helpers
 - **telegram.rs**: Telegram bot module using teloxide. Commands: /start, /help, /users, /status, /add, /delete, /url, /qr
+- **error.rs**: `AppError` enum (SSH, Xray, Config, IO variants) and `Result<T>` type alias
 - **app.rs**: 6-screen state machine (Setup→Dashboard→UserDetail/AddUser/QrView/TelegramSetup), event loop with 250ms poll + 5s auto-refresh
+- **ui/**: TUI rendering submodules — setup.rs (wizard), dashboard.rs (main view), user_detail.rs (detail panel), add_user.rs (add dialog), qr.rs (QR display + CLI rendering), telegram_setup.rs (bot deploy screen), theme.rs (color constants)
 
 ## Important Design Details
 

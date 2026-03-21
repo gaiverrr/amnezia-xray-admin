@@ -162,6 +162,9 @@ pub fn validate_user_name(name: &str) -> Option<String> {
     if trimmed.len() > 64 {
         return Some("Name too long (max 64 characters).".to_string());
     }
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Some("Name must not contain control characters.".to_string());
+    }
     None
 }
 

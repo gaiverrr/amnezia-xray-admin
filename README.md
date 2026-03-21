@@ -116,7 +116,7 @@ Press `t` on the dashboard to open the Telegram Bot setup screen. Follow the ins
 
 ```sh
 # Deploy bot to VPS (connects via SSH, pulls Docker image, starts container)
-amnezia-xray-admin --ssh-host vps-vpn --deploy-bot --token "123456:ABC..."
+amnezia-xray-admin --ssh-host vps-vpn --deploy-bot --telegram-token "123456:ABC..."
 ```
 
 ### Manual Docker deployment
