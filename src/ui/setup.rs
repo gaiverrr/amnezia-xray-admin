@@ -46,7 +46,9 @@ impl SetupField {
 
     pub fn hint(&self) -> &'static str {
         match self {
-            SetupField::SshHost => "SSH config alias (e.g. vps-vpn). If set, overrides host/port/user/key.",
+            SetupField::SshHost => {
+                "SSH config alias (e.g. vps-vpn). If set, overrides host/port/user/key."
+            }
             SetupField::Host => "Server IP or hostname (e.g. 203.0.113.42)",
             SetupField::Port => "SSH port (default: 22)",
             SetupField::User => "SSH user (default: root)",
@@ -269,9 +271,9 @@ pub fn draw(state: &SetupState, frame: &mut ratatui::Frame, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(4),  // logo
-            Constraint::Length(1),  // welcome text
-            Constraint::Length(1),  // spacer
+            Constraint::Length(4), // logo
+            Constraint::Length(1), // welcome text
+            Constraint::Length(1), // spacer
             Constraint::Min(12),   // form fields
             Constraint::Length(3), // test result
             Constraint::Length(2), // hint
@@ -314,13 +316,7 @@ pub fn draw(state: &SetupState, frame: &mut ratatui::Frame, area: Rect) {
 fn draw_form_fields(state: &SetupState, frame: &mut ratatui::Frame, area: Rect) {
     let field_constraints: Vec<Constraint> = SetupField::ALL
         .iter()
-        .map(|f| {
-            if f.is_button() {
-                Constraint::Length(1)
-            } else {
-                Constraint::Length(1)
-            }
-        })
+        .map(|_| Constraint::Length(1))
         .chain(std::iter::once(Constraint::Min(0)))
         .collect();
 
@@ -355,7 +351,7 @@ fn draw_input_field(
             Constraint::Length(2),  // left margin
             Constraint::Length(18), // label
             Constraint::Length(2),  // separator
-            Constraint::Min(20),   // input
+            Constraint::Min(20),    // input
         ])
         .split(area);
 
@@ -431,7 +427,10 @@ fn draw_button(
 fn draw_test_result(state: &SetupState, frame: &mut ratatui::Frame, area: Rect) {
     let (text, style) = match &state.test_result {
         TestResult::None => return,
-        TestResult::Testing => ("  Testing connection...".to_string(), theme::secondary_style()),
+        TestResult::Testing => (
+            "  Testing connection...".to_string(),
+            theme::secondary_style(),
+        ),
         TestResult::Success(msg) => (format!("  OK: {}", msg), theme::title_style()),
         TestResult::Error(msg) => (format!("  Error: {}", msg), theme::alert_style()),
     };

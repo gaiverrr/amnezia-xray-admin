@@ -78,11 +78,7 @@ impl<'a> XrayApiClient<'a> {
             .iter()
             .find(|c| c.id == uuid)
             .and_then(|c| c.email.clone())
-            .or_else(|| {
-                table
-                    .name_for_uuid(uuid)
-                    .map(|n| XrayUser::email_from_name(n))
-            })
+            .or_else(|| table.name_for_uuid(uuid).map(XrayUser::email_from_name))
             .ok_or_else(|| AppError::Xray(format!("user {} not found", uuid)))?;
 
         // 1. Call xray api rmu to remove from running instance

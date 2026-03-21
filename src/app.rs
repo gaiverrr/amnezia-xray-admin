@@ -148,12 +148,9 @@ impl App {
     }
 
     fn handle_setup_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Esc => {
-                self.quit();
-                return;
-            }
-            _ => {}
+        if key.code == KeyCode::Esc {
+            self.quit();
+            return;
         }
 
         self.setup_state.handle_key(key);
@@ -212,7 +209,7 @@ impl App {
                     if let Some(ref user) = self.user_detail_state.user {
                         // Generate a placeholder vless URL from user info
                         // (full URL generation requires server keys, done in async context)
-                        let url = format!("vless://{}@server:443#{}",  user.uuid, user.name);
+                        let url = format!("vless://{}@server:443#{}", user.uuid, user.name);
                         self.qr_view_state.open(user.name.clone(), url);
                     }
                     self.screen = Screen::QrView;
@@ -235,10 +232,7 @@ impl App {
             if self.add_user_state.is_confirmed() {
                 // For now, simulate success (actual SSH call happens in async context)
                 // The async main loop will check is_confirmed() and call the API
-                self.status_message = format!(
-                    "Adding user '{}'...",
-                    self.add_user_state.name
-                );
+                self.status_message = format!("Adding user '{}'...", self.add_user_state.name);
             }
             return;
         }
@@ -281,7 +275,10 @@ impl App {
     }
 
     /// Draw the UI
-    pub fn draw(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
+    pub fn draw(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> io::Result<()> {
         // Tick spinner when loading
         if self.dashboard_state.loading {
             self.dashboard_state.tick_spinner();
@@ -393,7 +390,6 @@ impl Default for App {
         Self::new(false)
     }
 }
-
 
 /// Initialize the terminal for TUI rendering
 pub fn init_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
@@ -910,7 +906,8 @@ mod tests {
     fn test_add_user_success_q_goes_to_qr() {
         let mut app = App::new(true);
         app.screen = Screen::AddUser;
-        app.add_user_state.set_success("alice".to_string(), "uuid-123".to_string());
+        app.add_user_state
+            .set_success("alice".to_string(), "uuid-123".to_string());
         app.handle_key(make_key(KeyCode::Char('q')));
         assert_eq!(app.screen, Screen::QrView);
     }
@@ -919,7 +916,8 @@ mod tests {
     fn test_add_user_success_esc_returns_to_dashboard() {
         let mut app = App::new(true);
         app.screen = Screen::AddUser;
-        app.add_user_state.set_success("alice".to_string(), "uuid-123".to_string());
+        app.add_user_state
+            .set_success("alice".to_string(), "uuid-123".to_string());
         app.handle_key(make_key(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Dashboard);
     }
@@ -928,7 +926,8 @@ mod tests {
     fn test_add_user_error_esc_returns_to_dashboard() {
         let mut app = App::new(true);
         app.screen = Screen::AddUser;
-        app.add_user_state.set_error("connection failed".to_string());
+        app.add_user_state
+            .set_error("connection failed".to_string());
         app.handle_key(make_key(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Dashboard);
     }
