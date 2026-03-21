@@ -106,8 +106,8 @@ fn main() {
     }
 
     if cli.deploy_bot {
-        let token = match cli.telegram_token {
-            Some(ref t) => t.clone(),
+        let token = match cli.telegram_token.clone().or_else(|| config.telegram_token.clone()) {
+            Some(t) => t,
             None => {
                 eprintln!("Error: --telegram-token or TELEGRAM_TOKEN env var is required for --deploy-bot");
                 std::process::exit(1);

@@ -209,7 +209,10 @@ impl App {
         // Check if save was requested
         if self.setup_state.save_requested {
             self.setup_state.save_requested = false;
-            let new_config = self.setup_state.to_config();
+            let mut new_config = self.setup_state.to_config();
+            // Preserve Telegram credentials that aren't part of the setup wizard
+            new_config.telegram_token = self.config.telegram_token.clone();
+            new_config.telegram_admin_chat_id = self.config.telegram_admin_chat_id;
             if !new_config.has_connection_info() {
                 self.setup_state.test_result =
                     setup::TestResult::Error("Please enter a host or SSH config alias".to_string());

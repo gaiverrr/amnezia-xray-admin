@@ -5,6 +5,9 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - axadmin-data:/root/.config/amnezia-xray-admin
     environment:
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
     command: --telegram-bot --local --container ${XRAY_CONTAINER:-amnezia-xray}
+volumes:
+  axadmin-data:

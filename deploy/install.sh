@@ -41,10 +41,12 @@ git clone --depth 1 "$REPO_URL" "$TMPDIR/repo"
 docker build -t "$IMAGE_NAME" "$TMPDIR/repo"
 
 echo "==> Starting bot..."
+docker volume create axadmin-data 2>/dev/null || true
 docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     -v /var/run/docker.sock:/var/run/docker.sock \
+    -v axadmin-data:/root/.config/amnezia-xray-admin \
     -e "TELEGRAM_TOKEN=$TELEGRAM_TOKEN" \
     "$IMAGE_NAME" \
     --telegram-bot --local --container "$XRAY_CONTAINER"

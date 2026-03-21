@@ -163,9 +163,12 @@ pub fn generate_compose_yaml(token: &str, container: &str) -> String {
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - axadmin-data:/root/.config/amnezia-xray-admin
     environment:
       - TELEGRAM_TOKEN={}
     command: --telegram-bot --local --container {}
+volumes:
+  axadmin-data:
 "#,
         token, container
     )
