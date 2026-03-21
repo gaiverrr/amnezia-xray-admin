@@ -397,9 +397,6 @@ impl SshSession {
         Ok(())
     }
 
-    pub fn is_closed(&self) -> bool {
-        self.handle.is_closed()
-    }
 }
 
 /// Parse host and port from an address string like "1.2.3.4:22" or "[::1]:22".

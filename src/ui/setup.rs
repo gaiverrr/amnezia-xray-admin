@@ -260,7 +260,10 @@ impl SetupState {
         }
     }
 
-    /// Check if the form has enough info for a connection
+}
+
+#[cfg(test)]
+impl SetupState {
     pub fn has_connection_info(&self) -> bool {
         !self.ssh_host.is_empty() || !self.host.is_empty()
     }

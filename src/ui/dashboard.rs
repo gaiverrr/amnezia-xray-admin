@@ -38,11 +38,6 @@ impl Default for DashboardState {
 }
 
 impl DashboardState {
-    /// Get the currently selected user index
-    pub fn selected(&self) -> Option<usize> {
-        self.table_state.selected()
-    }
-
     /// Get the currently selected user
     pub fn selected_user(&self) -> Option<&XrayUser> {
         self.table_state.selected().and_then(|i| self.users.get(i))
@@ -280,6 +275,13 @@ fn draw_user_table(state: &mut DashboardState, frame: &mut ratatui::Frame, area:
         .highlight_symbol(">> ");
 
     frame.render_stateful_widget(table, area, &mut state.table_state);
+}
+
+#[cfg(test)]
+impl DashboardState {
+    pub fn selected(&self) -> Option<usize> {
+        self.table_state.selected()
+    }
 }
 
 #[cfg(test)]

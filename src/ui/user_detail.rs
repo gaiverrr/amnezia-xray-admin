@@ -146,7 +146,10 @@ impl UserDetailState {
         std::mem::replace(&mut self.clipboard_copied, false)
     }
 
-    /// Set deletion result
+}
+
+#[cfg(test)]
+impl UserDetailState {
     pub fn set_delete_success(&mut self) {
         self.mode = DetailMode::DeleteSuccess;
     }
@@ -155,12 +158,10 @@ impl UserDetailState {
         self.mode = DetailMode::DeleteError(msg);
     }
 
-    /// Get the user name if available
     pub fn user_name(&self) -> Option<&str> {
         self.user.as_ref().map(|u| u.name.as_str())
     }
 
-    /// Check if delete input matches the user name
     pub fn delete_input_matches(&self) -> bool {
         self.user
             .as_ref()

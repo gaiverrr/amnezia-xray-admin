@@ -68,37 +68,6 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(has_config: bool, runtime: tokio::runtime::Handle) -> Self {
-        let (tx, rx) = mpsc::channel();
-        Self {
-            screen: if has_config {
-                Screen::Dashboard
-            } else {
-                Screen::Setup
-            },
-            running: true,
-            last_refresh: Instant::now(),
-            status_message: String::new(),
-            setup_state: SetupState::default(),
-            dashboard_state: DashboardState::default(),
-            add_user_state: AddUserState::default(),
-            user_detail_state: UserDetailState::default(),
-            qr_view_state: QrViewState::default(),
-            config: Config::default(),
-            runtime,
-            backend_rx: rx,
-            backend_tx: tx,
-            pending_refresh: false,
-            initial_load_done: false,
-            api_check_done: false,
-            refresh_after_mutation: false,
-            pending_add_name: None,
-            pending_delete_uuid: None,
-            pending_test: false,
-            tested_config: None,
-        }
-    }
-
     pub fn with_config(config: Config, runtime: tokio::runtime::Handle) -> Self {
         let has_config = config.has_connection_info();
         let mut dashboard_state = DashboardState::default();
@@ -836,6 +805,40 @@ fn truncate_msg(msg: &str, max: usize) -> String {
         // Find a char boundary at or before `max` to avoid panicking on multi-byte UTF-8
         let boundary = msg.floor_char_boundary(max);
         format!("{}...", &msg[..boundary])
+    }
+}
+
+#[cfg(test)]
+impl App {
+    pub fn new(has_config: bool, runtime: tokio::runtime::Handle) -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self {
+            screen: if has_config {
+                Screen::Dashboard
+            } else {
+                Screen::Setup
+            },
+            running: true,
+            last_refresh: Instant::now(),
+            status_message: String::new(),
+            setup_state: SetupState::default(),
+            dashboard_state: DashboardState::default(),
+            add_user_state: AddUserState::default(),
+            user_detail_state: UserDetailState::default(),
+            qr_view_state: QrViewState::default(),
+            config: Config::default(),
+            runtime,
+            backend_rx: rx,
+            backend_tx: tx,
+            pending_refresh: false,
+            initial_load_done: false,
+            api_check_done: false,
+            refresh_after_mutation: false,
+            pending_add_name: None,
+            pending_delete_uuid: None,
+            pending_test: false,
+            tested_config: None,
+        }
     }
 }
 

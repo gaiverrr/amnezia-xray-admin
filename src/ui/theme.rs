@@ -7,7 +7,6 @@ pub const SECONDARY: Color = Color::Rgb(0, 212, 255); // #00d4ff cyan
 pub const ACCENT: Color = Color::Rgb(255, 0, 255); // #ff00ff magenta
 pub const ALERT: Color = Color::Rgb(255, 0, 64); // #ff0040 neon red
 pub const MUTED: Color = Color::Rgb(68, 68, 68); // #444444 dark gray
-pub const SUCCESS: Color = Color::Rgb(0, 255, 65); // #00ff41 green
 pub const BORDER: Color = Color::Rgb(26, 58, 26); // #1a3a1a dark green
 
 pub fn title_style() -> Style {
