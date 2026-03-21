@@ -155,11 +155,11 @@ Three-phase plan:
 - [x] run tests — 301 tests pass, clippy clean
 
 ### Task 13: Telegram /add and /delete commands
-- [ ] implement `/add <name>` — add user, return UUID + vless:// URL
-- [ ] implement `/delete <name>` — require confirmation via inline keyboard button
-- [ ] handle errors (duplicate name, invalid name, user not found)
-- [ ] write tests for command parsing and validation
-- [ ] run tests — must pass before next task
+- [x] implement `/add <name>` — add user, return UUID + vless:// URL
+- [x] implement `/delete <name>` — require confirmation via inline keyboard button
+- [x] handle errors (duplicate name, invalid name, user not found)
+- [x] write tests for command parsing and validation
+- [x] run tests — 311 tests pass, clippy clean
 
 ### Task 14: Telegram /url and /qr commands
 - [ ] implement `/url <name>` — send vless:// URL as copyable message

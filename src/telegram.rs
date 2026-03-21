@@ -5,10 +5,11 @@
 
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::ChatId;
+use teloxide::types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup};
 use teloxide::utils::command::BotCommands;
 use tokio::sync::Mutex;
 
+use crate::backend;
 use crate::backend_trait::XrayBackend;
 use crate::config::Config;
 use crate::error::Result;
@@ -22,6 +23,11 @@ pub struct BotState {
     pub config: Mutex<Config>,
 }
 
+/// Callback query prefix for delete confirmation buttons.
+const DELETE_CONFIRM_PREFIX: &str = "delete_confirm:";
+/// Callback query prefix for delete cancel buttons.
+const DELETE_CANCEL_PREFIX: &str = "delete_cancel:";
+
 /// Commands recognized by the bot.
 #[derive(BotCommands, Clone, Debug)]
 #[command(rename_rule = "lowercase")]
@@ -34,6 +40,12 @@ pub enum Command {
     Users,
     /// Server info and online users
     Status,
+    /// Add a new user
+    #[command(description = "Add a new user")]
+    Add(String),
+    /// Delete a user
+    #[command(description = "Delete a user")]
+    Delete(String),
 }
 
 /// Check if a chat ID is the admin. Returns true if no admin is set yet (first-time setup).
@@ -112,6 +124,53 @@ pub fn format_users_message(users: &[(XrayUser, TrafficStats, u32)]) -> String {
     lines.join("\n")
 }
 
+/// Format the /add success response.
+pub fn format_add_message(name: &str, uuid: &str, vless_url: &str) -> String {
+    [
+        format!("✅ User '{}' added.", name),
+        String::new(),
+        format!("UUID: {}", uuid),
+        format!("URL: {}", vless_url),
+    ]
+    .join("\n")
+}
+
+/// Format the /delete confirmation prompt.
+pub fn format_delete_confirm_message(name: &str) -> String {
+    format!("⚠️ Delete user '{}'?\n\nThis will revoke their access immediately.", name)
+}
+
+/// Format the /delete success response.
+pub fn format_delete_success_message(name: &str) -> String {
+    format!("🗑 User '{}' deleted.", name)
+}
+
+/// Validate a user name for /add command.
+/// Returns an error message if invalid, None if valid.
+pub fn validate_user_name(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Some("Usage: /add <name>".to_string());
+    }
+    if trimmed.len() > 64 {
+        return Some("Name too long (max 64 characters).".to_string());
+    }
+    None
+}
+
+/// Build an inline keyboard for delete confirmation.
+pub fn delete_confirmation_keyboard(user_uuid: &str) -> InlineKeyboardMarkup {
+    let confirm = InlineKeyboardButton::callback(
+        "Yes, delete",
+        format!("{}{}", DELETE_CONFIRM_PREFIX, user_uuid),
+    );
+    let cancel = InlineKeyboardButton::callback(
+        "Cancel",
+        format!("{}{}", DELETE_CANCEL_PREFIX, user_uuid),
+    );
+    InlineKeyboardMarkup::new(vec![vec![confirm, cancel]])
+}
+
 /// Format the /status response: server info and online users summary.
 pub fn format_status_message(
     server_info: &ServerInfo,
@@ -183,6 +242,36 @@ async fn handle_command(
             };
             bot.send_message(chat_id, text).await?;
         }
+        Command::Add(name) => {
+            let name = name.trim().to_string();
+            if let Some(err) = validate_user_name(&name) {
+                bot.send_message(chat_id, err).await?;
+            } else {
+                let text = match cmd_add(&state, &name).await {
+                    Ok(t) => t,
+                    Err(e) => format!("Error: {}", e),
+                };
+                bot.send_message(chat_id, text).await?;
+            }
+        }
+        Command::Delete(name) => {
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                bot.send_message(chat_id, "Usage: /delete <name>").await?;
+            } else {
+                match cmd_delete_prompt(&state, &name).await {
+                    Ok((text, keyboard)) => {
+                        bot.send_message(chat_id, text)
+                            .reply_markup(keyboard)
+                            .await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(chat_id, format!("Error: {}", e))
+                            .await?;
+                    }
+                }
+            }
+        }
     }
 
     Ok(())
@@ -201,6 +290,103 @@ async fn cmd_users(state: &BotState) -> std::result::Result<String, crate::error
     }
 
     Ok(format_users_message(&user_data))
+}
+
+/// Execute /add command: add a user, return UUID + vless URL.
+async fn cmd_add(
+    state: &BotState,
+    name: &str,
+) -> std::result::Result<String, crate::error::AppError> {
+    let client = XrayApiClient::new(state.backend.as_ref());
+    let uuid = client.add_user(name).await?;
+    let vless_url =
+        backend::build_vless_url(state.backend.as_ref(), &uuid, name).await?;
+    Ok(format_add_message(name, &uuid, &vless_url))
+}
+
+/// Execute /delete prompt: find user and return confirmation message with inline keyboard.
+async fn cmd_delete_prompt(
+    state: &BotState,
+    name: &str,
+) -> std::result::Result<(String, InlineKeyboardMarkup), crate::error::AppError> {
+    let client = XrayApiClient::new(state.backend.as_ref());
+    let users = client.list_users().await?;
+
+    let user = users
+        .iter()
+        .find(|u| u.name == name)
+        .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
+
+    let text = format_delete_confirm_message(name);
+    let keyboard = delete_confirmation_keyboard(&user.uuid);
+    Ok((text, keyboard))
+}
+
+/// Execute the actual user deletion by UUID.
+async fn cmd_delete_execute(
+    state: &BotState,
+    uuid: &str,
+) -> std::result::Result<String, crate::error::AppError> {
+    let client = XrayApiClient::new(state.backend.as_ref());
+
+    // Look up user name before deletion for the response message
+    let users = client.list_users().await?;
+    let name = users
+        .iter()
+        .find(|u| u.uuid == uuid)
+        .map(|u| u.name.clone())
+        .unwrap_or_else(|| uuid[..std::cmp::min(8, uuid.len())].to_string());
+
+    client.remove_user(uuid).await?;
+    Ok(format_delete_success_message(&name))
+}
+
+/// Handle callback queries from inline keyboard buttons (e.g., delete confirmation).
+async fn handle_callback(
+    bot: Bot,
+    q: CallbackQuery,
+    state: Arc<BotState>,
+) -> ResponseResult<()> {
+    let data = match q.data {
+        Some(ref d) => d.as_str(),
+        None => return Ok(()),
+    };
+
+    let chat_id = match q.message {
+        Some(ref msg) => msg.chat().id,
+        None => return Ok(()),
+    };
+
+    // Check admin access
+    {
+        let config = state.config.lock().await;
+        if !is_admin_or_unset(&config, chat_id) {
+            bot.answer_callback_query(q.id.clone())
+                .text("Access denied.")
+                .await?;
+            return Ok(());
+        }
+    }
+
+    if let Some(uuid) = data.strip_prefix(DELETE_CONFIRM_PREFIX) {
+        let text = match cmd_delete_execute(&state, uuid).await {
+            Ok(t) => t,
+            Err(e) => format!("Error: {}", e),
+        };
+        bot.answer_callback_query(q.id.clone()).await?;
+        // Edit the original message to show the result
+        if let Some(ref msg) = q.message {
+            bot.edit_message_text(chat_id, msg.id(), &text).await?;
+        }
+    } else if data.starts_with(DELETE_CANCEL_PREFIX) {
+        bot.answer_callback_query(q.id.clone()).await?;
+        if let Some(ref msg) = q.message {
+            bot.edit_message_text(chat_id, msg.id(), "Deletion cancelled.")
+                .await?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Execute /status command: server info + online summary.
@@ -229,12 +415,24 @@ pub async fn run_bot(token: &str, backend: Box<dyn XrayBackend>, config: Config)
         config: Mutex::new(config),
     });
 
-    let handler = Update::filter_message().filter_command::<Command>().endpoint(
-        move |bot: Bot, msg: Message, cmd: Command| {
-            let state = Arc::clone(&state);
-            async move { handle_command(bot, msg, cmd, state).await }
-        },
-    );
+    let state_cmd = Arc::clone(&state);
+    let state_cb = Arc::clone(&state);
+
+    let handler = dptree::entry()
+        .branch(
+            Update::filter_message()
+                .filter_command::<Command>()
+                .endpoint(move |bot: Bot, msg: Message, cmd: Command| {
+                    let state = Arc::clone(&state_cmd);
+                    async move { handle_command(bot, msg, cmd, state).await }
+                }),
+        )
+        .branch(Update::filter_callback_query().endpoint(
+            move |bot: Bot, q: CallbackQuery| {
+                let state = Arc::clone(&state_cb);
+                async move { handle_callback(bot, q, state).await }
+            },
+        ));
 
     Dispatcher::builder(bot, handler)
         .enable_ctrlc_handler()
@@ -305,6 +503,8 @@ mod tests {
         assert!(descriptions.contains("help"), "commands: {}", descriptions);
         assert!(descriptions.contains("users"), "commands: {}", descriptions);
         assert!(descriptions.contains("status"), "commands: {}", descriptions);
+        assert!(descriptions.contains("add"), "commands: {}", descriptions);
+        assert!(descriptions.contains("delete"), "commands: {}", descriptions);
     }
 
     #[test]
@@ -422,5 +622,96 @@ mod tests {
         let config = Config::default();
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(!toml_str.contains("telegram_admin_chat_id"));
+    }
+
+    // -- /add and /delete formatting tests --
+
+    #[test]
+    fn test_format_add_message() {
+        let text = format_add_message("Alice", "uuid-123", "vless://uuid-123@1.2.3.4:443?...");
+        assert!(text.contains("Alice"), "text: {}", text);
+        assert!(text.contains("uuid-123"), "text: {}", text);
+        assert!(text.contains("vless://"), "text: {}", text);
+        assert!(text.contains("✅"), "text: {}", text);
+    }
+
+    #[test]
+    fn test_format_add_message_special_name() {
+        let text = format_add_message("Bob's Phone [iOS]", "uuid-456", "vless://...");
+        assert!(text.contains("Bob's Phone [iOS]"), "text: {}", text);
+    }
+
+    #[test]
+    fn test_format_delete_confirm_message() {
+        let text = format_delete_confirm_message("Alice");
+        assert!(text.contains("Alice"), "text: {}", text);
+        assert!(text.contains("⚠️"), "text: {}", text);
+        assert!(text.contains("Delete"), "text: {}", text);
+    }
+
+    #[test]
+    fn test_format_delete_success_message() {
+        let text = format_delete_success_message("Alice");
+        assert!(text.contains("Alice"), "text: {}", text);
+        assert!(text.contains("deleted"), "text: {}", text);
+    }
+
+    #[test]
+    fn test_validate_user_name_valid() {
+        assert!(validate_user_name("Alice").is_none());
+        assert!(validate_user_name("Bob's Phone").is_none());
+        assert!(validate_user_name("Admin [macOS]").is_none());
+        assert!(validate_user_name("a").is_none());
+    }
+
+    #[test]
+    fn test_validate_user_name_empty() {
+        assert!(validate_user_name("").is_some());
+        assert!(validate_user_name("   ").is_some());
+    }
+
+    #[test]
+    fn test_validate_user_name_too_long() {
+        let long_name = "a".repeat(65);
+        let result = validate_user_name(&long_name);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("too long"));
+    }
+
+    #[test]
+    fn test_delete_confirmation_keyboard() {
+        let keyboard = delete_confirmation_keyboard("uuid-123");
+        let buttons = &keyboard.inline_keyboard;
+        assert_eq!(buttons.len(), 1, "should have one row");
+        assert_eq!(buttons[0].len(), 2, "should have two buttons");
+
+        // Check button text
+        assert_eq!(buttons[0][0].text, "Yes, delete");
+        assert_eq!(buttons[0][1].text, "Cancel");
+    }
+
+    #[test]
+    fn test_delete_confirmation_keyboard_callback_data() {
+        let keyboard = delete_confirmation_keyboard("test-uuid-abc");
+        let buttons = &keyboard.inline_keyboard;
+
+        // Extract callback data from buttons
+        let confirm_data = match &buttons[0][0].kind {
+            teloxide::types::InlineKeyboardButtonKind::CallbackData(d) => d.clone(),
+            _ => panic!("expected callback data"),
+        };
+        let cancel_data = match &buttons[0][1].kind {
+            teloxide::types::InlineKeyboardButtonKind::CallbackData(d) => d.clone(),
+            _ => panic!("expected callback data"),
+        };
+
+        assert_eq!(confirm_data, "delete_confirm:test-uuid-abc");
+        assert_eq!(cancel_data, "delete_cancel:test-uuid-abc");
+    }
+
+    #[test]
+    fn test_validate_user_name_usage_hint() {
+        let result = validate_user_name("").unwrap();
+        assert!(result.contains("/add"), "result: {}", result);
     }
 }
