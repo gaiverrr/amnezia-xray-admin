@@ -16,22 +16,9 @@ const VLESS_INBOUND_TAG: &str = "vless-in";
 
 /// Validate that an email/tag string is safe for shell interpolation.
 /// Rejects anything containing characters outside `[a-zA-Z0-9@._-]`.
-fn is_shell_safe_identifier(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-'))
-}
-
-/// Shell-quote an identifier, returning an error if it contains unsafe characters.
-fn validated_email(email: &str) -> Result<&str> {
-    if is_shell_safe_identifier(email) {
-        Ok(email)
-    } else {
-        Err(AppError::Xray(format!(
-            "unsafe email/identifier for shell command: {:?}",
-            email
-        )))
-    }
+/// Shell-escape a string by wrapping in single quotes and escaping any embedded single quotes.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Server information from Xray.
@@ -68,7 +55,6 @@ impl<'a> XrayApiClient<'a> {
     pub async fn add_user(&self, name: &str) -> Result<String> {
         // Validate name before any mutations to avoid partial failures
         let email = XrayUser::email_from_name(name);
-        validated_email(&email)?;
 
         let uuid = Uuid::new_v4().to_string();
 
@@ -272,49 +258,48 @@ pub fn build_adu_json(uuid: &str, email: &str, inbound_tag: &str) -> String {
 /// Build the `xray api rmu` command string.
 /// Returns Err if email contains shell-unsafe characters.
 pub fn build_rmu_cmd(email: &str) -> Result<String> {
-    let email = validated_email(email)?;
-    Ok(format!("xray api rmu -s {} -email {}", API_ADDR, email))
+    Ok(format!(
+        "xray api rmu -s {} -email {}",
+        API_ADDR,
+        shell_quote(email)
+    ))
 }
 
 /// Build the `xray api stats` command for user traffic.
-/// Returns Err if email or direction contains shell-unsafe characters.
 pub fn build_stats_cmd(email: &str, direction: &str) -> Result<String> {
-    let email = validated_email(email)?;
-    let direction = validated_email(direction)?;
+    let name = format!("user>>>{}>>>traffic>>>{}", email, direction);
     Ok(format!(
-        "xray api stats -s {} -name 'user>>>{}>>>traffic>>>{}'",
-        API_ADDR, email, direction
+        "xray api stats -s {} -name {}",
+        API_ADDR,
+        shell_quote(&name)
     ))
 }
 
 /// Build the `xray api stats` command for inbound traffic.
-/// Returns Err if inbound_tag or direction contains shell-unsafe characters.
 pub fn build_inbound_stats_cmd(inbound_tag: &str, direction: &str) -> Result<String> {
-    let tag = validated_email(inbound_tag)?;
-    let direction = validated_email(direction)?;
+    let name = format!("inbound>>>{}>>>traffic>>>{}", inbound_tag, direction);
     Ok(format!(
-        "xray api stats -s {} -name 'inbound>>>{}>>>traffic>>>{}'",
-        API_ADDR, tag, direction
+        "xray api stats -s {} -name {}",
+        API_ADDR,
+        shell_quote(&name)
     ))
 }
 
 /// Build the `xray api statsonline` command.
-/// Returns Err if email contains shell-unsafe characters.
 pub fn build_online_cmd(email: &str) -> Result<String> {
-    let email = validated_email(email)?;
     Ok(format!(
         "xray api statsonline -s {} -email {}",
-        API_ADDR, email
+        API_ADDR,
+        shell_quote(email)
     ))
 }
 
 /// Build the `xray api statsonlineiplist` command.
-/// Returns Err if email contains shell-unsafe characters.
 pub fn build_online_ip_list_cmd(email: &str) -> Result<String> {
-    let email = validated_email(email)?;
     Ok(format!(
         "xray api statsonlineiplist -s {} -email {}",
-        API_ADDR, email
+        API_ADDR,
+        shell_quote(email)
     ))
 }
 
@@ -467,7 +452,10 @@ mod tests {
     #[test]
     fn test_build_rmu_cmd() {
         let cmd = build_rmu_cmd("alice@vpn").unwrap();
-        assert_eq!(cmd, "xray api rmu -s 127.0.0.1:8080 -email alice@vpn");
+        assert_eq!(
+            cmd,
+            "xray api rmu -s 127.0.0.1:8080 -email 'alice@vpn'"
+        );
     }
 
     #[test]
@@ -497,7 +485,10 @@ mod tests {
     #[test]
     fn test_build_online_cmd() {
         let cmd = build_online_cmd("bob@vpn").unwrap();
-        assert_eq!(cmd, "xray api statsonline -s 127.0.0.1:8080 -email bob@vpn");
+        assert_eq!(
+            cmd,
+            "xray api statsonline -s 127.0.0.1:8080 -email 'bob@vpn'"
+        );
     }
 
     #[test]
@@ -505,16 +496,19 @@ mod tests {
         let cmd = build_online_ip_list_cmd("bob@vpn").unwrap();
         assert_eq!(
             cmd,
-            "xray api statsonlineiplist -s 127.0.0.1:8080 -email bob@vpn"
+            "xray api statsonlineiplist -s 127.0.0.1:8080 -email 'bob@vpn'"
         );
     }
 
     #[test]
-    fn test_build_cmd_rejects_unsafe_email() {
-        assert!(build_rmu_cmd("alice; rm -rf /").is_err());
-        assert!(build_stats_cmd("bob$(whoami)", "uplink").is_err());
-        assert!(build_online_cmd("evil`cmd`@vpn").is_err());
-        assert!(build_online_ip_list_cmd("a'b@vpn").is_err());
+    fn test_build_cmd_handles_special_chars() {
+        // Names with brackets/parens/spaces should work (real Amnezia names)
+        let cmd = build_rmu_cmd("Admin [macOS Tahoe (26.3.1)]@vpn").unwrap();
+        assert!(cmd.contains("'Admin [macOS Tahoe (26.3.1)]@vpn'"));
+
+        // Single quotes in names get escaped
+        let cmd = build_rmu_cmd("a'b@vpn").unwrap();
+        assert!(cmd.contains("'a'\\''b@vpn'"));
     }
 
     // -- Response parsing tests --
