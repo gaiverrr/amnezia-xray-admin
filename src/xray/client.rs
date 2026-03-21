@@ -1,7 +1,9 @@
 use crate::error::{AppError, Result};
 use crate::ssh::SshSession;
 
-use super::config::{read_clients_table, read_server_config, CLIENTS_TABLE_PATH, SERVER_CONFIG_PATH};
+use super::config::{
+    read_clients_table, read_server_config, CLIENTS_TABLE_PATH, SERVER_CONFIG_PATH,
+};
 use super::types::{
     ClientsTable, ServerConfig, ServerJsonClient, TrafficStats, VlessUrlParams, XrayUser,
 };
@@ -76,7 +78,11 @@ impl<'a> XrayApiClient<'a> {
             .iter()
             .find(|c| c.id == uuid)
             .and_then(|c| c.email.clone())
-            .or_else(|| table.name_for_uuid(uuid).map(|n| XrayUser::email_from_name(n)))
+            .or_else(|| {
+                table
+                    .name_for_uuid(uuid)
+                    .map(|n| XrayUser::email_from_name(n))
+            })
             .ok_or_else(|| AppError::Xray(format!("user {} not found", uuid)))?;
 
         // 1. Call xray api rmu to remove from running instance
@@ -272,7 +278,18 @@ fn urlencod_fragment(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     for ch in s.chars() {
         match ch {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' | '!' | '\'' | '(' | ')' | '*' => {
+            'A'..='Z'
+            | 'a'..='z'
+            | '0'..='9'
+            | '-'
+            | '_'
+            | '.'
+            | '~'
+            | '!'
+            | '\''
+            | '('
+            | ')'
+            | '*' => {
                 result.push(ch);
             }
             ' ' => result.push_str("%20"),
@@ -385,10 +402,7 @@ mod tests {
     #[test]
     fn test_build_rmu_cmd() {
         let cmd = build_rmu_cmd("alice@vpn");
-        assert_eq!(
-            cmd,
-            "xray api rmu -s 127.0.0.1:8080 -email alice@vpn"
-        );
+        assert_eq!(cmd, "xray api rmu -s 127.0.0.1:8080 -email alice@vpn");
     }
 
     #[test]
@@ -418,10 +432,7 @@ mod tests {
     #[test]
     fn test_build_online_cmd() {
         let cmd = build_online_cmd("bob@vpn");
-        assert_eq!(
-            cmd,
-            "xray api statsonline -s 127.0.0.1:8080 -email bob@vpn"
-        );
+        assert_eq!(cmd, "xray api statsonline -s 127.0.0.1:8080 -email bob@vpn");
     }
 
     #[test]

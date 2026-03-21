@@ -146,13 +146,13 @@ src/
 - [x] run tests — must pass before next task
 
 ### Task 8: TUI theme and base layout
-- [ ] define hacker/cyberpunk theme in `src/ui/theme.rs`
-- [ ] color palette: matrix green (#00ff41), cyan (#00d4ff), dark backgrounds, red for alerts
-- [ ] ASCII art header/logo for the app
-- [ ] implement base app frame with ratatui: header bar, main area, status bar, keybinding hints
-- [ ] implement app state machine in `src/app.rs` (screens: Setup, Dashboard, UserDetail, AddUser, QrView)
-- [ ] implement event loop: key input handling, periodic refresh
-- [ ] `cargo build` must succeed, app launches and shows empty dashboard frame
+- [x] define hacker/cyberpunk theme in `src/ui/theme.rs`
+- [x] color palette: matrix green (#00ff41), cyan (#00d4ff), dark backgrounds, red for alerts
+- [x] ASCII art header/logo for the app
+- [x] implement base app frame with ratatui: header bar, main area, status bar, keybinding hints
+- [x] implement app state machine in `src/app.rs` (screens: Setup, Dashboard, UserDetail, AddUser, QrView)
+- [x] implement event loop: key input handling, periodic refresh
+- [x] `cargo build` must succeed, app launches and shows empty dashboard frame
 
 ### Task 9: First-run setup wizard TUI
 - [ ] implement setup screen in `src/ui/setup.rs`

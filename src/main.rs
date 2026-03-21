@@ -21,18 +21,28 @@ fn main() {
 
     config.merge_cli(&cli);
 
-    if config.has_connection_info() {
-        println!("amnezia-xray-admin v0.1.0");
-        println!(
-            "Connecting to {}...",
-            config
-                .ssh_host
-                .as_deref()
-                .or(config.host.as_deref())
-                .unwrap_or("unknown")
-        );
-    } else {
-        println!("amnezia-xray-admin v0.1.0");
-        println!("No connection configured. Run setup or use --host / --ssh-host.");
+    let has_config = config.has_connection_info();
+
+    // Initialize terminal
+    let mut terminal = match app::init_terminal() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Failed to initialize terminal: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Create app and run event loop
+    let mut application = app::App::new(has_config);
+    let result = app::run(&mut application, &mut terminal);
+
+    // Always restore terminal, even on error
+    if let Err(e) = app::restore_terminal(&mut terminal) {
+        eprintln!("Failed to restore terminal: {}", e);
+    }
+
+    if let Err(e) = result {
+        eprintln!("Application error: {}", e);
+        std::process::exit(1);
     }
 }

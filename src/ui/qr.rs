@@ -3,7 +3,6 @@
 /// Uses the `qrcode` crate to generate QR codes and renders them
 /// using unicode half-block characters (U+2580 UPPER HALF BLOCK, U+2584 LOWER HALF BLOCK,
 /// U+2588 FULL BLOCK) to display two rows per character line.
-
 use qrcode::QrCode;
 
 /// Render a QR code as a vector of strings using unicode half-block characters.
@@ -50,10 +49,10 @@ pub fn render_qr_to_lines(data: &str) -> Result<Vec<String>, String> {
             let bottom = padded(bottom_row, x);
 
             match (top, bottom) {
-                (true, true) => line.push('\u{2588}'),   // █ full block
-                (true, false) => line.push('\u{2580}'),  // ▀ upper half
-                (false, true) => line.push('\u{2584}'),  // ▄ lower half
-                (false, false) => line.push(' '),        // space
+                (true, true) => line.push('\u{2588}'),  // █ full block
+                (true, false) => line.push('\u{2580}'), // ▀ upper half
+                (false, true) => line.push('\u{2584}'), // ▄ lower half
+                (false, false) => line.push(' '),       // space
             }
         }
 

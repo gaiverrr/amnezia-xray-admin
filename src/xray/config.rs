@@ -106,7 +106,11 @@ fn add_api_inbound(config: &mut ServerConfig) {
         }
     });
 
-    if let Some(inbounds) = config.raw.get_mut("inbounds").and_then(|i| i.as_array_mut()) {
+    if let Some(inbounds) = config
+        .raw
+        .get_mut("inbounds")
+        .and_then(|i| i.as_array_mut())
+    {
         // Don't add if already present
         let already_has = inbounds.iter().any(|ib| {
             ib.get("tag")
@@ -153,9 +157,7 @@ fn add_email_to_clients(config: &mut ServerConfig, clients_table: &ClientsTable)
             .and_then(|id| id.as_str())
             .unwrap_or("unknown");
 
-        let name = clients_table
-            .name_for_uuid(uuid)
-            .unwrap_or(uuid);
+        let name = clients_table.name_for_uuid(uuid).unwrap_or(uuid);
 
         let email = format!("{}@vpn", name);
         client["email"] = json!(email);
@@ -174,10 +176,7 @@ pub async fn upload_and_restart(
 
     // Escape single quotes in JSON for shell safety
     let escaped = json.replace('\'', "'\\''");
-    let write_cmd = format!(
-        "printf '%s' '{}' > {}",
-        escaped, SERVER_CONFIG_PATH
-    );
+    let write_cmd = format!("printf '%s' '{}' > {}", escaped, SERVER_CONFIG_PATH);
     let result = session.exec_command(&write_cmd).await?;
     if !result.success() {
         return Err(AppError::Xray(format!(
@@ -438,11 +437,17 @@ mod tests {
         let clients = config.clients();
 
         // bob: had no email, should now have bob@vpn (from clientsTable name)
-        let bob = clients.iter().find(|c| c.id == "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb").unwrap();
+        let bob = clients
+            .iter()
+            .find(|c| c.id == "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb")
+            .unwrap();
         assert_eq!(bob.email, Some("bob@vpn".to_string()));
 
         // alice: already had alice@vpn, should be unchanged
-        let alice = clients.iter().find(|c| c.id == "cccccccc-4444-5555-6666-dddddddddddd").unwrap();
+        let alice = clients
+            .iter()
+            .find(|c| c.id == "cccccccc-4444-5555-6666-dddddddddddd")
+            .unwrap();
         assert_eq!(alice.email, Some("alice@vpn".to_string()));
     }
 
@@ -468,8 +473,7 @@ mod tests {
         assert_eq!(outbounds[0]["protocol"], "freedom");
 
         // Check that VLESS inbound still has its stream settings
-        let vless = config
-            .raw["inbounds"]
+        let vless = config.raw["inbounds"]
             .as_array()
             .unwrap()
             .iter()
@@ -543,8 +547,7 @@ mod tests {
 
         enable_api(&mut config, &table).unwrap();
 
-        let vless = config
-            .raw["inbounds"]
+        let vless = config.raw["inbounds"]
             .as_array()
             .unwrap()
             .iter()
