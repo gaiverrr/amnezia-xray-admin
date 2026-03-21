@@ -117,14 +117,14 @@ src/
 - [x] run tests — must pass before next task
 
 ### Task 5: Enable Xray API on server (one-time setup)
-- [ ] implement `ensure_api_enabled()` in `src/xray/config.rs`
-- [ ] detect if server.json already has `api` section
-- [ ] if missing: add `api`, `stats`, `policy`, `routing` rule, and `dokodemo-door` inbound on 127.0.0.1:8080
-- [ ] add `email` field to each existing client (derive from clientsTable name or UUID)
-- [ ] add `tag: "vless-in"` to the main inbound
-- [ ] upload modified config and restart container via SSH
-- [ ] write tests for config transformation (input JSON -> expected output JSON)
-- [ ] run tests — must pass before next task
+- [x] implement `ensure_api_enabled()` in `src/xray/config.rs`
+- [x] detect if server.json already has `api` section
+- [x] if missing: add `api`, `stats`, `policy`, `routing` rule, and `dokodemo-door` inbound on 127.0.0.1:8080
+- [x] add `email` field to each existing client (derive from clientsTable name or UUID)
+- [x] add `tag: "vless-in"` to the main inbound
+- [x] upload modified config and restart container via SSH
+- [x] write tests for config transformation (input JSON -> expected output JSON)
+- [x] run tests — must pass before next task
 
 ### Task 6: Xray API client (stats and user management)
 - [ ] implement gRPC communication via SSH-tunneled commands in `src/xray/client.rs`

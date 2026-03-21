@@ -114,7 +114,7 @@ impl ServerConfig {
         self.raw.get("api").is_some()
     }
 
-    fn find_vless_inbound(&self) -> Option<&serde_json::Value> {
+    pub(crate) fn find_vless_inbound(&self) -> Option<&serde_json::Value> {
         self.raw
             .get("inbounds")
             .and_then(|i| i.as_array())
@@ -128,7 +128,7 @@ impl ServerConfig {
             })
     }
 
-    fn find_vless_inbound_mut(&mut self) -> Option<&mut serde_json::Value> {
+    pub(crate) fn find_vless_inbound_mut(&mut self) -> Option<&mut serde_json::Value> {
         self.raw
             .get_mut("inbounds")
             .and_then(|i| i.as_array_mut())
