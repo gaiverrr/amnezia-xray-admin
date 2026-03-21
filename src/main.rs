@@ -132,6 +132,14 @@ fn main() {
         return;
     }
 
+    if cli.backup {
+        if let Err(e) = runtime.block_on(cli_backup(&config, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // Initialize terminal
     let mut terminal = match app::init_terminal() {
         Ok(t) => t,
@@ -499,6 +507,20 @@ async fn cli_telegram_bot(config: &Config, token: &str, local: bool) -> error::R
     }
 
     telegram::run_bot(token, backend, config.clone()).await
+}
+
+async fn cli_backup(config: &Config, local: bool) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
+
+    eprintln!("Creating timestamped backup...");
+    let timestamp = client.backup_config_timestamped().await?;
+
+    println!("Backup created:");
+    println!("  server.json.{}.bak", timestamp);
+    println!("  clientsTable.{}.bak", timestamp);
+
+    Ok(())
 }
 
 async fn cli_deploy_bot(config: &Config, token: &str) -> error::Result<()> {

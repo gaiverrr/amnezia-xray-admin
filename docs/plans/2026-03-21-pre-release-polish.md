@@ -43,11 +43,11 @@ Implement the design spec from `docs/superpowers/specs/2026-03-21-pre-release-po
 - [x] run tests — must pass before next task
 
 ### Task 2: Add --backup CLI command
-- [ ] add `--backup` flag to `Cli` struct in `src/config.rs`
-- [ ] implement `cli_backup()` in `src/main.rs`: connect, call `backup_config_timestamped()`, print backup filenames
-- [ ] update test Cli struct instances with new field
-- [ ] verify: `cargo run -- --backup`
-- [ ] run tests — must pass before next task
+- [x] add `--backup` flag to `Cli` struct in `src/config.rs`
+- [x] implement `cli_backup()` in `src/main.rs`: connect, call `backup_config_timestamped()`, print backup filenames
+- [x] update test Cli struct instances with new field
+- [x] verify: `cargo run -- --backup` (skipped - requires VPS connection)
+- [x] run tests — must pass before next task
 
 ### Task 3: Add --restore CLI command
 - [ ] add `--restore` flag (optional value) to `Cli` struct
