@@ -72,6 +72,14 @@ fn main() {
         return;
     }
 
+    if cli.server_info {
+        if let Err(e) = runtime.block_on(cli_server_info(&config)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // Initialize terminal
     let mut terminal = match app::init_terminal() {
         Ok(t) => t,
@@ -243,6 +251,35 @@ async fn cli_online_status(config: &Config) -> error::Result<()> {
         };
         println!("{:<30} {:<8} {}", name, online, ip_str);
     }
+
+    Ok(())
+}
+
+async fn cli_server_info(config: &Config) -> error::Result<()> {
+    let session = backend::connect(config).await?;
+    let client = xray::client::XrayApiClient::new(&session);
+
+    let server_info = client.get_server_info().await?;
+    let users = client.list_users().await?;
+    let api_status = if server_info.version != "unknown" {
+        "enabled"
+    } else {
+        "unknown"
+    };
+
+    let _ = session.close().await;
+
+    println!("Xray version:  v{}", server_info.version);
+    println!("API status:    {}", api_status);
+    println!("Users:         {}", users.len());
+    println!(
+        "Total upload:  {}",
+        ui::dashboard::format_bytes(server_info.uplink)
+    );
+    println!(
+        "Total download: {}",
+        ui::dashboard::format_bytes(server_info.downlink)
+    );
 
     Ok(())
 }

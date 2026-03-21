@@ -74,6 +74,10 @@ pub struct Cli {
     /// Show online status for all users and exit
     #[arg(long = "online-status")]
     pub online_status: bool,
+
+    /// Show server info (version, traffic, user count, API status) and exit
+    #[arg(long = "server-info")]
+    pub server_info: bool,
 }
 
 /// Application configuration
@@ -344,6 +348,7 @@ host = "10.0.0.1"
             user_url: None,
             user_qr: None,
             online_status: false,
+            server_info: false,
         };
         config.merge_cli(&cli);
 
@@ -377,6 +382,7 @@ host = "10.0.0.1"
             user_url: None,
             user_qr: None,
             online_status: false,
+            server_info: false,
         };
         config.merge_cli(&cli);
 
@@ -403,6 +409,7 @@ host = "10.0.0.1"
             user_url: None,
             user_qr: None,
             online_status: false,
+            server_info: false,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());
