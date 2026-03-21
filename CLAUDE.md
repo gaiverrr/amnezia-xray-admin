@@ -76,7 +76,7 @@ cargo run -- --deploy-bot --telegram-token <TOKEN>  # deploy bot to VPS via SSH
 - **xray/client.rs**: `XrayApiClient` — list/add/remove/rename users, stats, online status, backup/restore. Commands run via `docker exec <container> xray api ...`
 - **backend.rs**: Async task spawners, `BackendMsg` enum, connection helpers
 - **telegram.rs**: Telegram bot module using teloxide. Commands: /start, /help, /users, /status, /add, /delete, /url, /qr
-- **error.rs**: `AppError` enum (SSH, Xray, Config, IO variants) and `Result<T>` type alias
+- **error.rs**: `AppError` enum (SSH, Xray, Config, IO variants), `Result<T>` type alias, and `add_hint()` which enriches error messages with actionable troubleshooting suggestions
 - **app.rs**: 6-screen state machine (Setup→Dashboard→UserDetail/AddUser/QrView/TelegramSetup), event loop with 250ms poll + 5s auto-refresh
 - **ui/**: TUI rendering submodules — setup.rs (wizard), dashboard.rs (main view), user_detail.rs (detail panel), add_user.rs (add dialog), qr.rs (QR display + CLI rendering), telegram_setup.rs (bot deploy screen), theme.rs (color constants)
 

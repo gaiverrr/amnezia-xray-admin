@@ -170,7 +170,13 @@ impl<'a> XrayApiClient<'a> {
 
         // Update server.json email
         let mut config = config;
-        config.update_client_email(&uuid, &new_email)?;
+        let updated = config.update_client_email(&uuid, &new_email)?;
+        if !updated {
+            return Err(AppError::Xray(format!(
+                "user UUID '{}' not found in server.json",
+                uuid
+            )));
+        }
         self.write_server_config(&config).await?;
 
         // Restart container to pick up new config
@@ -256,7 +262,8 @@ impl<'a> XrayApiClient<'a> {
     }
 
     /// List available timestamped backups, returning timestamps sorted newest-first.
-    /// Validates that both server.json and clientsTable backups exist for each timestamp.
+    /// Returns timestamps extracted from server.json backup filenames.
+    /// Note: clientsTable backup existence is validated separately during restore.
     pub async fn list_backups(&self) -> Result<Vec<String>> {
         let cmd = build_list_backups_cmd();
         let result = self.backend.exec_in_container(&cmd).await?;
@@ -447,10 +454,9 @@ pub fn build_restore_cmd(timestamp: &str) -> String {
     )
 }
 
-/// Parse timestamps from `ls -t` output of backup files.
+/// Parse timestamps from `ls -t` output of server.json backup files.
 /// Input lines look like: `/opt/amnezia/xray/server.json.20260321-120000.bak`
 /// Returns timestamps sorted newest-first (as ls -t gives them).
-/// Only returns timestamps where both server.json and clientsTable backups exist.
 pub fn parse_backup_timestamps(ls_output: &str) -> Vec<String> {
     let prefix = format!("{}.", SERVER_CONFIG_PATH);
     let suffix = ".bak";
