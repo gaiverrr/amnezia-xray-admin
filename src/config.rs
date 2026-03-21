@@ -102,6 +102,10 @@ pub struct Cli {
     /// Restore server.json and clientsTable from a backup. Optionally specify a timestamp (YYYYMMDD-HHMMSS); defaults to latest.
     #[arg(long = "restore", num_args = 0..=1, default_missing_value = "")]
     pub restore: Option<String>,
+
+    /// Add a new user and print their vless:// URL
+    #[arg(long = "add-user")]
+    pub add_user: Option<String>,
 }
 
 /// Application configuration
@@ -389,6 +393,7 @@ host = "10.0.0.1"
             deploy_bot: false,
             backup: false,
             restore: None,
+            add_user: None,
         };
         config.merge_cli(&cli);
 
@@ -431,6 +436,7 @@ host = "10.0.0.1"
             deploy_bot: false,
             backup: false,
             restore: None,
+            add_user: None,
         };
         config.merge_cli(&cli);
 
@@ -464,6 +470,7 @@ host = "10.0.0.1"
             deploy_bot: false,
             backup: false,
             restore: None,
+            add_user: None,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());

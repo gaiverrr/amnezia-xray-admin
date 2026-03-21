@@ -65,17 +65,17 @@ Implement the design spec from `docs/superpowers/specs/2026-03-21-pre-release-po
 - [x] run tests — must pass before next task
 
 ### Task 4: Add --add-user CLI command
-- [ ] add `--add-user <name>` arg to `Cli` struct
-- [ ] implement `cli_add_user()` in `src/main.rs`: connect, call `client.add_user(name)`, generate vless URL, print formatted output:
+- [x] add `--add-user <name>` arg to `Cli` struct
+- [x] implement `cli_add_user()` in `src/main.rs`: connect, call `client.add_user(name)`, generate vless URL, print formatted output:
   ```
   User added successfully.
   Name:  Friend
   UUID:  a1b2c3d4-...
   URL:   vless://...
   ```
-- [ ] update test Cli struct instances
-- [ ] verify: `cargo run -- --add-user TestUser`
-- [ ] run tests — must pass before next task
+- [x] update test Cli struct instances
+- [x] verify: `cargo run -- --add-user TestUser` (skipped - requires VPS connection)
+- [x] run tests — must pass before next task
 
 ### Task 5: Add --delete-user CLI command with confirmation
 - [ ] add `--delete-user <name>` arg and `--yes` flag to `Cli` struct

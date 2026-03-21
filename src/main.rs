@@ -132,6 +132,14 @@ fn main() {
         return;
     }
 
+    if let Some(ref name) = cli.add_user {
+        if let Err(e) = runtime.block_on(cli_add_user(&config, name, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if cli.backup {
         if let Err(e) = runtime.block_on(cli_backup(&config, local)) {
             eprintln!("Error: {}", e);
@@ -563,6 +571,21 @@ async fn cli_restore(
     println!("  server.json.{}.bak -> server.json", ts);
     println!("  clientsTable.{}.bak -> clientsTable", ts);
     println!("Container restarted.");
+
+    Ok(())
+}
+
+async fn cli_add_user(config: &Config, name: &str, local: bool) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
+
+    let uuid = client.add_user(name).await?;
+    let vless_url = backend::build_vless_url(backend.as_ref(), &uuid, name).await?;
+
+    println!("User added successfully.");
+    println!("Name:  {}", name);
+    println!("UUID:  {}", uuid);
+    println!("URL:   {}", vless_url);
 
     Ok(())
 }
