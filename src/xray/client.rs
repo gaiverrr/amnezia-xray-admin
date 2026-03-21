@@ -221,7 +221,7 @@ impl<'a> XrayApiClient<'a> {
             "sh -c 'echo {} | base64 -d > {} && mv {} {}'",
             b64, tmp, tmp, SERVER_CONFIG_PATH
         );
-        let result = self.session.exec_command(&cmd).await?;
+        let result = self.session.exec_in_container(&cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
                 "failed to write server config: {}",
@@ -240,7 +240,7 @@ impl<'a> XrayApiClient<'a> {
             "sh -c 'echo {} | base64 -d > {} && mv {} {}'",
             b64, tmp, tmp, CLIENTS_TABLE_PATH
         );
-        let result = self.session.exec_command(&cmd).await?;
+        let result = self.session.exec_in_container(&cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
                 "failed to write clients table: {}",
