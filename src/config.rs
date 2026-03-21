@@ -90,6 +90,10 @@ pub struct Cli {
     /// Telegram bot token (can also be set via TELEGRAM_TOKEN env var)
     #[arg(long = "telegram-token", env = "TELEGRAM_TOKEN")]
     pub telegram_token: Option<String>,
+
+    /// Deploy Telegram bot to VPS via SSH and exit
+    #[arg(long = "deploy-bot")]
+    pub deploy_bot: bool,
 }
 
 /// Application configuration
@@ -374,6 +378,7 @@ host = "10.0.0.1"
             local: false,
             telegram_bot: false,
             telegram_token: None,
+            deploy_bot: false,
         };
         config.merge_cli(&cli);
 
@@ -413,6 +418,7 @@ host = "10.0.0.1"
             local: false,
             telegram_bot: false,
             telegram_token: None,
+            deploy_bot: false,
         };
         config.merge_cli(&cli);
 
@@ -443,6 +449,7 @@ host = "10.0.0.1"
             local: false,
             telegram_bot: false,
             telegram_token: None,
+            deploy_bot: false,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());

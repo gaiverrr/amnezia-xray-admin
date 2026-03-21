@@ -349,7 +349,7 @@ pub fn spawn_deploy_bot(
     });
 }
 
-async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> {
+pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> {
     use base64::Engine;
     use crate::ui::telegram_setup::generate_compose_yaml;
 

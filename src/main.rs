@@ -100,6 +100,21 @@ fn main() {
         return;
     }
 
+    if cli.deploy_bot {
+        let token = match cli.telegram_token {
+            Some(ref t) => t.clone(),
+            None => {
+                eprintln!("Error: --telegram-token or TELEGRAM_TOKEN env var is required for --deploy-bot");
+                std::process::exit(1);
+            }
+        };
+        if let Err(e) = runtime.block_on(cli_deploy_bot(&config, &token)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // Initialize terminal
     let mut terminal = match app::init_terminal() {
         Ok(t) => t,
@@ -403,4 +418,23 @@ async fn cli_telegram_bot(config: &Config, token: &str, local: bool) -> error::R
     env_logger::init();
     let backend = connect_cli_backend(config, local).await?;
     telegram::run_bot(token, backend, config.clone()).await
+}
+
+async fn cli_deploy_bot(config: &Config, token: &str) -> error::Result<()> {
+    if !ui::telegram_setup::is_valid_token(token) {
+        return Err(error::AppError::Config(
+            "Invalid token format (expected <digits>:<secret>)".to_string(),
+        ));
+    }
+
+    eprintln!("Connecting to VPS...");
+    eprintln!("Deploying Telegram bot...");
+
+    match backend::deploy_bot(config, token).await {
+        Ok(msg) => {
+            println!("{}", msg);
+            Ok(())
+        }
+        Err(e) => Err(error::AppError::Xray(e)),
+    }
 }
