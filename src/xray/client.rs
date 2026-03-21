@@ -4,6 +4,7 @@ use crate::error::{AppError, Result};
 use super::config::{
     read_clients_table, read_server_config, CLIENTS_TABLE_PATH, SERVER_CONFIG_PATH,
 };
+use log::info;
 use super::types::{
     ClientsTable, ServerConfig, ServerJsonClient, TrafficStats, VlessUrlParams, XrayUser,
 };
@@ -58,6 +59,9 @@ impl<'a> XrayApiClient<'a> {
         // Validate name before any mutations to avoid partial failures
         let email = XrayUser::email_from_name(name);
 
+        // Auto-backup before mutation
+        self.backup_config().await?;
+
         let uuid = Uuid::new_v4().to_string();
 
         // 1. Persist to server.json on disk first
@@ -95,6 +99,9 @@ impl<'a> XrayApiClient<'a> {
     /// access is already revoked — avoiding the worse failure mode of
     /// a user appearing deleted in the UI while still having live access.
     pub async fn remove_user(&self, uuid: &str) -> Result<()> {
+        // Auto-backup before mutation
+        self.backup_config().await?;
+
         // Find the user's email first
         let config = read_server_config(self.backend).await?;
         let table = read_clients_table(self.backend).await?;
@@ -178,6 +185,36 @@ impl<'a> XrayApiClient<'a> {
         })
     }
 
+    /// Create an auto-backup of server.json and clientsTable (overwrites latest .bak).
+    pub async fn backup_config(&self) -> Result<()> {
+        let cmd = build_backup_cmd();
+        let result = self.backend.exec_in_container(&cmd).await?;
+        if !result.success() {
+            return Err(AppError::Xray(format!(
+                "backup failed: {}",
+                result.stderr.trim()
+            )));
+        }
+        info!("Auto-backup created (.bak)");
+        Ok(())
+    }
+
+    /// Create a timestamped backup of server.json and clientsTable.
+    /// Returns the timestamp string used in the backup filenames.
+    pub async fn backup_config_timestamped(&self) -> Result<String> {
+        let cmd = build_backup_timestamped_cmd();
+        let result = self.backend.exec_in_container(&cmd).await?;
+        if !result.success() {
+            return Err(AppError::Xray(format!(
+                "timestamped backup failed: {}",
+                result.stderr.trim()
+            )));
+        }
+        let timestamp = result.stdout.trim().to_string();
+        info!("Timestamped backup created: {}", timestamp);
+        Ok(timestamp)
+    }
+
     // -- internal helpers --
 
     async fn exec_api_adu(&self, user_json: &str) -> Result<()> {
@@ -246,6 +283,25 @@ impl<'a> XrayApiClient<'a> {
         }
         Ok(())
     }
+}
+
+// -- Backup command construction (pure functions, testable) --
+
+/// Build the shell command for auto-backup (overwrites latest .bak).
+pub fn build_backup_cmd() -> String {
+    format!(
+        "cp {} {}.bak && cp {} {}.bak",
+        SERVER_CONFIG_PATH, SERVER_CONFIG_PATH, CLIENTS_TABLE_PATH, CLIENTS_TABLE_PATH
+    )
+}
+
+/// Build the shell command for timestamped backup.
+/// Uses `$(date +%Y%m%d-%H%M%S)` so the timestamp is generated server-side.
+pub fn build_backup_timestamped_cmd() -> String {
+    format!(
+        "ts=$(date +%Y%m%d-%H%M%S) && cp {} {}.\"$ts\".bak && cp {} {}.\"$ts\".bak && echo \"$ts\"",
+        SERVER_CONFIG_PATH, SERVER_CONFIG_PATH, CLIENTS_TABLE_PATH, CLIENTS_TABLE_PATH
+    )
 }
 
 // -- Command construction (pure functions, testable) --
@@ -498,6 +554,47 @@ pub fn parse_online_ip_list(output: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -- Backup command construction tests --
+
+    #[test]
+    fn test_build_backup_cmd() {
+        let cmd = build_backup_cmd();
+        assert!(cmd.contains("cp /opt/amnezia/xray/server.json /opt/amnezia/xray/server.json.bak"));
+        assert!(
+            cmd.contains("cp /opt/amnezia/xray/clientsTable /opt/amnezia/xray/clientsTable.bak")
+        );
+        // Both copies should be chained with &&
+        assert!(cmd.contains("&&"));
+    }
+
+    #[test]
+    fn test_build_backup_cmd_copies_both_files() {
+        let cmd = build_backup_cmd();
+        // Must backup both server.json and clientsTable
+        assert_eq!(cmd.matches("cp ").count(), 2);
+    }
+
+    #[test]
+    fn test_build_backup_timestamped_cmd() {
+        let cmd = build_backup_timestamped_cmd();
+        // Should use date command for timestamp
+        assert!(cmd.contains("$(date +%Y%m%d-%H%M%S)") || cmd.contains("date +%Y%m%d-%H%M%S"));
+        // Should backup both files
+        assert!(cmd.contains("server.json"));
+        assert!(cmd.contains("clientsTable"));
+        // Should echo the timestamp for caller to capture
+        assert!(cmd.contains("echo"));
+    }
+
+    #[test]
+    fn test_build_backup_timestamped_cmd_uses_same_timestamp() {
+        let cmd = build_backup_timestamped_cmd();
+        // Timestamp should be captured in a variable and reused for both files
+        // to ensure both backups have the same timestamp
+        assert!(cmd.contains("ts="));
+        assert!(cmd.contains("\"$ts\""));
+    }
 
     // -- Command construction tests --
 

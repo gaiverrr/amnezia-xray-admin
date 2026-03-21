@@ -34,13 +34,13 @@ Implement the design spec from `docs/superpowers/specs/2026-03-21-pre-release-po
 ## Implementation Steps
 
 ### Task 1: Add backup_config() to XrayApiClient
-- [ ] add `backup_config()` method to `XrayApiClient` in `src/xray/client.rs`: copies both server.json and clientsTable to `.bak` via `exec_in_container("cp ...")`
-- [ ] add `backup_config_timestamped()` for manual backups: uses `$(date +%Y%m%d-%H%M%S)` suffix
-- [ ] call `backup_config()` at the start of `add_user()` before any writes
-- [ ] call `backup_config()` at the start of `remove_user()` before any writes
-- [ ] call `backup_config()` in `ensure_api_enabled()` in `src/xray/config.rs` — only when `modified == true`, before `upload_and_restart()`
-- [ ] write tests for backup command string construction
-- [ ] run tests — must pass before next task
+- [x] add `backup_config()` method to `XrayApiClient` in `src/xray/client.rs`: copies both server.json and clientsTable to `.bak` via `exec_in_container("cp ...")`
+- [x] add `backup_config_timestamped()` for manual backups: uses `$(date +%Y%m%d-%H%M%S)` suffix
+- [x] call `backup_config()` at the start of `add_user()` before any writes
+- [x] call `backup_config()` at the start of `remove_user()` before any writes
+- [x] call `backup_config()` in `ensure_api_enabled()` in `src/xray/config.rs` — only when `modified == true`, before `upload_and_restart()`
+- [x] write tests for backup command string construction
+- [x] run tests — must pass before next task
 
 ### Task 2: Add --backup CLI command
 - [ ] add `--backup` flag to `Cli` struct in `src/config.rs`

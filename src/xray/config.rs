@@ -3,6 +3,7 @@
 // The core parsing and mutation logic lives in types.rs (ServerConfig, ClientsTable).
 // This module houses higher-level operations like ensure_api_enabled().
 
+use super::client::XrayApiClient;
 use super::types::{ClientsTable, ServerConfig};
 use crate::backend_trait::XrayBackend;
 use crate::error::{AppError, Result};
@@ -371,6 +372,9 @@ pub async fn ensure_api_enabled(backend: &dyn XrayBackend) -> Result<bool> {
 
     let modified = enable_api(&mut config, &clients_table)?;
     if modified {
+        // Auto-backup before modifying server config
+        let client = XrayApiClient::new(backend);
+        client.backup_config().await?;
         upload_and_restart(backend, &config).await?;
         // Wait for the Xray process inside the container to become ready
         // after restart, so subsequent API calls don't fail.
