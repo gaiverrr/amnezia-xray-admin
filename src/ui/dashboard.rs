@@ -220,7 +220,7 @@ fn draw_user_table(state: &mut DashboardState, frame: &mut ratatui::Frame, area:
 
     let header_cells = ["", "Name", "UUID", "Upload", "Download", "Online"]
         .iter()
-        .map(|h| Cell::from(*h).style(theme::secondary_style()));
+        .map(|h| Cell::from(*h).style(theme::header_style()));
     let header = Row::new(header_cells).height(1);
 
     let rows: Vec<Row> = state
@@ -240,7 +240,7 @@ fn draw_user_table(state: &mut DashboardState, frame: &mut ratatui::Frame, area:
             };
 
             Row::new(vec![
-                Cell::from(""),
+                Cell::from(" "),
                 Cell::from(Span::styled(user.name.clone(), theme::text_style())),
                 Cell::from(Span::styled(
                     truncate_uuid(&user.uuid).to_string(),
@@ -260,8 +260,8 @@ fn draw_user_table(state: &mut DashboardState, frame: &mut ratatui::Frame, area:
         .collect();
 
     let widths = [
-        Constraint::Length(2),
-        Constraint::Min(10),
+        Constraint::Length(3),
+        Constraint::Min(12),
         Constraint::Length(10),
         Constraint::Length(12),
         Constraint::Length(12),

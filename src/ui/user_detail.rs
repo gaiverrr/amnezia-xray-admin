@@ -245,7 +245,7 @@ fn draw_view(
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("  Name:  ", theme::muted_style()),
+            Span::styled("  Name:     ", theme::muted_style()),
             Span::styled(&user.name, theme::title_style()),
         ])),
         chunks[1],
@@ -253,7 +253,7 @@ fn draw_view(
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("  UUID:  ", theme::muted_style()),
+            Span::styled("  UUID:     ", theme::muted_style()),
             Span::styled(&user.uuid, theme::secondary_style()),
         ])),
         chunks[2],
@@ -261,7 +261,7 @@ fn draw_view(
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("  Email: ", theme::muted_style()),
+            Span::styled("  Email:    ", theme::muted_style()),
             Span::styled(&user.email, theme::secondary_style()),
         ])),
         chunks[3],
@@ -277,7 +277,7 @@ fn draw_view(
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("    Upload:   ", theme::muted_style()),
+            Span::styled("    Upload:     ", theme::muted_style()),
             Span::styled(format_bytes(user.stats.uplink), theme::text_style()),
         ])),
         chunks[6],
@@ -285,7 +285,7 @@ fn draw_view(
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("    Download: ", theme::muted_style()),
+            Span::styled("    Download:   ", theme::muted_style()),
             Span::styled(format_bytes(user.stats.downlink), theme::text_style()),
         ])),
         chunks[7],
@@ -404,7 +404,7 @@ fn draw_delete_confirm(
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("  Expected: ", theme::muted_style()),
+            Span::styled("  Expected:  ", theme::muted_style()),
             Span::styled(&user.name, theme::title_style()),
         ])),
         chunks[4],
