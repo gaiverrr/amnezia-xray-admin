@@ -1,8 +1,10 @@
-/// QR code rendering as unicode block characters for terminal display.
+/// QR code rendering as unicode block characters for terminal display,
+/// and as PNG images for Telegram bot.
 ///
 /// Uses the `qrcode` crate to generate QR codes and renders them
 /// using unicode half-block characters (U+2580 UPPER HALF BLOCK, U+2584 LOWER HALF BLOCK,
 /// U+2588 FULL BLOCK) to display two rows per character line.
+use image::Luma;
 use qrcode::QrCode;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
@@ -202,6 +204,32 @@ pub fn render_qr_to_lines(data: &str) -> Result<Vec<String>, String> {
     Ok(lines)
 }
 
+/// Render a QR code as PNG image bytes.
+///
+/// Returns the PNG data as a `Vec<u8>` suitable for sending via Telegram or writing to a file.
+/// The `scale` parameter controls the number of pixels per QR module (default: 8).
+pub fn render_qr_to_png(data: &str, scale: u32) -> Result<Vec<u8>, String> {
+    let code = QrCode::new(data.as_bytes()).map_err(|e| format!("QR encode error: {}", e))?;
+    let image = code
+        .render::<Luma<u8>>()
+        .quiet_zone(true)
+        .min_dimensions(scale * 21, scale * 21) // ensure minimum size
+        .build();
+
+    let mut png_bytes: Vec<u8> = Vec::new();
+    let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
+    image::ImageEncoder::write_image(
+        encoder,
+        image.as_raw(),
+        image.width(),
+        image.height(),
+        image::ExtendedColorType::L8,
+    )
+    .map_err(|e| format!("PNG encode error: {}", e))?;
+
+    Ok(png_bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -373,5 +401,43 @@ mod tests {
                 draw(&state, frame, frame.area());
             })
             .unwrap();
+    }
+
+    // --- PNG rendering tests ---
+
+    #[test]
+    fn test_render_qr_to_png_produces_valid_png() {
+        let png = render_qr_to_png("test", 8).unwrap();
+        // PNG files start with the magic bytes
+        assert!(png.len() > 8);
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]); // \x89PNG
+    }
+
+    #[test]
+    fn test_render_qr_to_png_vless_url() {
+        let url = "vless://550e8400-e29b-41d4-a716-446655440000@1.2.3.4:443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=www.googletagmanager.com&fp=chrome&pbk=testkey&sid=abcd1234#TestUser";
+        let png = render_qr_to_png(url, 8).unwrap();
+        assert!(png.len() > 100); // should be a reasonable size
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    #[test]
+    fn test_render_qr_to_png_different_scales() {
+        let small = render_qr_to_png("test", 4).unwrap();
+        let large = render_qr_to_png("test", 16).unwrap();
+        // Larger scale should produce larger PNG
+        assert!(large.len() > small.len());
+    }
+
+    #[test]
+    fn test_render_qr_to_png_empty_string() {
+        let png = render_qr_to_png("", 8).unwrap();
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    #[test]
+    fn test_render_qr_to_png_unicode() {
+        let png = render_qr_to_png("Hello, мир!", 8).unwrap();
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
     }
 }

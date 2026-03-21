@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup};
+use teloxide::types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile};
 use teloxide::utils::command::BotCommands;
 use tokio::sync::Mutex;
 
@@ -14,6 +14,7 @@ use crate::backend_trait::XrayBackend;
 use crate::config::Config;
 use crate::error::Result;
 use crate::ui::dashboard::format_bytes;
+use crate::ui::qr::render_qr_to_png;
 use crate::xray::client::{ServerInfo, XrayApiClient};
 use crate::xray::types::{TrafficStats, XrayUser};
 
@@ -46,6 +47,12 @@ pub enum Command {
     /// Delete a user
     #[command(description = "Delete a user")]
     Delete(String),
+    /// Get vless:// URL for a user
+    #[command(description = "Get vless:// URL")]
+    Url(String),
+    /// Get QR code image for a user
+    #[command(description = "Get QR code image")]
+    Qr(String),
 }
 
 /// Check if a chat ID is the admin. Returns true if no admin is set yet (first-time setup).
@@ -272,6 +279,35 @@ async fn handle_command(
                 }
             }
         }
+        Command::Url(name) => {
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                bot.send_message(chat_id, "Usage: /url <name>").await?;
+            } else {
+                let text = match cmd_url(&state, &name).await {
+                    Ok(t) => t,
+                    Err(e) => format!("Error: {}", e),
+                };
+                bot.send_message(chat_id, text).await?;
+            }
+        }
+        Command::Qr(name) => {
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                bot.send_message(chat_id, "Usage: /qr <name>").await?;
+            } else {
+                match cmd_qr(&state, &name).await {
+                    Ok((png_bytes, caption)) => {
+                        let input = InputFile::memory(png_bytes).file_name("qr.png");
+                        bot.send_photo(chat_id, input).caption(caption).await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(chat_id, format!("Error: {}", e))
+                            .await?;
+                    }
+                }
+            }
+        }
     }
 
     Ok(())
@@ -339,6 +375,52 @@ async fn cmd_delete_execute(
 
     client.remove_user(uuid).await?;
     Ok(format_delete_success_message(&name))
+}
+
+/// Execute /url command: get vless:// URL for a user.
+async fn cmd_url(
+    state: &BotState,
+    name: &str,
+) -> std::result::Result<String, crate::error::AppError> {
+    let client = XrayApiClient::new(state.backend.as_ref());
+    let users = client.list_users().await?;
+
+    let user = users
+        .iter()
+        .find(|u| u.name == name)
+        .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
+
+    let vless_url =
+        backend::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
+    Ok(format_url_message(name, &vless_url))
+}
+
+/// Execute /qr command: generate QR code PNG for a user's vless URL.
+async fn cmd_qr(
+    state: &BotState,
+    name: &str,
+) -> std::result::Result<(Vec<u8>, String), crate::error::AppError> {
+    let client = XrayApiClient::new(state.backend.as_ref());
+    let users = client.list_users().await?;
+
+    let user = users
+        .iter()
+        .find(|u| u.name == name)
+        .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
+
+    let vless_url =
+        backend::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
+
+    let png_bytes = render_qr_to_png(&vless_url, 8)
+        .map_err(|e| crate::error::AppError::Xray(format!("QR generation failed: {}", e)))?;
+
+    let caption = format!("🔗 {}\n\n{}", name, vless_url);
+    Ok((png_bytes, caption))
+}
+
+/// Format the /url response: vless:// URL as a copyable message.
+pub fn format_url_message(name: &str, vless_url: &str) -> String {
+    format!("🔗 {} URL:\n\n{}", name, vless_url)
 }
 
 /// Handle callback queries from inline keyboard buttons (e.g., delete confirmation).
@@ -713,5 +795,29 @@ mod tests {
     fn test_validate_user_name_usage_hint() {
         let result = validate_user_name("").unwrap();
         assert!(result.contains("/add"), "result: {}", result);
+    }
+
+    // -- /url formatting tests --
+
+    #[test]
+    fn test_format_url_message() {
+        let text = format_url_message("Alice", "vless://uuid@1.2.3.4:443?test=1#Alice");
+        assert!(text.contains("Alice"), "text: {}", text);
+        assert!(text.contains("vless://"), "text: {}", text);
+        assert!(text.contains("🔗"), "text: {}", text);
+    }
+
+    #[test]
+    fn test_format_url_message_special_name() {
+        let text = format_url_message("Bob's Phone [iOS]", "vless://...");
+        assert!(text.contains("Bob's Phone [iOS]"), "text: {}", text);
+    }
+
+    #[test]
+    fn test_bot_commands_include_url_and_qr() {
+        let cmds = Command::bot_commands();
+        let descriptions: String = cmds.iter().map(|c| c.command.as_str()).collect::<Vec<_>>().join(",");
+        assert!(descriptions.contains("url"), "commands: {}", descriptions);
+        assert!(descriptions.contains("qr"), "commands: {}", descriptions);
     }
 }

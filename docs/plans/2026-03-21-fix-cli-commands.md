@@ -162,11 +162,11 @@ Three-phase plan:
 - [x] run tests — 311 tests pass, clippy clean
 
 ### Task 14: Telegram /url and /qr commands
-- [ ] implement `/url <name>` — send vless:// URL as copyable message
-- [ ] implement `/qr <name>` — generate QR code as PNG image, send via Telegram
-- [ ] use `qrcode` crate to render to PNG (not unicode blocks) for Telegram
-- [ ] write tests for QR PNG generation
-- [ ] run tests — must pass before next task
+- [x] implement `/url <name>` — send vless:// URL as copyable message
+- [x] implement `/qr <name>` — generate QR code as PNG image, send via Telegram
+- [x] use `qrcode` crate to render to PNG (not unicode blocks) for Telegram
+- [x] write tests for QR PNG generation
+- [x] run tests — 319 tests pass, clippy clean
 
 ### Task 15: Docker image and deployment scripts
 - [ ] create `Dockerfile` (multi-stage: rust builder → minimal runtime with docker CLI)
