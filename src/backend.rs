@@ -39,6 +39,8 @@ pub enum BackendMsg {
     VlessUrl(Result<AddedUser, String>, VlessUrlIntent),
     /// Online IPs fetched for a user (Ok = (uuid, ips), Err = (uuid, error))
     OnlineIps(Result<(String, Vec<String>), (String, String)>),
+    /// Telegram bot deployment result
+    DeployBot(Result<String, String>),
 }
 
 /// Dashboard data bundle
@@ -334,6 +336,104 @@ async fn fetch_online_ips(
     Ok((uuid.to_string(), ips))
 }
 
+/// Spawn: deploy Telegram bot to VPS via SSH.
+pub fn spawn_deploy_bot(
+    runtime: &tokio::runtime::Handle,
+    config: Config,
+    token: String,
+    tx: mpsc::Sender<BackendMsg>,
+) {
+    runtime.spawn(async move {
+        let result = deploy_bot(&config, &token).await;
+        let _ = tx.send(BackendMsg::DeployBot(result));
+    });
+}
+
+async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> {
+    use base64::Engine;
+    use crate::ui::telegram_setup::generate_compose_yaml;
+
+    let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
+
+    // Create directory
+    backend
+        .exec_on_host("mkdir -p /opt/axadmin")
+        .await
+        .map_err(|e| format!("Failed to create directory: {}", e))?;
+
+    // Write docker-compose.yml
+    let compose = generate_compose_yaml(token, &config.container);
+    let compose_b64 = base64::engine::general_purpose::STANDARD.encode(compose.as_bytes());
+    let write_cmd = format!(
+        "echo '{}' | base64 -d > /opt/axadmin/docker-compose.yml",
+        compose_b64
+    );
+    let result = backend
+        .exec_on_host(&write_cmd)
+        .await
+        .map_err(|e| format!("Failed to write compose file: {}", e))?;
+    if !result.success() {
+        return Err(format!(
+            "Failed to write compose file: {}",
+            result.stderr.trim()
+        ));
+    }
+
+    // Write Dockerfile
+    let dockerfile = include_str!("../Dockerfile");
+    let dockerfile_b64 = base64::engine::general_purpose::STANDARD.encode(dockerfile.as_bytes());
+    let write_df_cmd = format!(
+        "echo '{}' | base64 -d > /opt/axadmin/Dockerfile",
+        dockerfile_b64
+    );
+    let result = backend
+        .exec_on_host(&write_df_cmd)
+        .await
+        .map_err(|e| format!("Failed to write Dockerfile: {}", e))?;
+    if !result.success() {
+        return Err(format!(
+            "Failed to write Dockerfile: {}",
+            result.stderr.trim()
+        ));
+    }
+
+    // Build image
+    let result = backend
+        .exec_on_host("cd /opt/axadmin && docker compose build 2>&1")
+        .await
+        .map_err(|e| format!("Docker build failed: {}", e))?;
+    if !result.success() {
+        return Err(format!("Docker build failed: {}", result.stderr.trim()));
+    }
+
+    // Stop existing and start
+    let _ = backend
+        .exec_on_host("cd /opt/axadmin && docker compose down 2>/dev/null")
+        .await;
+    let result = backend
+        .exec_on_host("cd /opt/axadmin && docker compose up -d 2>&1")
+        .await
+        .map_err(|e| format!("Docker start failed: {}", e))?;
+    if !result.success() {
+        return Err(format!("Docker start failed: {}", result.stderr.trim()));
+    }
+
+    // Verify
+    let result = backend
+        .exec_on_host("cd /opt/axadmin && docker compose ps --format '{{.Status}}' 2>&1")
+        .await
+        .map_err(|e| format!("Verification failed: {}", e))?;
+
+    let _ = backend.close().await;
+
+    let status = result.stdout.trim().to_string();
+    if status.contains("Up") || status.contains("running") {
+        Ok("Bot deployed and running! Send /start to your bot.".to_string())
+    } else {
+        Ok(format!("Bot container created. Status: {}", status))
+    }
+}
+
 async fn generate_url(config: &Config, uuid: &str, name: &str) -> Result<AddedUser, String> {
     let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
     let vless_url = build_vless_url(&backend, uuid, name)
@@ -361,6 +461,7 @@ mod tests {
             key_path: None,
             ssh_host: None,
             container: "amnezia-xray".to_string(),
+            telegram_token: None,
             telegram_admin_chat_id: None,
         };
         let (host, port, user, key) = resolve_connection_info(&config).unwrap();
@@ -386,6 +487,7 @@ mod tests {
             user: "root".to_string(),
             key_path: None,
             container: "amnezia-xray".to_string(),
+            telegram_token: None,
             telegram_admin_chat_id: None,
         };
         // Falls back to treating alias as hostname
@@ -404,6 +506,7 @@ mod tests {
             key_path: Some(std::path::PathBuf::from("~/.ssh/id_ed25519")),
             ssh_host: None,
             container: "amnezia-xray".to_string(),
+            telegram_token: None,
             telegram_admin_chat_id: None,
         };
         let (_host, _port, _user, key) = resolve_connection_info(&config).unwrap();
@@ -430,6 +533,7 @@ mod tests {
             key_path: Some(std::path::PathBuf::from("/home/user/.ssh/id_rsa")),
             ssh_host: None,
             container: "amnezia-xray".to_string(),
+            telegram_token: None,
             telegram_admin_chat_id: None,
         };
         let (_host, _port, _user, key) = resolve_connection_info(&config).unwrap();

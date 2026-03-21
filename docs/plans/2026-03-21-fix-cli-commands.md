@@ -176,16 +176,16 @@ Three-phase plan:
 - [x] run tests — 319 tests pass
 
 ### Task 16: TUI "Setup Telegram Bot" screen
-- [ ] add "Telegram Bot" option to TUI dashboard (new keybinding, e.g. [t])
-- [ ] create setup screen with:
+- [x] add "Telegram Bot" option to TUI dashboard (new keybinding, e.g. [t])
+- [x] create setup screen with:
   - Short instruction: "1. Open @BotFather in Telegram → 2. /newbot → 3. Copy token → 4. Paste below"
   - Token input field
   - "After deploy, send /start to your bot — you'll become the admin automatically"
-- [ ] "Deploy to VPS" button: connects via SSH, pulls Docker image, creates docker-compose, starts bot
-- [ ] show deployment progress (pulling image → starting → verifying bot responds)
-- [ ] save telegram config to `~/.config/amnezia-xray-admin/config.toml`
-- [ ] write tests for config serialization with telegram fields
-- [ ] run tests — must pass before next task
+- [x] "Deploy to VPS" button: connects via SSH, pulls Docker image, creates docker-compose, starts bot
+- [x] show deployment progress (pulling image → starting → verifying bot responds)
+- [x] save telegram config to `~/.config/amnezia-xray-admin/config.toml`
+- [x] write tests for config serialization with telegram fields
+- [x] run tests — 350 tests pass, clippy clean
 
 ### Task 17: CLI --deploy-bot command (alternative to TUI)
 - [ ] add `--deploy-bot` flag that does the same as TUI setup but via CLI prompts

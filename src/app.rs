@@ -15,6 +15,7 @@ use crate::ui::add_user::{self, AddUserResult, AddUserState};
 use crate::ui::dashboard::{self, DashboardState};
 use crate::ui::qr::{self, QrViewState};
 use crate::ui::setup::{self, SetupState};
+use crate::ui::telegram_setup::{self, TelegramSetupState};
 use crate::ui::theme;
 use crate::ui::user_detail::{self, DetailMode, UserDetailState};
 
@@ -26,6 +27,7 @@ pub enum Screen {
     UserDetail,
     AddUser,
     QrView,
+    TelegramSetup,
 }
 
 /// Refresh interval for stats polling
@@ -42,6 +44,7 @@ pub struct App {
     pub add_user_state: AddUserState,
     pub user_detail_state: UserDetailState,
     pub qr_view_state: QrViewState,
+    pub telegram_setup_state: TelegramSetupState,
     pub config: Config,
     /// Tokio runtime handle for spawning async operations
     runtime: tokio::runtime::Handle,
@@ -65,6 +68,8 @@ pub struct App {
     pending_test: bool,
     /// Config snapshot taken when a connection test was started (for staleness detection)
     tested_config: Option<Config>,
+    /// Whether a bot deployment is in flight
+    pending_deploy: bool,
 }
 
 impl App {
@@ -93,6 +98,9 @@ impl App {
             add_user_state: AddUserState::default(),
             user_detail_state: UserDetailState::default(),
             qr_view_state: QrViewState::default(),
+            telegram_setup_state: TelegramSetupState::from_token(
+                config.telegram_token.as_deref(),
+            ),
             config,
             runtime,
             backend_rx: rx,
@@ -105,6 +113,7 @@ impl App {
             pending_delete_uuid: None,
             pending_test: false,
             tested_config: None,
+            pending_deploy: false,
         }
     }
 
@@ -128,6 +137,7 @@ impl App {
             Screen::UserDetail => self.handle_user_detail_key(key),
             Screen::AddUser => self.handle_add_user_key(key),
             Screen::QrView => self.handle_qr_view_key(key),
+            Screen::TelegramSetup => self.handle_telegram_setup_key(key),
         }
     }
 
@@ -177,6 +187,12 @@ impl App {
                         self.backend_tx.clone(),
                     );
                 }
+            }
+            KeyCode::Char('t') => {
+                self.telegram_setup_state = TelegramSetupState::from_token(
+                    self.config.telegram_token.as_deref(),
+                );
+                self.screen = Screen::TelegramSetup;
             }
             _ => {}
         }
@@ -390,6 +406,44 @@ impl App {
         }
     }
 
+    fn handle_telegram_setup_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Esc {
+            self.screen = Screen::Dashboard;
+            return;
+        }
+
+        self.telegram_setup_state.handle_key(key);
+
+        // Check if deploy was requested
+        if self.telegram_setup_state.deploy_requested && !self.pending_deploy {
+            self.telegram_setup_state.deploy_requested = false;
+            let token = self.telegram_setup_state.token.trim().to_string();
+
+            if !telegram_setup::is_valid_token(&token) {
+                self.telegram_setup_state.deploy_status =
+                    telegram_setup::DeployStatus::Error("Invalid token format (expected digits:secret)".to_string());
+                return;
+            }
+
+            // Save token to config
+            self.config.telegram_token = Some(token.clone());
+            if let Err(e) = self.config.save() {
+                self.telegram_setup_state.deploy_status =
+                    telegram_setup::DeployStatus::Error(format!("Config save failed: {}", e));
+                return;
+            }
+
+            self.pending_deploy = true;
+            self.telegram_setup_state.deploy_status = telegram_setup::DeployStatus::Connecting;
+            backend::spawn_deploy_bot(
+                &self.runtime,
+                self.config.clone(),
+                token,
+                self.backend_tx.clone(),
+            );
+        }
+    }
+
     /// Trigger a data refresh from the server
     fn trigger_refresh(&mut self) {
         if self.pending_refresh {
@@ -589,6 +643,23 @@ impl App {
                         }
                     }
                 }
+                BackendMsg::DeployBot(result) => {
+                    self.pending_deploy = false;
+                    if self.screen == Screen::TelegramSetup {
+                        match result {
+                            Ok(msg) => {
+                                self.telegram_setup_state.deploy_status =
+                                    telegram_setup::DeployStatus::Success(msg.clone());
+                                self.status_message = msg;
+                            }
+                            Err(e) => {
+                                self.telegram_setup_state.deploy_status =
+                                    telegram_setup::DeployStatus::Error(truncate_msg(&e, 60));
+                                self.status_message = format!("Deploy failed: {}", truncate_msg(&e, 60));
+                            }
+                        }
+                    }
+                }
                 BackendMsg::OnlineIps(result) => {
                     let is_detail_view = self.screen == Screen::UserDetail;
                     match result {
@@ -671,6 +742,9 @@ impl App {
                 Screen::QrView => {
                     qr::draw(&self.qr_view_state, frame, chunks[1]);
                 }
+                Screen::TelegramSetup => {
+                    telegram_setup::draw(&self.telegram_setup_state, frame, chunks[1]);
+                }
             }
 
             Self::draw_status_bar_static(frame, chunks[2], &status_message, &keybinds);
@@ -722,18 +796,23 @@ impl App {
             Screen::UserDetail => "User Detail",
             Screen::AddUser => "Add User",
             Screen::QrView => "QR Code",
+            Screen::TelegramSetup => "Telegram Bot",
         }
     }
 
     fn keybind_hints(&self) -> String {
         match self.screen {
             Screen::Dashboard => {
-                "[a]dd user  [d]elete  [r]efresh  [q]uit  [Enter] detail".to_string()
+                "[a]dd user  [d]elete  [r]efresh  [t]elegram bot  [q]uit  [Enter] detail"
+                    .to_string()
             }
             Screen::Setup => "[Tab] next field  [Enter] confirm  [Esc] quit".to_string(),
             Screen::UserDetail => "[Esc] back  [d]elete  [c]opy URL  [q] QR code".to_string(),
             Screen::AddUser => "[Enter] confirm  [Esc] cancel".to_string(),
             Screen::QrView => "[Esc/q] back".to_string(),
+            Screen::TelegramSetup => {
+                "[Tab] next field  [Enter] confirm  [Esc] back".to_string()
+            }
         }
     }
 }
@@ -835,6 +914,7 @@ impl App {
             add_user_state: AddUserState::default(),
             user_detail_state: UserDetailState::default(),
             qr_view_state: QrViewState::default(),
+            telegram_setup_state: TelegramSetupState::default(),
             config: Config::default(),
             runtime,
             backend_rx: rx,
@@ -847,6 +927,7 @@ impl App {
             pending_delete_uuid: None,
             pending_test: false,
             tested_config: None,
+            pending_deploy: false,
         }
     }
 }
@@ -993,6 +1074,8 @@ mod tests {
         assert_eq!(app.screen_label(), "Add User");
         app.screen = Screen::QrView;
         assert_eq!(app.screen_label(), "QR Code");
+        app.screen = Screen::TelegramSetup;
+        assert_eq!(app.screen_label(), "Telegram Bot");
     }
 
     #[test]
@@ -1004,6 +1087,7 @@ mod tests {
             Screen::UserDetail,
             Screen::AddUser,
             Screen::QrView,
+            Screen::TelegramSetup,
         ] {
             app.screen = screen;
             assert!(!app.keybind_hints().is_empty());
@@ -1019,6 +1103,7 @@ mod tests {
             key_path: None,
             ssh_host: None,
             container: "amnezia-xray".to_string(),
+            telegram_token: None,
             telegram_admin_chat_id: None,
         };
         let app = App::with_config(config, test_runtime());
@@ -1035,6 +1120,7 @@ mod tests {
             key_path: None,
             ssh_host: Some("vps-vpn".to_string()),
             container: "amnezia-xray".to_string(),
+            telegram_token: None,
             telegram_admin_chat_id: None,
         };
         let app = App::with_config(config, test_runtime());
@@ -1186,6 +1272,72 @@ mod tests {
         app.process_backend_messages();
 
         assert_eq!(app.user_detail_state.mode, DetailMode::DeleteSuccess);
+    }
+
+    #[test]
+    fn test_t_opens_telegram_setup() {
+        let mut app = App::new(true, test_runtime());
+        app.handle_key(make_key(KeyCode::Char('t')));
+        assert_eq!(app.screen, Screen::TelegramSetup);
+    }
+
+    #[test]
+    fn test_esc_from_telegram_setup_returns_to_dashboard() {
+        let mut app = App::new(true, test_runtime());
+        app.screen = Screen::TelegramSetup;
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.screen, Screen::Dashboard);
+    }
+
+    #[test]
+    fn test_telegram_setup_preserves_token_from_config() {
+        let mut app = App::new(true, test_runtime());
+        app.config.telegram_token = Some("123:abc".to_string());
+        app.handle_key(make_key(KeyCode::Char('t')));
+        assert_eq!(app.screen, Screen::TelegramSetup);
+        assert_eq!(app.telegram_setup_state.token, "123:abc");
+    }
+
+    #[test]
+    fn test_process_deploy_bot_success() {
+        let mut app = App::new(true, test_runtime());
+        app.screen = Screen::TelegramSetup;
+        app.pending_deploy = true;
+
+        let _ = app.backend_tx.send(BackendMsg::DeployBot(Ok(
+            "Bot deployed and running!".to_string(),
+        )));
+
+        app.process_backend_messages();
+
+        assert!(!app.pending_deploy);
+        match &app.telegram_setup_state.deploy_status {
+            telegram_setup::DeployStatus::Success(msg) => {
+                assert!(msg.contains("deployed"));
+            }
+            other => panic!("Expected Success, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_process_deploy_bot_error() {
+        let mut app = App::new(true, test_runtime());
+        app.screen = Screen::TelegramSetup;
+        app.pending_deploy = true;
+
+        let _ = app.backend_tx.send(BackendMsg::DeployBot(Err(
+            "connection refused".to_string(),
+        )));
+
+        app.process_backend_messages();
+
+        assert!(!app.pending_deploy);
+        match &app.telegram_setup_state.deploy_status {
+            telegram_setup::DeployStatus::Error(msg) => {
+                assert!(msg.contains("connection refused"));
+            }
+            other => panic!("Expected Error, got {:?}", other),
+        }
     }
 
     #[test]

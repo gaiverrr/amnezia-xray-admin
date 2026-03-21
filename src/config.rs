@@ -110,6 +110,9 @@ pub struct Config {
     /// Docker container name (default: amnezia-xray)
     #[serde(default = "default_container")]
     pub container: String,
+    /// Telegram bot token
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_token: Option<String>,
     /// Telegram bot admin chat ID (set automatically on first /start)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telegram_admin_chat_id: Option<i64>,
@@ -136,6 +139,7 @@ impl Default for Config {
             key_path: None,
             ssh_host: None,
             container: DEFAULT_CONTAINER.to_string(),
+            telegram_token: None,
             telegram_admin_chat_id: None,
         }
     }
@@ -316,6 +320,7 @@ host = "10.0.0.1"
             key_path: Some(PathBuf::from("/keys/id_rsa")),
             ssh_host: Some("my-server".to_string()),
             container: "xray-test".to_string(),
+            telegram_token: None,
             telegram_admin_chat_id: None,
         };
         config.save_to(&path).unwrap();
@@ -389,6 +394,7 @@ host = "10.0.0.1"
             key_path: Some(PathBuf::from("/original/key")),
             ssh_host: Some("original-alias".to_string()),
             container: "original-ctr".to_string(),
+            telegram_token: None,
             telegram_admin_chat_id: None,
         };
         let cli = Cli {
@@ -475,6 +481,7 @@ host = "10.0.0.1"
             key_path: None,
             ssh_host: Some("vps-vpn".to_string()),
             container: "amnezia-xray".to_string(),
+            telegram_token: None,
             telegram_admin_chat_id: None,
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -487,5 +494,79 @@ host = "10.0.0.1"
         let path = Config::config_path()
             .expect("config_path should succeed on systems with a home directory");
         assert!(path.ends_with("amnezia-xray-admin/config.toml"));
+    }
+
+    #[test]
+    fn test_config_telegram_token_serialization() {
+        let mut config = Config::default();
+        config.telegram_token = Some("123456:ABCdef".to_string());
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        assert!(toml_str.contains("telegram_token = \"123456:ABCdef\""));
+
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.telegram_token, Some("123456:ABCdef".to_string()));
+    }
+
+    #[test]
+    fn test_config_telegram_token_omitted_when_none() {
+        let config = Config::default();
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        assert!(!toml_str.contains("telegram_token"));
+    }
+
+    #[test]
+    fn test_config_telegram_fields_roundtrip() {
+        let config = Config {
+            host: Some("1.2.3.4".to_string()),
+            port: 22,
+            user: "root".to_string(),
+            key_path: None,
+            ssh_host: None,
+            container: "amnezia-xray".to_string(),
+            telegram_token: Some("123:abc".to_string()),
+            telegram_admin_chat_id: Some(987654321),
+        };
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(config, parsed);
+        assert_eq!(parsed.telegram_token, Some("123:abc".to_string()));
+        assert_eq!(parsed.telegram_admin_chat_id, Some(987654321));
+    }
+
+    #[test]
+    fn test_config_load_with_telegram_fields() {
+        let mut f = NamedTempFile::new().unwrap();
+        write!(
+            f,
+            r#"
+host = "10.0.0.1"
+port = 22
+user = "root"
+container = "amnezia-xray"
+telegram_token = "999:xyz"
+telegram_admin_chat_id = 12345
+"#
+        )
+        .unwrap();
+
+        let config = Config::load_from(&f.path().to_path_buf()).unwrap();
+        assert_eq!(config.telegram_token, Some("999:xyz".to_string()));
+        assert_eq!(config.telegram_admin_chat_id, Some(12345));
+    }
+
+    #[test]
+    fn test_config_load_without_telegram_fields_defaults_to_none() {
+        let mut f = NamedTempFile::new().unwrap();
+        write!(
+            f,
+            r#"
+host = "10.0.0.1"
+"#
+        )
+        .unwrap();
+
+        let config = Config::load_from(&f.path().to_path_buf()).unwrap();
+        assert_eq!(config.telegram_token, None);
+        assert_eq!(config.telegram_admin_chat_id, None);
     }
 }
