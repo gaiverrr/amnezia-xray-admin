@@ -2,7 +2,9 @@ use crate::error::{AppError, Result};
 use crate::ssh::SshSession;
 
 use super::config::{read_clients_table, read_server_config, CLIENTS_TABLE_PATH, SERVER_CONFIG_PATH};
-use super::types::{ClientsTable, ServerConfig, ServerJsonClient, TrafficStats, XrayUser};
+use super::types::{
+    ClientsTable, ServerConfig, ServerJsonClient, TrafficStats, VlessUrlParams, XrayUser,
+};
 
 use base64::Engine;
 use uuid::Uuid;
@@ -249,6 +251,39 @@ pub fn build_online_ip_list_cmd(email: &str) -> String {
         "xray api statsonlineiplist -s {} -email {}",
         API_ADDR, email
     )
+}
+
+// -- vless:// URL generation --
+
+/// Generate a vless:// URL for client import.
+///
+/// Format: `vless://<uuid>@<host>:<port>?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=<sni>&fp=chrome&pbk=<pubkey>&sid=<shortid>#<name>`
+pub fn generate_vless_url(params: &VlessUrlParams) -> String {
+    let fragment = urlencod_fragment(&params.name);
+    format!(
+        "vless://{}@{}:{}?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni={}&fp=chrome&pbk={}&sid={}#{}",
+        params.uuid, params.host, params.port, params.sni, params.public_key, params.short_id, fragment
+    )
+}
+
+/// Percent-encode a fragment string for use in a URL.
+/// Only encodes characters that are not allowed in URL fragments.
+fn urlencod_fragment(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' | '!' | '\'' | '(' | ')' | '*' => {
+                result.push(ch);
+            }
+            ' ' => result.push_str("%20"),
+            _ => {
+                for byte in ch.to_string().as_bytes() {
+                    result.push_str(&format!("%{:02X}", byte));
+                }
+            }
+        }
+    }
+    result
 }
 
 // -- Response parsing (pure functions, testable) --
@@ -571,5 +606,115 @@ stat: {
         let output = "  Xray 25.8.3 (something)\n";
         // Our parser trims lines
         assert_eq!(parse_version(output), "25.8.3");
+    }
+
+    // -- vless:// URL generation tests --
+
+    #[test]
+    fn test_generate_vless_url_basic() {
+        let params = VlessUrlParams {
+            uuid: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+            host: "1.2.3.4".to_string(),
+            port: 443,
+            sni: "www.googletagmanager.com".to_string(),
+            public_key: "testpublickey123".to_string(),
+            short_id: "abcd1234".to_string(),
+            name: "TestUser".to_string(),
+        };
+        let url = generate_vless_url(&params);
+
+        assert!(url.starts_with("vless://550e8400-e29b-41d4-a716-446655440000@1.2.3.4:443?"));
+        assert!(url.contains("encryption=none"));
+        assert!(url.contains("flow=xtls-rprx-vision"));
+        assert!(url.contains("type=tcp"));
+        assert!(url.contains("security=reality"));
+        assert!(url.contains("sni=www.googletagmanager.com"));
+        assert!(url.contains("fp=chrome"));
+        assert!(url.contains("pbk=testpublickey123"));
+        assert!(url.contains("sid=abcd1234"));
+        assert!(url.ends_with("#TestUser"));
+    }
+
+    #[test]
+    fn test_generate_vless_url_exact_format() {
+        let params = VlessUrlParams {
+            uuid: "uuid-123".to_string(),
+            host: "10.0.0.1".to_string(),
+            port: 8443,
+            sni: "example.com".to_string(),
+            public_key: "pk123".to_string(),
+            short_id: "sid1".to_string(),
+            name: "alice".to_string(),
+        };
+        let expected = "vless://uuid-123@10.0.0.1:8443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=example.com&fp=chrome&pbk=pk123&sid=sid1#alice";
+        assert_eq!(generate_vless_url(&params), expected);
+    }
+
+    #[test]
+    fn test_generate_vless_url_name_with_spaces() {
+        let params = VlessUrlParams {
+            uuid: "uuid-123".to_string(),
+            host: "1.2.3.4".to_string(),
+            port: 443,
+            sni: "example.com".to_string(),
+            public_key: "pk".to_string(),
+            short_id: "sid".to_string(),
+            name: "My Phone".to_string(),
+        };
+        let url = generate_vless_url(&params);
+        assert!(url.ends_with("#My%20Phone"));
+    }
+
+    #[test]
+    fn test_generate_vless_url_name_with_special_chars() {
+        let params = VlessUrlParams {
+            uuid: "uuid-123".to_string(),
+            host: "1.2.3.4".to_string(),
+            port: 443,
+            sni: "example.com".to_string(),
+            public_key: "pk".to_string(),
+            short_id: "sid".to_string(),
+            name: "bob's-phone".to_string(),
+        };
+        let url = generate_vless_url(&params);
+        // Apostrophe is allowed in fragments
+        assert!(url.ends_with("#bob's-phone"));
+    }
+
+    #[test]
+    fn test_generate_vless_url_ipv6_host() {
+        let params = VlessUrlParams {
+            uuid: "uuid-123".to_string(),
+            host: "2001:db8::1".to_string(),
+            port: 443,
+            sni: "example.com".to_string(),
+            public_key: "pk".to_string(),
+            short_id: "sid".to_string(),
+            name: "test".to_string(),
+        };
+        let url = generate_vless_url(&params);
+        assert!(url.contains("@2001:db8::1:443"));
+    }
+
+    #[test]
+    fn test_urlencod_fragment_plain() {
+        assert_eq!(urlencod_fragment("alice"), "alice");
+    }
+
+    #[test]
+    fn test_urlencod_fragment_spaces() {
+        assert_eq!(urlencod_fragment("my phone"), "my%20phone");
+    }
+
+    #[test]
+    fn test_urlencod_fragment_unicode() {
+        let encoded = urlencod_fragment("тест");
+        assert!(encoded.contains('%'));
+        assert!(!encoded.contains("тест"));
+    }
+
+    #[test]
+    fn test_urlencod_fragment_allowed_chars() {
+        assert_eq!(urlencod_fragment("a-b_c.d~e"), "a-b_c.d~e");
     }
 }

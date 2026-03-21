@@ -45,6 +45,25 @@ pub struct ServerJsonClient {
     pub level: Option<u32>,
 }
 
+/// Reality protocol parameters extracted from server.json
+#[derive(Debug, Clone, PartialEq)]
+pub struct RealityParams {
+    pub sni: String,
+    pub short_id: String,
+}
+
+/// Parameters needed to construct a vless:// URL
+#[derive(Debug, Clone)]
+pub struct VlessUrlParams {
+    pub uuid: String,
+    pub host: String,
+    pub port: u16,
+    pub sni: String,
+    pub public_key: String,
+    pub short_id: String,
+    pub name: String,
+}
+
 /// Parsed representation of server.json — we keep it as serde_json::Value
 /// to preserve unknown fields, and provide typed access to what we need.
 #[derive(Debug, Clone)]
@@ -126,6 +145,40 @@ impl ServerConfig {
                         .unwrap_or(false)
                 })
             })
+    }
+
+    /// Extract Reality settings (SNI, public key, short ID) from the VLESS inbound.
+    pub fn reality_settings(&self) -> Option<RealityParams> {
+        let inbound = self.find_vless_inbound()?;
+        let reality = inbound
+            .get("streamSettings")
+            .and_then(|ss| ss.get("realitySettings"))?;
+
+        let sni = reality
+            .get("serverNames")
+            .and_then(|sn| sn.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let short_id = reality
+            .get("shortIds")
+            .and_then(|si| si.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        Some(RealityParams { sni, short_id })
+    }
+
+    /// Get the port from the VLESS inbound.
+    pub fn vless_port(&self) -> Option<u16> {
+        self.find_vless_inbound()
+            .and_then(|ib| ib.get("port"))
+            .and_then(|p| p.as_u64())
+            .map(|p| p as u16)
     }
 
     pub(crate) fn find_vless_inbound_mut(&mut self) -> Option<&mut serde_json::Value> {
@@ -449,6 +502,56 @@ mod tests {
         let serialized = serde_json::to_string(&client).unwrap();
         assert!(!serialized.contains("email"));
         assert!(!serialized.contains("level"));
+    }
+
+    #[test]
+    fn test_reality_settings_extraction() {
+        let json = r#"{
+            "inbounds": [{
+                "protocol": "vless",
+                "settings": {"clients": []},
+                "streamSettings": {
+                    "network": "tcp",
+                    "security": "reality",
+                    "realitySettings": {
+                        "dest": "www.googletagmanager.com:443",
+                        "serverNames": ["www.googletagmanager.com"],
+                        "privateKey": "secret",
+                        "shortIds": ["abcd1234", "ef567890"]
+                    }
+                }
+            }]
+        }"#;
+        let config = ServerConfig::parse(json).unwrap();
+        let reality = config.reality_settings().unwrap();
+        assert_eq!(reality.sni, "www.googletagmanager.com");
+        assert_eq!(reality.short_id, "abcd1234");
+    }
+
+    #[test]
+    fn test_reality_settings_missing() {
+        let json = r#"{
+            "inbounds": [{
+                "protocol": "vless",
+                "settings": {"clients": []},
+                "streamSettings": {"network": "tcp"}
+            }]
+        }"#;
+        let config = ServerConfig::parse(json).unwrap();
+        assert!(config.reality_settings().is_none());
+    }
+
+    #[test]
+    fn test_vless_port() {
+        let config = ServerConfig::parse(sample_server_json()).unwrap();
+        assert_eq!(config.vless_port(), Some(443));
+    }
+
+    #[test]
+    fn test_vless_port_missing() {
+        let json = r#"{"inbounds": [{"protocol": "vless", "settings": {"clients": []}}]}"#;
+        let config = ServerConfig::parse(json).unwrap();
+        assert_eq!(config.vless_port(), None);
     }
 
     #[test]

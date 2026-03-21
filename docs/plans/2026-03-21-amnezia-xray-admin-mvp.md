@@ -139,11 +139,11 @@ src/
 - [x] run tests — must pass before next task
 
 ### Task 7: vless:// URL and QR code generation
-- [ ] implement `generate_vless_url()` in `src/xray/client.rs`
-- [ ] format: `vless://<uuid>@<host>:443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=<site>&fp=chrome&pbk=<pubkey>&sid=<shortid>#<name>`
-- [ ] implement QR code rendering as unicode block characters for terminal display
-- [ ] write tests for URL generation (known inputs -> expected URL)
-- [ ] run tests — must pass before next task
+- [x] implement `generate_vless_url()` in `src/xray/client.rs`
+- [x] format: `vless://<uuid>@<host>:443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=<site>&fp=chrome&pbk=<pubkey>&sid=<shortid>#<name>`
+- [x] implement QR code rendering as unicode block characters for terminal display
+- [x] write tests for URL generation (known inputs -> expected URL)
+- [x] run tests — must pass before next task
 
 ### Task 8: TUI theme and base layout
 - [ ] define hacker/cyberpunk theme in `src/ui/theme.rs`
