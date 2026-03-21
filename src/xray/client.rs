@@ -451,12 +451,24 @@ pub fn build_list_backups_cmd() -> String {
 }
 
 /// Build the shell command to validate that a clientsTable backup exists for a timestamp.
+///
+/// Panics if `timestamp` is not a valid YYYYMMDD-HHMMSS timestamp.
 pub fn build_validate_backup_cmd(timestamp: &str) -> String {
+    assert!(
+        is_valid_timestamp(timestamp),
+        "invalid timestamp format: {timestamp}"
+    );
     format!("test -f {}.{}.bak", CLIENTS_TABLE_PATH, timestamp)
 }
 
 /// Build the shell command to restore both config files from a timestamped backup.
+///
+/// Panics if `timestamp` is not a valid YYYYMMDD-HHMMSS timestamp.
 pub fn build_restore_cmd(timestamp: &str) -> String {
+    assert!(
+        is_valid_timestamp(timestamp),
+        "invalid timestamp format: {timestamp}"
+    );
     format!(
         "sh -c 'cp {}.{}.bak {} && cp {}.{}.bak {}'",
         SERVER_CONFIG_PATH,

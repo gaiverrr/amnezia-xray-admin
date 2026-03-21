@@ -83,15 +83,15 @@ pub fn add_hint(msg: &str) -> String {
             msg
         );
     }
-    if lower.contains("auth") && lower.contains("failed") {
-        return format!(
-            "{}. Check your SSH key or ssh-agent (is the key loaded? try: ssh-add -l)",
-            msg
-        );
-    }
     if lower.contains("ssh-agent connect failed") || lower.contains("ssh-agent list keys failed") {
         return format!(
             "{}. Is ssh-agent running? Try: eval $(ssh-agent) && ssh-add",
+            msg
+        );
+    }
+    if lower.contains("auth") && lower.contains("failed") {
+        return format!(
+            "{}. Check your SSH key or ssh-agent (is the key loaded? try: ssh-add -l)",
             msg
         );
     }
