@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray server"
 license = "MIT"
-repository = "https://github.com/AmneziaVPN/amnezia-xray-admin"
+repository = "https://github.com/gaiverrr/amnezia-xray-admin"
+homepage = "https://github.com/gaiverrr/amnezia-xray-admin"
+authors = ["gaiverrr"]
+keywords = ["vpn", "xray", "amnezia", "tui", "vless"]
+categories = ["command-line-utilities", "network-programming"]
+readme = "README.md"
 
 [dependencies]
 ratatui = "0.29"
