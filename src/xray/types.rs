@@ -178,6 +178,7 @@ impl ServerConfig {
         self.find_vless_inbound()
             .and_then(|ib| ib.get("port"))
             .and_then(|p| p.as_u64())
+            .filter(|&p| p <= 65535)
             .map(|p| p as u16)
     }
 

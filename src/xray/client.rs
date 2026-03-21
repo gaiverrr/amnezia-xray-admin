@@ -252,9 +252,10 @@ pub fn build_rmu_cmd(email: &str) -> Result<String> {
 }
 
 /// Build the `xray api stats` command for user traffic.
-/// Returns Err if email contains shell-unsafe characters.
+/// Returns Err if email or direction contains shell-unsafe characters.
 pub fn build_stats_cmd(email: &str, direction: &str) -> Result<String> {
     let email = validated_email(email)?;
+    let direction = validated_email(direction)?;
     Ok(format!(
         "xray api stats -s {} -name 'user>>>{}>>>traffic>>>{}'",
         API_ADDR, email, direction
@@ -262,8 +263,10 @@ pub fn build_stats_cmd(email: &str, direction: &str) -> Result<String> {
 }
 
 /// Build the `xray api stats` command for inbound traffic.
+/// Returns Err if inbound_tag or direction contains shell-unsafe characters.
 pub fn build_inbound_stats_cmd(inbound_tag: &str, direction: &str) -> Result<String> {
     let tag = validated_email(inbound_tag)?;
+    let direction = validated_email(direction)?;
     Ok(format!(
         "xray api stats -s {} -name 'inbound>>>{}>>>traffic>>>{}'",
         API_ADDR, tag, direction

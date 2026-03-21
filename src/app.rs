@@ -389,7 +389,7 @@ impl App {
                 "[a]dd user  [d]elete  [r]efresh  [q]uit  [Enter] detail".to_string()
             }
             Screen::Setup => "[Tab] next field  [Enter] confirm  [Esc] quit".to_string(),
-            Screen::UserDetail => "[q] back  [d]elete  [c]opy URL  [Q]R code".to_string(),
+            Screen::UserDetail => "[Esc] back  [d]elete  [c]opy URL  [q] QR code".to_string(),
             Screen::AddUser => "[Enter] confirm  [Esc] cancel".to_string(),
             Screen::QrView => "[Esc/q] back".to_string(),
         }

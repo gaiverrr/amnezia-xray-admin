@@ -178,6 +178,11 @@ impl Config {
         if let Some(ref container) = cli.container {
             if is_valid_container_name(container) {
                 self.container = container.clone();
+            } else {
+                eprintln!(
+                    "Warning: invalid container name '{}', using '{}'",
+                    container, self.container
+                );
             }
         }
     }
