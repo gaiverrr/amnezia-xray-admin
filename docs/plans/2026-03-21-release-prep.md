@@ -82,11 +82,11 @@ brew install amnezia-xray-admin
 - [x] run tests — must pass before next task
 
 ### Task 6: Create Homebrew tap
-- [ ] create `gaiverrr/homebrew-tap` repo on GitHub (via `gh repo create`)
-- [ ] create `Formula/amnezia-xray-admin.rb` Homebrew formula
-- [ ] formula downloads release tarball, builds from source with `cargo build --release`
-- [ ] add `test do` block that runs `amnezia-xray-admin --help`
-- [ ] verify formula syntax: `brew audit --strict Formula/amnezia-xray-admin.rb`
+- [x] create `gaiverrr/homebrew-tap` repo on GitHub (via `gh repo create`)
+- [x] create `Formula/amnezia-xray-admin.rb` Homebrew formula
+- [x] formula downloads release tarball, builds from source with `cargo build --release`
+- [x] add `test do` block that runs `amnezia-xray-admin --help`
+- [x] verify formula syntax: `brew audit --strict Formula/amnezia-xray-admin.rb` (sha256 PLACEHOLDER errors expected until release)
 
 ### Task 7: Merge to main and create GitHub repo
 - [ ] create GitHub repo: `gh repo create gaiverrr/amnezia-xray-admin --public --source=. --push`
