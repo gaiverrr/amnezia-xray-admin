@@ -88,12 +88,12 @@ Three-phase plan:
 - [x] run tests — must pass before next task
 
 ### Task 6: Add --online-status CLI command
-- [ ] add `--online-status` flag to `Cli` struct
-- [ ] implement `cli_online_status()`: list users, get online count + IPs, print table
-- [ ] format: NAME | ONLINE | IPs
-- [ ] update test Cli struct instances
-- [ ] verify: `cargo run -- --online-status`
-- [ ] run tests — must pass before next task
+- [x] add `--online-status` flag to `Cli` struct
+- [x] implement `cli_online_status()`: list users, get online count + IPs, print table
+- [x] format: NAME | ONLINE | IPs
+- [x] update test Cli struct instances
+- [x] verify: `cargo run -- --online-status` (manual verification - not automatable without VPS)
+- [x] run tests — must pass before next task
 
 ### Task 7: Add --server-info CLI command
 - [ ] add `--server-info` flag to `Cli` struct

@@ -64,6 +64,14 @@ fn main() {
         return;
     }
 
+    if cli.online_status {
+        if let Err(e) = runtime.block_on(cli_online_status(&config)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // Initialize terminal
     let mut terminal = match app::init_terminal() {
         Ok(t) => t,
@@ -180,6 +188,60 @@ async fn cli_user_qr(config: &Config, name: &str) -> error::Result<()> {
         Err(e) => {
             return Err(error::AppError::Xray(format!("QR generation failed: {}", e)));
         }
+    }
+
+    Ok(())
+}
+
+async fn cli_online_status(config: &Config) -> error::Result<()> {
+    let session = backend::connect(config).await?;
+    let client = xray::client::XrayApiClient::new(&session);
+    let users = client.list_users().await?;
+
+    if users.is_empty() {
+        println!("No users found.");
+        let _ = session.close().await;
+        return Ok(());
+    }
+
+    // Collect online status for each user
+    let mut rows: Vec<(String, u32, Vec<String>)> = Vec::new();
+    for user in &users {
+        let count = client.get_online_count(&user.email).await.unwrap_or(0);
+        let ips = if count > 0 {
+            client.get_online_ips(&user.email).await.unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let name = if user.name.is_empty() {
+            user.uuid[..std::cmp::min(8, user.uuid.len())].to_string()
+        } else {
+            user.name.clone()
+        };
+        rows.push((name, count, ips));
+    }
+
+    let _ = session.close().await;
+
+    // Print table
+    println!(
+        "{:<30} {:<8} IPs",
+        "NAME", "ONLINE"
+    );
+    println!("{}", "-".repeat(60));
+
+    for (name, count, ips) in &rows {
+        let online = if *count > 0 {
+            format!("● {}", count)
+        } else {
+            "○".to_string()
+        };
+        let ip_str = if ips.is_empty() {
+            "-".to_string()
+        } else {
+            ips.join(", ")
+        };
+        println!("{:<30} {:<8} {}", name, online, ip_str);
     }
 
     Ok(())

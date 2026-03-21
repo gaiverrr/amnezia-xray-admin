@@ -70,6 +70,10 @@ pub struct Cli {
     /// Show QR code for a user's vless:// URL in terminal and exit
     #[arg(long = "user-qr")]
     pub user_qr: Option<String>,
+
+    /// Show online status for all users and exit
+    #[arg(long = "online-status")]
+    pub online_status: bool,
 }
 
 /// Application configuration
@@ -339,6 +343,7 @@ host = "10.0.0.1"
             check_server: false,
             user_url: None,
             user_qr: None,
+            online_status: false,
         };
         config.merge_cli(&cli);
 
@@ -371,6 +376,7 @@ host = "10.0.0.1"
             check_server: false,
             user_url: None,
             user_qr: None,
+            online_status: false,
         };
         config.merge_cli(&cli);
 
@@ -396,6 +402,7 @@ host = "10.0.0.1"
             check_server: false,
             user_url: None,
             user_qr: None,
+            online_status: false,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());
