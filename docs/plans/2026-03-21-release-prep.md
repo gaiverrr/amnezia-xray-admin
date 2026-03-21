@@ -95,11 +95,11 @@ brew install amnezia-xray-admin
 - [x] verify CI passes on GitHub
 
 ### Task 8: Tag and release v0.1.0
-- [ ] create git tag: `git tag -a v0.1.0 -m "Initial release"`
-- [ ] push tag: `git push origin v0.1.0`
-- [ ] verify release workflow creates GitHub Release with binaries
-- [ ] update Homebrew formula with release URL and SHA256
-- [ ] verify: `brew tap gaiverrr/tap && brew install amnezia-xray-admin`
+- [x] create git tag: `git tag -a v0.1.0 -m "Initial release"`
+- [x] push tag: `git push origin v0.1.0`
+- [x] verify release workflow creates GitHub Release with binaries
+- [x] update Homebrew formula with release URL and SHA256
+- [x] verify: `brew tap gaiverrr/tap && brew install amnezia-xray-admin`
 
 ### Task 9: Verify release
 - [ ] verify `brew install` works on clean system
