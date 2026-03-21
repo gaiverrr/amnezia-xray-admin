@@ -475,7 +475,10 @@ fn draw_delete_error(user: &XrayUser, msg: &str, frame: &mut ratatui::Frame, are
         chunks[1],
     );
 
-    let truncated = if msg.len() > 60 { &msg[..60] } else { msg };
+    let truncated = match msg.char_indices().nth(60) {
+        Some((i, _)) => &msg[..i],
+        None => msg,
+    };
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             format!("  {}", truncated),

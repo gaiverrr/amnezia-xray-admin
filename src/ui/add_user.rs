@@ -267,7 +267,10 @@ fn draw_error(frame: &mut ratatui::Frame, area: Rect, msg: &str) {
         rows[1],
     );
 
-    let truncated_msg = if msg.len() > 50 { &msg[..50] } else { msg };
+    let truncated_msg = match msg.char_indices().nth(50) {
+        Some((i, _)) => &msg[..i],
+        None => msg,
+    };
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             format!("  {}", truncated_msg),
