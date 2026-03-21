@@ -21,8 +21,6 @@ fn main() {
 
     config.merge_cli(&cli);
 
-    let has_config = config.has_connection_info();
-
     // Initialize terminal
     let mut terminal = match app::init_terminal() {
         Ok(t) => t,
@@ -33,7 +31,7 @@ fn main() {
     };
 
     // Create app and run event loop
-    let mut application = app::App::new(has_config);
+    let mut application = app::App::with_config(config);
     let result = app::run(&mut application, &mut terminal);
 
     // Always restore terminal, even on error

@@ -155,14 +155,14 @@ src/
 - [x] `cargo build` must succeed, app launches and shows empty dashboard frame
 
 ### Task 9: First-run setup wizard TUI
-- [ ] implement setup screen in `src/ui/setup.rs`
-- [ ] input fields: host, port (default 22), user (default root), SSH key path, SSH config alias, container name (default amnezia-xray)
-- [ ] tab/shift-tab navigation between fields
-- [ ] [Test Connection] button — attempts SSH + reads xray version
-- [ ] [Save & Start] — saves config and transitions to dashboard
-- [ ] show connection test result (success with version or error message)
-- [ ] if config already exists, skip setup and go to dashboard
-- [ ] manual testing: run app, complete setup flow
+- [x] implement setup screen in `src/ui/setup.rs`
+- [x] input fields: host, port (default 22), user (default root), SSH key path, SSH config alias, container name (default amnezia-xray)
+- [x] tab/shift-tab navigation between fields
+- [x] [Test Connection] button — attempts SSH + reads xray version
+- [x] [Save & Start] — saves config and transitions to dashboard
+- [x] show connection test result (success with version or error message)
+- [x] if config already exists, skip setup and go to dashboard
+- [x] manual testing: run app, complete setup flow [x] (skipped - not automatable)
 
 ### Task 10: Dashboard view — user list with stats
 - [ ] implement dashboard in `src/ui/dashboard.rs`

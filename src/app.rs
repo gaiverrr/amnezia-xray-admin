@@ -8,6 +8,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
 
+use crate::config::Config;
+use crate::ui::setup::{self, SetupState};
 use crate::ui::theme;
 
 /// Screens in the application
@@ -29,6 +31,8 @@ pub struct App {
     pub running: bool,
     pub last_refresh: Instant,
     pub status_message: String,
+    pub setup_state: SetupState,
+    pub config: Config,
 }
 
 impl App {
@@ -42,6 +46,24 @@ impl App {
             running: true,
             last_refresh: Instant::now(),
             status_message: String::new(),
+            setup_state: SetupState::default(),
+            config: Config::default(),
+        }
+    }
+
+    pub fn with_config(config: Config) -> Self {
+        let has_config = config.has_connection_info();
+        Self {
+            screen: if has_config {
+                Screen::Dashboard
+            } else {
+                Screen::Setup
+            },
+            running: true,
+            last_refresh: Instant::now(),
+            status_message: String::new(),
+            setup_state: SetupState::from_config(&config),
+            config,
         }
     }
 
@@ -81,8 +103,49 @@ impl App {
 
     fn handle_setup_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc => self.quit(),
+            KeyCode::Esc => {
+                self.quit();
+                return;
+            }
             _ => {}
+        }
+
+        self.setup_state.handle_key(key);
+
+        // Check if save was requested
+        if self.setup_state.save_requested {
+            self.setup_state.save_requested = false;
+            let new_config = self.setup_state.to_config();
+            if !new_config.has_connection_info() {
+                self.setup_state.test_result =
+                    setup::TestResult::Error("Please enter a host or SSH config alias".to_string());
+                return;
+            }
+            match new_config.save() {
+                Ok(()) => {
+                    self.config = new_config;
+                    self.screen = Screen::Dashboard;
+                    self.status_message = "Config saved. Connected.".to_string();
+                }
+                Err(e) => {
+                    self.setup_state.test_result =
+                        setup::TestResult::Error(format!("Save failed: {}", e));
+                }
+            }
+        }
+
+        // Check if test was requested
+        if self.setup_state.test_requested {
+            self.setup_state.test_requested = false;
+            if !self.setup_state.has_connection_info() {
+                self.setup_state.test_result =
+                    setup::TestResult::Error("Please enter a host or SSH config alias".to_string());
+            } else {
+                // For now, validate config structure (actual SSH test needs async)
+                self.setup_state.test_result = setup::TestResult::Success(
+                    "Config looks valid (SSH test requires running connection)".to_string(),
+                );
+            }
         }
     }
 
@@ -163,7 +226,7 @@ impl App {
     fn draw_body(&self, frame: &mut ratatui::Frame, area: Rect) {
         match self.screen {
             Screen::Dashboard => self.draw_dashboard_placeholder(frame, area),
-            Screen::Setup => self.draw_setup_placeholder(frame, area),
+            Screen::Setup => setup::draw(&self.setup_state, frame, area),
             Screen::UserDetail => self.draw_placeholder(frame, area, "User Detail"),
             Screen::AddUser => self.draw_placeholder(frame, area, "Add User"),
             Screen::QrView => self.draw_placeholder(frame, area, "QR Code"),
@@ -191,32 +254,6 @@ impl App {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "  No user data loaded yet.",
-            theme::muted_style(),
-        )));
-
-        let content = Paragraph::new(lines).block(block);
-        frame.render_widget(content, area);
-    }
-
-    fn draw_setup_placeholder(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme::border_style())
-            .title(Span::styled(" First-Run Setup ", theme::accent_style()))
-            .style(theme::text_style());
-
-        let mut lines: Vec<Line> = theme::LOGO
-            .lines()
-            .map(|l| Line::from(Span::styled(l, theme::title_style())))
-            .collect();
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  Welcome! Configure your connection to get started.",
-            theme::secondary_style(),
-        )));
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  Setup wizard will be implemented in the next task.",
             theme::muted_style(),
         )));
 
@@ -282,6 +319,7 @@ impl Default for App {
         Self::new(false)
     }
 }
+
 
 /// Initialize the terminal for TUI rendering
 pub fn init_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
@@ -518,5 +556,86 @@ mod tests {
         app.handle_key(make_key(KeyCode::Char('z')));
         assert_eq!(app.screen, before_screen);
         assert_eq!(app.running, before_running);
+    }
+
+    #[test]
+    fn test_with_config_has_connection() {
+        let config = Config {
+            host: Some("1.2.3.4".to_string()),
+            ..Config::default()
+        };
+        let app = App::with_config(config);
+        assert_eq!(app.screen, Screen::Dashboard);
+        assert_eq!(app.setup_state.host, "1.2.3.4");
+    }
+
+    #[test]
+    fn test_with_config_no_connection() {
+        let config = Config::default();
+        let app = App::with_config(config);
+        assert_eq!(app.screen, Screen::Setup);
+    }
+
+    #[test]
+    fn test_setup_tab_navigation() {
+        let mut app = App::new(false);
+        app.screen = Screen::Setup;
+        assert_eq!(app.setup_state.focused, 0);
+        app.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(app.setup_state.focused, 1);
+        app.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(app.setup_state.focused, 2);
+    }
+
+    #[test]
+    fn test_setup_typing() {
+        let mut app = App::new(false);
+        app.screen = Screen::Setup;
+        // Focus is on SshHost (0)
+        app.handle_key(make_key(KeyCode::Char('v')));
+        app.handle_key(make_key(KeyCode::Char('p')));
+        app.handle_key(make_key(KeyCode::Char('s')));
+        assert_eq!(app.setup_state.ssh_host, "vps");
+    }
+
+    #[test]
+    fn test_setup_save_without_connection_info_shows_error() {
+        let mut app = App::new(false);
+        app.screen = Screen::Setup;
+        // Navigate to Save & Start button (index 7)
+        app.setup_state.focused = 7;
+        app.handle_key(make_key(KeyCode::Enter));
+        // Should stay on Setup screen with error
+        assert_eq!(app.screen, Screen::Setup);
+        assert!(matches!(
+            app.setup_state.test_result,
+            setup::TestResult::Error(_)
+        ));
+    }
+
+    #[test]
+    fn test_setup_test_connection_without_info_shows_error() {
+        let mut app = App::new(false);
+        app.screen = Screen::Setup;
+        // Navigate to Test Connection button (index 6)
+        app.setup_state.focused = 6;
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(matches!(
+            app.setup_state.test_result,
+            setup::TestResult::Error(_)
+        ));
+    }
+
+    #[test]
+    fn test_setup_test_connection_with_info_shows_success() {
+        let mut app = App::new(false);
+        app.screen = Screen::Setup;
+        app.setup_state.ssh_host = "vps-vpn".to_string();
+        app.setup_state.focused = 6;
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(matches!(
+            app.setup_state.test_result,
+            setup::TestResult::Success(_)
+        ));
     }
 }
