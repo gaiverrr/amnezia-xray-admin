@@ -88,13 +88,13 @@ src/
 - [x] `cargo build` must succeed
 
 ### Task 2: Config system
-- [ ] define config struct in `src/config.rs` (host, port, user, key_path, ssh_config_host, container_name)
-- [ ] implement config loading from `~/.config/amnezia-xray-admin/config.toml`
-- [ ] implement config saving with `0600` permissions
-- [ ] implement CLI args with clap (--host, --port, --user, --key, --ssh-host, --container)
-- [ ] CLI args override config file values; --ssh-host uses SSH config alias (e.g. `vps-vpn`)
-- [ ] write tests for config loading, merging, defaults
-- [ ] run tests — must pass before next task
+- [x] define config struct in `src/config.rs` (host, port, user, key_path, ssh_config_host, container_name)
+- [x] implement config loading from `~/.config/amnezia-xray-admin/config.toml`
+- [x] implement config saving with `0600` permissions
+- [x] implement CLI args with clap (--host, --port, --user, --key, --ssh-host, --container)
+- [x] CLI args override config file values; --ssh-host uses SSH config alias (e.g. `vps-vpn`)
+- [x] write tests for config loading, merging, defaults
+- [x] run tests — must pass before next task
 
 ### Task 3: SSH connection layer
 - [ ] implement SSH connection in `src/ssh.rs` using russh
