@@ -89,10 +89,10 @@ brew install amnezia-xray-admin
 - [x] verify formula syntax: `brew audit --strict Formula/amnezia-xray-admin.rb` (sha256 PLACEHOLDER errors expected until release)
 
 ### Task 7: Merge to main and create GitHub repo
-- [ ] create GitHub repo: `gh repo create gaiverrr/amnezia-xray-admin --public --source=. --push`
-- [ ] merge feature branch to main: `git checkout main && git merge amnezia-xray-admin-mvp.md`
-- [ ] push main to GitHub
-- [ ] verify CI passes on GitHub
+- [x] create GitHub repo: `gh repo create gaiverrr/amnezia-xray-admin --public --source=. --push`
+- [x] merge feature branch to main: `git checkout main && git merge amnezia-xray-admin-mvp.md`
+- [x] push main to GitHub
+- [x] verify CI passes on GitHub
 
 ### Task 8: Tag and release v0.1.0
 - [ ] create git tag: `git tag -a v0.1.0 -m "Initial release"`
