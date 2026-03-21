@@ -107,14 +107,14 @@ src/
 - [x] run tests — must pass before next task
 
 ### Task 4: Xray data types and server config parsing
-- [ ] define types in `src/xray/types.rs`: `XrayUser`, `ClientEntry`, `ServerConfig`, `TrafficStats`
-- [ ] implement `ServerConfig` parsing from server.json in `src/xray/config.rs`
-- [ ] implement `ClientsTable` parsing from clientsTable JSON
-- [ ] implement merging: cross-reference server.json clients with clientsTable names
-- [ ] implement server.json mutation: add/remove client from clients array
-- [ ] implement clientsTable mutation: add/remove entry
-- [ ] write tests with fixture JSON (real format from server)
-- [ ] run tests — must pass before next task
+- [x] define types in `src/xray/types.rs`: `XrayUser`, `ClientEntry`, `ServerConfig`, `TrafficStats`
+- [x] implement `ServerConfig` parsing from server.json in `src/xray/config.rs`
+- [x] implement `ClientsTable` parsing from clientsTable JSON
+- [x] implement merging: cross-reference server.json clients with clientsTable names
+- [x] implement server.json mutation: add/remove client from clients array
+- [x] implement clientsTable mutation: add/remove entry
+- [x] write tests with fixture JSON (real format from server)
+- [x] run tests — must pass before next task
 
 ### Task 5: Enable Xray API on server (one-time setup)
 - [ ] implement `ensure_api_enabled()` in `src/xray/config.rs`

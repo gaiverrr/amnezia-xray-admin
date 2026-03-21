@@ -96,10 +96,7 @@ impl SshSession {
     }
 
     /// Try authenticating via ssh-agent.
-    async fn try_agent_auth(
-        handle: &mut client::Handle<SshHandler>,
-        user: &str,
-    ) -> Result<bool> {
+    async fn try_agent_auth(handle: &mut client::Handle<SshHandler>, user: &str) -> Result<bool> {
         let mut agent = russh_keys::agent::client::AgentClient::connect_env()
             .await
             .map_err(|e| AppError::Ssh(format!("ssh-agent connect failed: {}", e)))?;

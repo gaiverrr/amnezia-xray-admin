@@ -92,9 +92,7 @@ impl Config {
     pub fn config_path() -> Result<PathBuf> {
         let config_dir = dirs::config_dir()
             .ok_or_else(|| AppError::Config("cannot determine config directory".to_string()))?;
-        Ok(config_dir
-            .join("amnezia-xray-admin")
-            .join("config.toml"))
+        Ok(config_dir.join("amnezia-xray-admin").join("config.toml"))
     }
 
     /// Load config from the default config file path.

@@ -1,1 +1,469 @@
-// Xray data types - to be implemented in Task 4
+use serde::{Deserialize, Serialize};
+
+/// A user as seen in the TUI — merged from server.json + clientsTable
+#[derive(Debug, Clone, PartialEq)]
+pub struct XrayUser {
+    pub uuid: String,
+    pub name: String,
+    pub email: String,
+    pub flow: String,
+    pub stats: TrafficStats,
+    pub online_count: u32,
+}
+
+impl XrayUser {
+    pub fn email_from_name(name: &str) -> String {
+        format!("{}@vpn", name)
+    }
+}
+
+/// Traffic statistics for a user
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TrafficStats {
+    pub uplink: u64,
+    pub downlink: u64,
+}
+
+/// An entry in the clientsTable JSON file
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ClientEntry {
+    #[serde(rename = "clientId")]
+    pub client_id: String,
+    #[serde(rename = "userData")]
+    pub user_data: String,
+}
+
+/// A client entry within a server.json inbound's settings.clients array
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ServerJsonClient {
+    pub id: String,
+    #[serde(default)]
+    pub flow: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<u32>,
+}
+
+/// Parsed representation of server.json — we keep it as serde_json::Value
+/// to preserve unknown fields, and provide typed access to what we need.
+#[derive(Debug, Clone)]
+pub struct ServerConfig {
+    pub raw: serde_json::Value,
+}
+
+impl ServerConfig {
+    /// Parse from JSON string
+    pub fn parse(json: &str) -> crate::error::Result<Self> {
+        let raw: serde_json::Value = serde_json::from_str(json)?;
+        Ok(Self { raw })
+    }
+
+    /// Serialize back to pretty JSON
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(&self.raw).expect("valid JSON")
+    }
+
+    /// Find the main VLESS inbound and return its clients
+    pub fn clients(&self) -> Vec<ServerJsonClient> {
+        self.find_vless_inbound()
+            .and_then(|inbound| {
+                inbound
+                    .get("settings")
+                    .and_then(|s| s.get("clients"))
+                    .and_then(|c| serde_json::from_value(c.clone()).ok())
+            })
+            .unwrap_or_default()
+    }
+
+    /// Add a client to the VLESS inbound
+    pub fn add_client(&mut self, client: &ServerJsonClient) -> crate::error::Result<()> {
+        let inbound = self
+            .find_vless_inbound_mut()
+            .ok_or_else(|| crate::error::AppError::Xray("no VLESS inbound found".into()))?;
+
+        let clients = inbound
+            .get_mut("settings")
+            .and_then(|s| s.get_mut("clients"))
+            .and_then(|c| c.as_array_mut())
+            .ok_or_else(|| crate::error::AppError::Xray("no clients array found".into()))?;
+
+        clients.push(serde_json::to_value(client)?);
+        Ok(())
+    }
+
+    /// Remove a client by UUID from the VLESS inbound
+    pub fn remove_client(&mut self, uuid: &str) -> crate::error::Result<bool> {
+        let inbound = self
+            .find_vless_inbound_mut()
+            .ok_or_else(|| crate::error::AppError::Xray("no VLESS inbound found".into()))?;
+
+        let clients = inbound
+            .get_mut("settings")
+            .and_then(|s| s.get_mut("clients"))
+            .and_then(|c| c.as_array_mut())
+            .ok_or_else(|| crate::error::AppError::Xray("no clients array found".into()))?;
+
+        let before = clients.len();
+        clients.retain(|c| c.get("id").and_then(|v| v.as_str()) != Some(uuid));
+        Ok(clients.len() < before)
+    }
+
+    /// Check if the API section is already configured
+    pub fn has_api(&self) -> bool {
+        self.raw.get("api").is_some()
+    }
+
+    fn find_vless_inbound(&self) -> Option<&serde_json::Value> {
+        self.raw
+            .get("inbounds")
+            .and_then(|i| i.as_array())
+            .and_then(|inbounds| {
+                inbounds.iter().find(|ib| {
+                    ib.get("protocol")
+                        .and_then(|p| p.as_str())
+                        .map(|p| p == "vless")
+                        .unwrap_or(false)
+                })
+            })
+    }
+
+    fn find_vless_inbound_mut(&mut self) -> Option<&mut serde_json::Value> {
+        self.raw
+            .get_mut("inbounds")
+            .and_then(|i| i.as_array_mut())
+            .and_then(|inbounds| {
+                inbounds.iter_mut().find(|ib| {
+                    ib.get("protocol")
+                        .and_then(|p| p.as_str())
+                        .map(|p| p == "vless")
+                        .unwrap_or(false)
+                })
+            })
+    }
+}
+
+/// Parsed clientsTable — a simple JSON array of ClientEntry
+#[derive(Debug, Clone)]
+pub struct ClientsTable {
+    pub entries: Vec<ClientEntry>,
+}
+
+impl ClientsTable {
+    /// Parse from JSON string
+    pub fn parse(json: &str) -> crate::error::Result<Self> {
+        let entries: Vec<ClientEntry> = serde_json::from_str(json)?;
+        Ok(Self { entries })
+    }
+
+    /// Serialize back to JSON string
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(&self.entries).expect("valid JSON")
+    }
+
+    /// Find a name for a given UUID
+    pub fn name_for_uuid(&self, uuid: &str) -> Option<&str> {
+        self.entries
+            .iter()
+            .find(|e| e.client_id == uuid)
+            .map(|e| e.user_data.as_str())
+    }
+
+    /// Add an entry
+    pub fn add(&mut self, client_id: String, name: String) {
+        self.entries.push(ClientEntry {
+            client_id,
+            user_data: name,
+        });
+    }
+
+    /// Remove an entry by UUID, returns true if found
+    pub fn remove(&mut self, uuid: &str) -> bool {
+        let before = self.entries.len();
+        self.entries.retain(|e| e.client_id != uuid);
+        self.entries.len() < before
+    }
+}
+
+/// Merge server.json clients with clientsTable names to produce XrayUser list
+pub fn merge_users(config: &ServerConfig, table: &ClientsTable) -> Vec<XrayUser> {
+    config
+        .clients()
+        .into_iter()
+        .map(|client| {
+            let name = table
+                .name_for_uuid(&client.id)
+                .unwrap_or("unknown")
+                .to_string();
+            let email = client
+                .email
+                .unwrap_or_else(|| XrayUser::email_from_name(&name));
+            XrayUser {
+                uuid: client.id,
+                name,
+                email,
+                flow: client.flow,
+                stats: TrafficStats::default(),
+                online_count: 0,
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_server_json() -> &'static str {
+        r#"{
+            "inbounds": [
+                {
+                    "listen": "0.0.0.0",
+                    "port": 443,
+                    "protocol": "vless",
+                    "settings": {
+                        "clients": [
+                            {
+                                "id": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",
+                                "flow": "xtls-rprx-vision"
+                            },
+                            {
+                                "id": "cccccccc-4444-5555-6666-dddddddddddd",
+                                "flow": "xtls-rprx-vision",
+                                "email": "alice@vpn"
+                            }
+                        ],
+                        "decryption": "none"
+                    },
+                    "streamSettings": {
+                        "network": "tcp",
+                        "security": "reality"
+                    }
+                }
+            ],
+            "outbounds": [
+                {"protocol": "freedom", "tag": "direct"}
+            ]
+        }"#
+    }
+
+    fn sample_clients_table() -> &'static str {
+        r#"[
+            {"clientId": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb", "userData": "bob"},
+            {"clientId": "cccccccc-4444-5555-6666-dddddddddddd", "userData": "alice"}
+        ]"#
+    }
+
+    #[test]
+    fn test_server_config_parse_and_clients() {
+        let config = ServerConfig::parse(sample_server_json()).unwrap();
+        let clients = config.clients();
+        assert_eq!(clients.len(), 2);
+        assert_eq!(clients[0].id, "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb");
+        assert_eq!(clients[0].flow, "xtls-rprx-vision");
+        assert_eq!(clients[1].email, Some("alice@vpn".to_string()));
+    }
+
+    #[test]
+    fn test_server_config_roundtrip() {
+        let config = ServerConfig::parse(sample_server_json()).unwrap();
+        let json = config.to_json();
+        let config2 = ServerConfig::parse(&json).unwrap();
+        assert_eq!(config2.clients().len(), 2);
+    }
+
+    #[test]
+    fn test_server_config_add_client() {
+        let mut config = ServerConfig::parse(sample_server_json()).unwrap();
+        let new_client = ServerJsonClient {
+            id: "eeeeeeee-7777-8888-9999-ffffffffffff".to_string(),
+            flow: "xtls-rprx-vision".to_string(),
+            email: Some("charlie@vpn".to_string()),
+            level: Some(0),
+        };
+        config.add_client(&new_client).unwrap();
+        let clients = config.clients();
+        assert_eq!(clients.len(), 3);
+        assert_eq!(clients[2].id, "eeeeeeee-7777-8888-9999-ffffffffffff");
+        assert_eq!(clients[2].email, Some("charlie@vpn".to_string()));
+    }
+
+    #[test]
+    fn test_server_config_remove_client() {
+        let mut config = ServerConfig::parse(sample_server_json()).unwrap();
+        let removed = config
+            .remove_client("aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb")
+            .unwrap();
+        assert!(removed);
+        assert_eq!(config.clients().len(), 1);
+        assert_eq!(
+            config.clients()[0].id,
+            "cccccccc-4444-5555-6666-dddddddddddd"
+        );
+    }
+
+    #[test]
+    fn test_server_config_remove_nonexistent() {
+        let mut config = ServerConfig::parse(sample_server_json()).unwrap();
+        let removed = config.remove_client("nonexistent-uuid").unwrap();
+        assert!(!removed);
+        assert_eq!(config.clients().len(), 2);
+    }
+
+    #[test]
+    fn test_server_config_has_api() {
+        let config = ServerConfig::parse(sample_server_json()).unwrap();
+        assert!(!config.has_api());
+
+        let with_api = ServerConfig::parse(r#"{"api":{"tag":"api"},"inbounds":[]}"#).unwrap();
+        assert!(with_api.has_api());
+    }
+
+    #[test]
+    fn test_clients_table_parse() {
+        let table = ClientsTable::parse(sample_clients_table()).unwrap();
+        assert_eq!(table.entries.len(), 2);
+        assert_eq!(
+            table.entries[0].client_id,
+            "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
+        );
+        assert_eq!(table.entries[0].user_data, "bob");
+    }
+
+    #[test]
+    fn test_clients_table_name_for_uuid() {
+        let table = ClientsTable::parse(sample_clients_table()).unwrap();
+        assert_eq!(
+            table.name_for_uuid("aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"),
+            Some("bob")
+        );
+        assert_eq!(table.name_for_uuid("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_clients_table_add() {
+        let mut table = ClientsTable::parse(sample_clients_table()).unwrap();
+        table.add("new-uuid".to_string(), "charlie".to_string());
+        assert_eq!(table.entries.len(), 3);
+        assert_eq!(table.name_for_uuid("new-uuid"), Some("charlie"));
+    }
+
+    #[test]
+    fn test_clients_table_remove() {
+        let mut table = ClientsTable::parse(sample_clients_table()).unwrap();
+        let removed = table.remove("aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb");
+        assert!(removed);
+        assert_eq!(table.entries.len(), 1);
+    }
+
+    #[test]
+    fn test_clients_table_remove_nonexistent() {
+        let mut table = ClientsTable::parse(sample_clients_table()).unwrap();
+        let removed = table.remove("nonexistent");
+        assert!(!removed);
+        assert_eq!(table.entries.len(), 2);
+    }
+
+    #[test]
+    fn test_clients_table_roundtrip() {
+        let table = ClientsTable::parse(sample_clients_table()).unwrap();
+        let json = table.to_json();
+        let table2 = ClientsTable::parse(&json).unwrap();
+        assert_eq!(table.entries, table2.entries);
+    }
+
+    #[test]
+    fn test_merge_users() {
+        let config = ServerConfig::parse(sample_server_json()).unwrap();
+        let table = ClientsTable::parse(sample_clients_table()).unwrap();
+        let users = merge_users(&config, &table);
+
+        assert_eq!(users.len(), 2);
+
+        // First user: bob (no email in server.json, derived from name)
+        assert_eq!(users[0].name, "bob");
+        assert_eq!(users[0].uuid, "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb");
+        assert_eq!(users[0].email, "bob@vpn");
+        assert_eq!(users[0].flow, "xtls-rprx-vision");
+
+        // Second user: alice (has email in server.json)
+        assert_eq!(users[1].name, "alice");
+        assert_eq!(users[1].email, "alice@vpn");
+    }
+
+    #[test]
+    fn test_merge_users_unknown_uuid() {
+        // Client in server.json but not in clientsTable
+        let json = r#"{
+            "inbounds": [{
+                "protocol": "vless",
+                "settings": {
+                    "clients": [{"id": "unknown-uuid", "flow": "xtls-rprx-vision"}]
+                }
+            }]
+        }"#;
+        let config = ServerConfig::parse(json).unwrap();
+        let table = ClientsTable::parse("[]").unwrap();
+        let users = merge_users(&config, &table);
+
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].name, "unknown");
+        assert_eq!(users[0].email, "unknown@vpn");
+    }
+
+    #[test]
+    fn test_email_from_name() {
+        assert_eq!(XrayUser::email_from_name("alice"), "alice@vpn");
+        assert_eq!(XrayUser::email_from_name("bob"), "bob@vpn");
+    }
+
+    #[test]
+    fn test_traffic_stats_default() {
+        let stats = TrafficStats::default();
+        assert_eq!(stats.uplink, 0);
+        assert_eq!(stats.downlink, 0);
+    }
+
+    #[test]
+    fn test_client_entry_serde() {
+        let entry = ClientEntry {
+            client_id: "test-uuid".to_string(),
+            user_data: "test-name".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("clientId"));
+        assert!(json.contains("userData"));
+        let parsed: ClientEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, entry);
+    }
+
+    #[test]
+    fn test_server_json_client_serde_minimal() {
+        let json = r#"{"id": "some-uuid", "flow": "xtls-rprx-vision"}"#;
+        let client: ServerJsonClient = serde_json::from_str(json).unwrap();
+        assert_eq!(client.id, "some-uuid");
+        assert_eq!(client.email, None);
+        assert_eq!(client.level, None);
+
+        // Serialization should skip None fields
+        let serialized = serde_json::to_string(&client).unwrap();
+        assert!(!serialized.contains("email"));
+        assert!(!serialized.contains("level"));
+    }
+
+    #[test]
+    fn test_no_vless_inbound_errors() {
+        let json = r#"{"inbounds": [{"protocol": "vmess", "settings": {"clients": []}}]}"#;
+        let mut config = ServerConfig::parse(json).unwrap();
+        assert!(config.clients().is_empty());
+        assert!(config
+            .add_client(&ServerJsonClient {
+                id: "x".into(),
+                flow: "".into(),
+                email: None,
+                level: None,
+            })
+            .is_err());
+        assert!(config.remove_client("x").is_err());
+    }
+}
