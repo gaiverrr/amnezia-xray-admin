@@ -81,3 +81,20 @@ cargo run -- --deploy-bot --telegram-token <TOKEN>  # deploy bot to VPS via SSH
 - **Stats require `level: 0`**: Xray only tracks per-user traffic when clients have `"level": 0` matching the policy section.
 - **clientsTable format**: `userData` is an object `{"clientName": "...", "creationDate": "..."}`, not a plain string.
 - **Email format**: `name@vpn` — derived from clientsTable name, used as xray stats identifier.
+
+## Release Process
+
+To publish a new release (e.g. v0.2.0):
+
+1. Update version in `Cargo.toml`
+2. Update `CHANGELOG.md` with new version section
+3. Commit: `git commit -am "chore: bump version to 0.2.0"`
+4. Tag: `git tag -a v0.2.0 -m "v0.2.0"`
+5. Push: `git push origin main --tags`
+6. GitHub Actions `release.yml` automatically builds binaries for linux-x86_64, linux-aarch64, macos-x86_64, macos-aarch64 and creates a GitHub Release
+7. Update Homebrew formula in `gaiverrr/homebrew-tap`:
+   - Update `url` to new tag tarball
+   - Update `sha256` (download tarball, run `shasum -a 256`)
+   - Push to homebrew-tap repo
+
+CI runs on every push/PR via `.github/workflows/ci.yml` (test + clippy + fmt on ubuntu + macos).

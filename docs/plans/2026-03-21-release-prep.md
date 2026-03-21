@@ -109,8 +109,8 @@ brew install amnezia-xray-admin
 - [x] run full test suite + clippy
 
 ### Task 10: [Final] Update documentation
-- [ ] update CLAUDE.md with release process
-- [ ] add "How to release" section to README or CONTRIBUTING.md
+- [x] update CLAUDE.md with release process
+- [x] add "How to release" section to README or CONTRIBUTING.md
 
 ## Technical Details
 
