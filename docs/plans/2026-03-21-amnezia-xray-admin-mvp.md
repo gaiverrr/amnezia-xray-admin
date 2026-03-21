@@ -192,12 +192,12 @@ src/
 - [x] manual testing: view user details, delete a test user (skipped - not automatable)
 
 ### Task 13: QR code view
-- [ ] implement QR display in `src/ui/qr.rs`
-- [ ] render QR code centered in terminal using unicode half-blocks
-- [ ] show vless:// URL below QR code
-- [ ] show user name as title
-- [ ] `Esc` or `q` to go back
-- [ ] manual testing: generate QR, scan with phone Amnezia app
+- [x] implement QR display in `src/ui/qr.rs`
+- [x] render QR code centered in terminal using unicode half-blocks
+- [x] show vless:// URL below QR code
+- [x] show user name as title
+- [x] `Esc` or `q` to go back
+- [x] manual testing: generate QR, scan with phone Amnezia app (skipped - not automatable)
 
 ### Task 14: Verify acceptance criteria
 - [ ] verify all MVP features work end-to-end on real server

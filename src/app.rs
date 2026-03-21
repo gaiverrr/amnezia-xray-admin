@@ -11,6 +11,7 @@ use ratatui::Terminal;
 use crate::config::Config;
 use crate::ui::add_user::{self, AddUserResult, AddUserState};
 use crate::ui::dashboard::{self, DashboardState};
+use crate::ui::qr::{self, QrViewState};
 use crate::ui::setup::{self, SetupState};
 use crate::ui::theme;
 use crate::ui::user_detail::{self, DetailMode, UserDetailState};
@@ -38,6 +39,7 @@ pub struct App {
     pub dashboard_state: DashboardState,
     pub add_user_state: AddUserState,
     pub user_detail_state: UserDetailState,
+    pub qr_view_state: QrViewState,
     pub config: Config,
 }
 
@@ -56,6 +58,7 @@ impl App {
             dashboard_state: DashboardState::default(),
             add_user_state: AddUserState::default(),
             user_detail_state: UserDetailState::default(),
+            qr_view_state: QrViewState::default(),
             config: Config::default(),
         }
     }
@@ -83,6 +86,7 @@ impl App {
             dashboard_state,
             add_user_state: AddUserState::default(),
             user_detail_state: UserDetailState::default(),
+            qr_view_state: QrViewState::default(),
             config,
         }
     }
@@ -205,6 +209,12 @@ impl App {
                     self.screen = Screen::Dashboard;
                 }
                 KeyCode::Char('q') => {
+                    if let Some(ref user) = self.user_detail_state.user {
+                        // Generate a placeholder vless URL from user info
+                        // (full URL generation requires server keys, done in async context)
+                        let url = format!("vless://{}@server:443#{}",  user.uuid, user.name);
+                        self.qr_view_state.open(user.name.clone(), url);
+                    }
                     self.screen = Screen::QrView;
                 }
                 _ => {}
@@ -240,8 +250,9 @@ impl App {
                 self.screen = Screen::Dashboard;
             }
             KeyCode::Char('q') => {
-                // If showing success, offer QR view (will be wired in Task 13)
-                if let AddUserResult::Success { .. } = &self.add_user_state.result {
+                if let AddUserResult::Success { ref name, ref uuid } = self.add_user_state.result {
+                    let url = format!("vless://{}@server:443#{}", uuid, name);
+                    self.qr_view_state.open(name.clone(), url);
                     self.screen = Screen::QrView;
                 }
             }
@@ -251,7 +262,10 @@ impl App {
 
     fn handle_qr_view_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => self.screen = Screen::Dashboard,
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.qr_view_state.close();
+                self.screen = Screen::Dashboard;
+            }
             _ => {}
         }
     }
@@ -304,7 +318,9 @@ impl App {
                 Screen::UserDetail => {
                     user_detail::draw(&self.user_detail_state, frame, chunks[1]);
                 }
-                _ => Self::draw_placeholder_widget(frame, chunks[1], screen_label),
+                Screen::QrView => {
+                    qr::draw(&self.qr_view_state, frame, chunks[1]);
+                }
             }
 
             Self::draw_status_bar_static(frame, chunks[2], &status_message, &keybinds);
@@ -331,24 +347,6 @@ impl App {
         .block(header_block);
 
         frame.render_widget(header, area);
-    }
-
-    fn draw_placeholder_widget(frame: &mut ratatui::Frame, area: Rect, label: &str) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme::border_style())
-            .title(Span::styled(
-                format!(" {} ", label),
-                theme::secondary_style(),
-            ))
-            .style(theme::text_style());
-
-        let content = Paragraph::new(Line::from(Span::styled(
-            format!("  {} view - coming soon", label),
-            theme::muted_style(),
-        )))
-        .block(block);
-        frame.render_widget(content, area);
     }
 
     fn draw_status_bar_static(
