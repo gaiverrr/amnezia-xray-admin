@@ -211,23 +211,49 @@ async fn handle_command(
     {
         let mut config = state.config.lock().await;
 
-        if !is_admin_or_unset(&config, chat_id) {
-            bot.send_message(chat_id, "Access denied. Only the admin can use this bot.")
-                .await?;
+        // Handle /start which needs to write config (allowed before admin is set)
+        if let Command::Start = &cmd {
+            let is_new = config.telegram_admin_chat_id.is_none();
+            if !is_new && !is_admin_or_unset(&config, chat_id) {
+                bot.send_message(chat_id, "Access denied. Only the admin can use this bot.")
+                    .await?;
+                return Ok(());
+            }
+            if is_new {
+                config.telegram_admin_chat_id = Some(chat_id.0);
+                match config.save() {
+                    Ok(()) => {
+                        log::info!("Admin registered: chat_id={}", chat_id.0);
+                    }
+                    Err(e) => {
+                        log::error!("Failed to save admin chat ID: {}", e);
+                        config.telegram_admin_chat_id = None;
+                        bot.send_message(
+                            chat_id,
+                            "Failed to save admin registration. Please try /start again.",
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                }
+            }
+            bot.send_message(chat_id, welcome_text(is_new)).await?;
             return Ok(());
         }
 
-        // Handle /start which needs to write config
-        if let Command::Start = &cmd {
-            let is_new = config.telegram_admin_chat_id.is_none();
-            if is_new {
-                config.telegram_admin_chat_id = Some(chat_id.0);
-                if let Err(e) = config.save() {
-                    log::error!("Failed to save admin chat ID: {}", e);
-                }
-                log::info!("Admin registered: chat_id={}", chat_id.0);
-            }
-            bot.send_message(chat_id, welcome_text(is_new)).await?;
+        // All commands except /start require an admin to be registered
+        if config.telegram_admin_chat_id.is_none() {
+            bot.send_message(
+                chat_id,
+                "No admin registered yet. Send /start first to become the admin.",
+            )
+            .await?;
+            return Ok(());
+        }
+
+        if !is_admin_or_unset(&config, chat_id) {
+            bot.send_message(chat_id, "Access denied. Only the admin can use this bot.")
+                .await?;
             return Ok(());
         }
     }

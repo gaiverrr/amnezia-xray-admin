@@ -378,6 +378,11 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
             result.stderr.trim()
         ));
     }
+    // Restrict permissions — file contains the Telegram bot token
+    backend
+        .exec_on_host("chmod 600 /opt/axadmin/docker-compose.yml")
+        .await
+        .map_err(|e| format!("Failed to set compose file permissions: {}", e))?;
 
     // Write Dockerfile
     let dockerfile = include_str!("../Dockerfile");

@@ -86,6 +86,11 @@ fn main() {
     }
 
     if cli.telegram_bot {
+        if !local {
+            eprintln!("Error: --telegram-bot requires --local flag (must run on the VPS, not over SSH)");
+            eprintln!("Deploy the bot to VPS with: cargo run -- --deploy-bot --telegram-token <TOKEN>");
+            std::process::exit(1);
+        }
         let token = match cli.telegram_token.clone().or_else(|| config.telegram_token.clone()) {
             Some(t) => t,
             None => {
