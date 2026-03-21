@@ -410,6 +410,11 @@ impl SshSession {
         self.exec_command(&full_cmd).await
     }
 
+    /// The Docker container name this session targets.
+    pub fn container_name(&self) -> &str {
+        &self.container
+    }
+
     /// Close the SSH session.
     pub async fn close(self) -> Result<()> {
         self.handle

@@ -5,6 +5,7 @@
 
 use std::sync::mpsc;
 
+use crate::backend_trait::{SshBackend, XrayBackend};
 use crate::config::Config;
 use crate::error::AppError;
 use crate::ssh::{expand_tilde, resolve_ssh_host, SshSession};
@@ -100,21 +101,21 @@ pub fn resolve_connection_info(
     }
 }
 
-/// Connect to the server using the app config.
-pub async fn connect(config: &Config) -> Result<SshSession, AppError> {
+/// Connect and return an `SshBackend` (trait-based abstraction).
+pub async fn connect_backend(config: &Config) -> Result<SshBackend, AppError> {
     let (hostname, port, user, key_path) = resolve_connection_info(config)?;
     let addr = if hostname.contains(':') {
-        // IPv6 address needs brackets
         format!("[{}]:{}", hostname, port)
     } else {
         format!("{}:{}", hostname, port)
     };
-    SshSession::connect(addr, &user, key_path.as_deref(), &config.container).await
+    let session = SshSession::connect(&addr, &user, key_path.as_deref(), &config.container).await?;
+    Ok(SshBackend::new(session, hostname))
 }
 
 /// Read the Xray public key from the server (needed for vless:// URL generation).
-async fn read_public_key(session: &SshSession) -> Result<String, AppError> {
-    let result = session
+async fn read_public_key(backend: &dyn XrayBackend) -> Result<String, AppError> {
+    let result = backend
         .exec_in_container(&format!("cat {}", PUBLIC_KEY_PATH))
         .await?;
     if result.success() {
@@ -129,23 +130,20 @@ async fn read_public_key(session: &SshSession) -> Result<String, AppError> {
 
 /// Build a vless:// URL for a user, using live server config for reality params.
 pub async fn build_vless_url(
-    session: &SshSession,
-    config: &Config,
+    backend: &dyn XrayBackend,
     uuid: &str,
     name: &str,
 ) -> Result<String, AppError> {
-    let server_config = read_server_config(session).await?;
+    let server_config = read_server_config(backend).await?;
     let reality = server_config
         .reality_settings()
         .ok_or_else(|| AppError::Xray("no Reality settings in server config".to_string()))?;
     let port = server_config.vless_port().unwrap_or(443);
-    let public_key = read_public_key(session).await?;
-
-    let (hostname, ..) = resolve_connection_info(config)?;
+    let public_key = read_public_key(backend).await?;
 
     let params = VlessUrlParams {
         uuid: uuid.to_string(),
-        host: hostname,
+        host: backend.hostname().to_string(),
         port,
         sni: reality.sni,
         public_key,
@@ -172,17 +170,17 @@ async fn fetch_dashboard_data(
     config: &Config,
     api_check_done: bool,
 ) -> Result<DashboardData, String> {
-    let session = connect(config).await.map_err(|e| e.to_string())?;
+    let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
 
     // Ensure the Xray API is enabled (adds api/stats/policy sections if missing).
     // Only runs on the first successful refresh — skipped thereafter.
     if !api_check_done {
-        ensure_api_enabled(&session, &config.container)
+        ensure_api_enabled(&backend)
             .await
             .map_err(|e| e.to_string())?;
     }
 
-    let client = XrayApiClient::new(&session);
+    let client = XrayApiClient::new(&backend);
 
     let mut users = client.list_users().await.map_err(|e| e.to_string())?;
     let server_info = client.get_server_info().await.map_err(|e| e.to_string())?;
@@ -197,7 +195,7 @@ async fn fetch_dashboard_data(
         }
     }
 
-    let _ = session.close().await;
+    let _ = backend.close().await;
 
     Ok(DashboardData { users, server_info })
 }
@@ -215,12 +213,12 @@ pub fn spawn_test_connection(
 }
 
 async fn test_connection(config: &Config) -> Result<String, String> {
-    let session = connect(config).await.map_err(|e| e.to_string())?;
-    let result = session
+    let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
+    let result = backend
         .exec_in_container("xray version")
         .await
         .map_err(|e| e.to_string())?;
-    let _ = session.close().await;
+    let _ = backend.close().await;
 
     if result.success() {
         Ok(result.stdout.trim().to_string())
@@ -243,14 +241,14 @@ pub fn spawn_add_user(
 }
 
 async fn add_user(config: &Config, name: &str) -> Result<AddedUser, String> {
-    let session = connect(config).await.map_err(|e| e.to_string())?;
-    let client = XrayApiClient::new(&session);
+    let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
+    let client = XrayApiClient::new(&backend);
 
     let uuid = client.add_user(name).await.map_err(|e| e.to_string())?;
 
     // URL generation is best-effort: if it fails, the user was still added successfully.
     // The URL can be regenerated later via [c] or [q] in the detail view.
-    let vless_url = match build_vless_url(&session, config, &uuid, name).await {
+    let vless_url = match build_vless_url(&backend, &uuid, name).await {
         Ok(url) => url,
         Err(e) => {
             eprintln!("warning: user added but URL generation failed: {}", e);
@@ -258,7 +256,7 @@ async fn add_user(config: &Config, name: &str) -> Result<AddedUser, String> {
         }
     };
 
-    let _ = session.close().await;
+    let _ = backend.close().await;
 
     Ok(AddedUser {
         name: name.to_string(),
@@ -281,11 +279,11 @@ pub fn spawn_delete_user(
 }
 
 async fn delete_user(config: &Config, uuid: &str) -> Result<String, String> {
-    let session = connect(config).await.map_err(|e| e.to_string())?;
-    let client = XrayApiClient::new(&session);
+    let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
+    let client = XrayApiClient::new(&backend);
 
     client.remove_user(uuid).await.map_err(|e| e.to_string())?;
-    let _ = session.close().await;
+    let _ = backend.close().await;
 
     Ok(uuid.to_string())
 }
@@ -324,24 +322,24 @@ async fn fetch_online_ips(
     uuid: &str,
     email: &str,
 ) -> Result<(String, Vec<String>), (String, String)> {
-    let session = connect(config)
+    let backend = connect_backend(config)
         .await
         .map_err(|e| (uuid.to_string(), e.to_string()))?;
-    let client = XrayApiClient::new(&session);
+    let client = XrayApiClient::new(&backend);
     let ips = client
         .get_online_ips(email)
         .await
         .map_err(|e| (uuid.to_string(), e.to_string()))?;
-    let _ = session.close().await;
+    let _ = backend.close().await;
     Ok((uuid.to_string(), ips))
 }
 
 async fn generate_url(config: &Config, uuid: &str, name: &str) -> Result<AddedUser, String> {
-    let session = connect(config).await.map_err(|e| e.to_string())?;
-    let vless_url = build_vless_url(&session, config, uuid, name)
+    let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
+    let vless_url = build_vless_url(&backend, uuid, name)
         .await
         .map_err(|e| e.to_string())?;
-    let _ = session.close().await;
+    let _ = backend.close().await;
 
     Ok(AddedUser {
         name: name.to_string(),

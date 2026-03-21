@@ -1,5 +1,5 @@
+use crate::backend_trait::XrayBackend;
 use crate::error::{AppError, Result};
-use crate::ssh::SshSession;
 
 use super::config::{
     read_clients_table, read_server_config, CLIENTS_TABLE_PATH, SERVER_CONFIG_PATH,
@@ -29,20 +29,22 @@ pub struct ServerInfo {
     pub downlink: u64,
 }
 
-/// Xray API client that communicates via SSH-tunneled docker exec commands.
+/// Xray API client that communicates via docker exec commands.
+///
+/// Works with any `XrayBackend` implementation (SSH remote or local docker exec).
 pub struct XrayApiClient<'a> {
-    session: &'a SshSession,
+    backend: &'a dyn XrayBackend,
 }
 
 impl<'a> XrayApiClient<'a> {
-    pub fn new(session: &'a SshSession) -> Self {
-        Self { session }
+    pub fn new(backend: &'a dyn XrayBackend) -> Self {
+        Self { backend }
     }
 
     /// List all users, merged from server.json and clientsTable.
     pub async fn list_users(&self) -> Result<Vec<XrayUser>> {
-        let config = read_server_config(self.session).await?;
-        let table = read_clients_table(self.session).await?;
+        let config = read_server_config(self.backend).await?;
+        let table = read_clients_table(self.backend).await?;
         Ok(super::types::merge_users(&config, &table))
     }
 
@@ -59,7 +61,7 @@ impl<'a> XrayApiClient<'a> {
         let uuid = Uuid::new_v4().to_string();
 
         // 1. Persist to server.json on disk first
-        let mut config = read_server_config(self.session).await?;
+        let mut config = read_server_config(self.backend).await?;
 
         // Check for duplicate email in existing clients
         if config.has_client_email(&email) {
@@ -75,7 +77,7 @@ impl<'a> XrayApiClient<'a> {
         self.write_server_config(&config).await?;
 
         // 2. Persist to clientsTable
-        let mut table = read_clients_table(self.session).await?;
+        let mut table = read_clients_table(self.backend).await?;
         table.add(uuid.clone(), name.to_string());
         self.write_clients_table(&table).await?;
 
@@ -94,8 +96,8 @@ impl<'a> XrayApiClient<'a> {
     /// a user appearing deleted in the UI while still having live access.
     pub async fn remove_user(&self, uuid: &str) -> Result<()> {
         // Find the user's email first
-        let config = read_server_config(self.session).await?;
-        let table = read_clients_table(self.session).await?;
+        let config = read_server_config(self.backend).await?;
+        let table = read_clients_table(self.backend).await?;
 
         let email = config
             .clients()
@@ -126,8 +128,8 @@ impl<'a> XrayApiClient<'a> {
         let uplink_cmd = build_stats_cmd(email, "uplink")?;
         let downlink_cmd = build_stats_cmd(email, "downlink")?;
 
-        let up_result = self.session.exec_in_container(&uplink_cmd).await?;
-        let down_result = self.session.exec_in_container(&downlink_cmd).await?;
+        let up_result = self.backend.exec_in_container(&uplink_cmd).await?;
+        let down_result = self.backend.exec_in_container(&downlink_cmd).await?;
 
         let uplink = parse_stat_value(&up_result.stdout).unwrap_or(0);
         let downlink = parse_stat_value(&down_result.stdout).unwrap_or(0);
@@ -138,27 +140,27 @@ impl<'a> XrayApiClient<'a> {
     /// Get online connection count for a user.
     pub async fn get_online_count(&self, email: &str) -> Result<u32> {
         let cmd = build_online_cmd(email)?;
-        let result = self.session.exec_in_container(&cmd).await?;
+        let result = self.backend.exec_in_container(&cmd).await?;
         Ok(parse_online_count(&result.stdout).unwrap_or(0))
     }
 
     /// Get list of online IPs for a user.
     pub async fn get_online_ips(&self, email: &str) -> Result<Vec<String>> {
         let cmd = build_online_ip_list_cmd(email)?;
-        let result = self.session.exec_in_container(&cmd).await?;
+        let result = self.backend.exec_in_container(&cmd).await?;
         Ok(parse_online_ip_list(&result.stdout))
     }
 
     /// Get server info (version, total traffic).
     pub async fn get_server_info(&self) -> Result<ServerInfo> {
-        let version_result = self.session.exec_in_container("xray version").await?;
+        let version_result = self.backend.exec_in_container("xray version").await?;
         let version = parse_version(&version_result.stdout);
 
         let up_cmd = build_inbound_stats_cmd(VLESS_INBOUND_TAG, "uplink")?;
         let down_cmd = build_inbound_stats_cmd(VLESS_INBOUND_TAG, "downlink")?;
 
-        let up_result = self.session.exec_in_container(&up_cmd).await?;
-        let down_result = self.session.exec_in_container(&down_cmd).await?;
+        let up_result = self.backend.exec_in_container(&up_cmd).await?;
+        let down_result = self.backend.exec_in_container(&down_cmd).await?;
 
         Ok(ServerInfo {
             version,
@@ -176,7 +178,7 @@ impl<'a> XrayApiClient<'a> {
             "sh -c 'echo {} | base64 -d > /tmp/_adu.json && xray api adu -s {} /tmp/_adu.json; rc=$?; rm -f /tmp/_adu.json; exit $rc'",
             b64, API_ADDR
         );
-        let result = self.session.exec_in_container(&cmd).await?;
+        let result = self.backend.exec_in_container(&cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
                 "adu failed: {}",
@@ -188,7 +190,7 @@ impl<'a> XrayApiClient<'a> {
 
     async fn exec_api_rmu(&self, email: &str) -> Result<()> {
         let cmd = build_rmu_cmd(email)?;
-        let result = self.session.exec_in_container(&cmd).await?;
+        let result = self.backend.exec_in_container(&cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
                 "rmu failed: {}",
@@ -207,7 +209,7 @@ impl<'a> XrayApiClient<'a> {
             "sh -c 'echo {} | base64 -d > {} && mv {} {}'",
             b64, tmp, tmp, SERVER_CONFIG_PATH
         );
-        let result = self.session.exec_in_container(&cmd).await?;
+        let result = self.backend.exec_in_container(&cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
                 "failed to write server config: {}",
@@ -226,7 +228,7 @@ impl<'a> XrayApiClient<'a> {
             "sh -c 'echo {} | base64 -d > {} && mv {} {}'",
             b64, tmp, tmp, CLIENTS_TABLE_PATH
         );
-        let result = self.session.exec_in_container(&cmd).await?;
+        let result = self.backend.exec_in_container(&cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
                 "failed to write clients table: {}",
@@ -418,7 +420,11 @@ pub fn parse_version(output: &str) -> String {
 pub fn parse_online_count(output: &str) -> Option<u32> {
     // Try JSON parsing first
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(output) {
-        if let Some(val) = v.get("stat").and_then(|s| s.get("value")).and_then(|v| v.as_i64()) {
+        if let Some(val) = v
+            .get("stat")
+            .and_then(|s| s.get("value"))
+            .and_then(|v| v.as_i64())
+        {
             return Some(val.max(0) as u32);
         }
     }
@@ -498,10 +504,7 @@ mod tests {
     #[test]
     fn test_build_rmu_cmd() {
         let cmd = build_rmu_cmd("alice@vpn").unwrap();
-        assert_eq!(
-            cmd,
-            "xray api rmu -s 127.0.0.1:8080 -email 'alice@vpn'"
-        );
+        assert_eq!(cmd, "xray api rmu -s 127.0.0.1:8080 -email 'alice@vpn'");
     }
 
     #[test]

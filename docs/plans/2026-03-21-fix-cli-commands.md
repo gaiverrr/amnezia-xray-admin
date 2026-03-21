@@ -112,7 +112,7 @@ Three-phase plan:
 ### Phase 3: Backend abstraction
 
 ### Task 9: Extract XrayBackend trait
-- [ ] create `src/backend_trait.rs` with `XrayBackend` trait:
+- [x] create `src/backend_trait.rs` with `XrayBackend` trait:
   ```rust
   #[async_trait]
   pub trait XrayBackend: Send + Sync {
@@ -122,11 +122,11 @@ Three-phase plan:
       fn hostname(&self) -> &str;
   }
   ```
-- [ ] implement `SshBackend` wrapping existing `SshSession`
-- [ ] refactor `XrayApiClient` to accept `&dyn XrayBackend` instead of `&SshSession`
-- [ ] refactor `read_server_config`, `read_clients_table`, `ensure_api_enabled` to use trait
-- [ ] ensure all existing tests pass with refactored code
-- [ ] run tests — must pass before next task
+- [x] implement `SshBackend` wrapping existing `SshSession`
+- [x] refactor `XrayApiClient` to accept `&dyn XrayBackend` instead of `&SshSession`
+- [x] refactor `read_server_config`, `read_clients_table`, `ensure_api_enabled` to use trait
+- [x] ensure all existing tests pass with refactored code
+- [x] run tests — must pass before next task
 
 ### Task 10: Implement LocalBackend (docker exec without SSH)
 - [ ] create `LocalBackend` struct that runs `docker exec` via `tokio::process::Command`

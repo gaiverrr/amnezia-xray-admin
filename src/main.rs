@@ -1,5 +1,6 @@
 mod app;
 mod backend;
+mod backend_trait;
 mod config;
 mod error;
 mod ssh;
@@ -105,27 +106,30 @@ fn main() {
 }
 
 async fn cli_check_server(config: &Config) -> error::Result<()> {
-    let (hostname, port, user, key_path) = backend::resolve_connection_info(config)?;
-    let addr = if hostname.contains(':') {
-        format!("[{}]:{}", hostname, port)
-    } else {
-        format!("{}:{}", hostname, port)
-    };
+    let (_, port, user, _) = backend::resolve_connection_info(config)?;
+    eprintln!(
+        "Connecting to {}@{}:{}...",
+        user,
+        config
+            .ssh_host
+            .as_deref()
+            .or(config.host.as_deref())
+            .unwrap_or("?"),
+        port
+    );
 
-    eprintln!("Connecting to {}@{}...", user, addr);
-    let session =
-        ssh::SshSession::connect(&addr, &user, key_path.as_deref(), &config.container).await?;
+    let backend = backend::connect_backend(config).await?;
 
     // Ensure API is enabled (idempotent — no restart if already configured)
     eprintln!("Checking API configuration...");
-    let modified = xray::config::ensure_api_enabled(&session, &config.container).await?;
+    let modified = xray::config::ensure_api_enabled(&backend).await?;
     if modified {
         eprintln!("API was not configured — enabled and container restarted.");
     } else {
         eprintln!("API already configured.");
     }
 
-    let client = xray::client::XrayApiClient::new(&session);
+    let client = xray::client::XrayApiClient::new(&backend);
 
     let users = client.list_users().await?;
     let server_info = client.get_server_info().await?;
@@ -136,53 +140,47 @@ async fn cli_check_server(config: &Config) -> error::Result<()> {
         server_info.version
     );
 
-    let _ = session.close().await;
+    let _ = backend.close().await;
     Ok(())
 }
 
 async fn cli_user_url(config: &Config, name: &str) -> error::Result<()> {
-    let session = backend::connect(config).await?;
-    let client = xray::client::XrayApiClient::new(&session);
+    let backend = backend::connect_backend(config).await?;
+    let client = xray::client::XrayApiClient::new(&backend);
     let users = client.list_users().await?;
 
     let user = users.iter().find(|u| u.name == name);
     let user = match user {
         Some(u) => u,
         None => {
-            let _ = session.close().await;
-            return Err(error::AppError::Xray(format!(
-                "user '{}' not found",
-                name
-            )));
+            let _ = backend.close().await;
+            return Err(error::AppError::Xray(format!("user '{}' not found", name)));
         }
     };
 
-    let vless_url = backend::build_vless_url(&session, config, &user.uuid, &user.name).await?;
-    let _ = session.close().await;
+    let vless_url = backend::build_vless_url(&backend, &user.uuid, &user.name).await?;
+    let _ = backend.close().await;
 
     println!("{}", vless_url);
     Ok(())
 }
 
 async fn cli_user_qr(config: &Config, name: &str) -> error::Result<()> {
-    let session = backend::connect(config).await?;
-    let client = xray::client::XrayApiClient::new(&session);
+    let backend = backend::connect_backend(config).await?;
+    let client = xray::client::XrayApiClient::new(&backend);
     let users = client.list_users().await?;
 
     let user = users.iter().find(|u| u.name == name);
     let user = match user {
         Some(u) => u,
         None => {
-            let _ = session.close().await;
-            return Err(error::AppError::Xray(format!(
-                "user '{}' not found",
-                name
-            )));
+            let _ = backend.close().await;
+            return Err(error::AppError::Xray(format!("user '{}' not found", name)));
         }
     };
 
-    let vless_url = backend::build_vless_url(&session, config, &user.uuid, &user.name).await?;
-    let _ = session.close().await;
+    let vless_url = backend::build_vless_url(&backend, &user.uuid, &user.name).await?;
+    let _ = backend.close().await;
 
     match ui::qr::render_qr_to_lines(&vless_url) {
         Ok(lines) => {
@@ -194,7 +192,10 @@ async fn cli_user_qr(config: &Config, name: &str) -> error::Result<()> {
             println!("{}", vless_url);
         }
         Err(e) => {
-            return Err(error::AppError::Xray(format!("QR generation failed: {}", e)));
+            return Err(error::AppError::Xray(format!(
+                "QR generation failed: {}",
+                e
+            )));
         }
     }
 
@@ -202,13 +203,13 @@ async fn cli_user_qr(config: &Config, name: &str) -> error::Result<()> {
 }
 
 async fn cli_online_status(config: &Config) -> error::Result<()> {
-    let session = backend::connect(config).await?;
-    let client = xray::client::XrayApiClient::new(&session);
+    let backend = backend::connect_backend(config).await?;
+    let client = xray::client::XrayApiClient::new(&backend);
     let users = client.list_users().await?;
 
     if users.is_empty() {
         println!("No users found.");
-        let _ = session.close().await;
+        let _ = backend.close().await;
         return Ok(());
     }
 
@@ -229,13 +230,10 @@ async fn cli_online_status(config: &Config) -> error::Result<()> {
         rows.push((name, count, ips));
     }
 
-    let _ = session.close().await;
+    let _ = backend.close().await;
 
     // Print table
-    println!(
-        "{:<30} {:<8} IPs",
-        "NAME", "ONLINE"
-    );
+    println!("{:<30} {:<8} IPs", "NAME", "ONLINE");
     println!("{}", "-".repeat(60));
 
     for (name, count, ips) in &rows {
@@ -256,8 +254,8 @@ async fn cli_online_status(config: &Config) -> error::Result<()> {
 }
 
 async fn cli_server_info(config: &Config) -> error::Result<()> {
-    let session = backend::connect(config).await?;
-    let client = xray::client::XrayApiClient::new(&session);
+    let backend = backend::connect_backend(config).await?;
+    let client = xray::client::XrayApiClient::new(&backend);
 
     let server_info = client.get_server_info().await?;
     let users = client.list_users().await?;
@@ -267,7 +265,7 @@ async fn cli_server_info(config: &Config) -> error::Result<()> {
         "unknown"
     };
 
-    let _ = session.close().await;
+    let _ = backend.close().await;
 
     println!("Xray version:  v{}", server_info.version);
     println!("API status:    {}", api_status);
@@ -285,17 +283,20 @@ async fn cli_server_info(config: &Config) -> error::Result<()> {
 }
 
 async fn cli_list_users(config: &Config) -> error::Result<()> {
-    let (hostname, port, user, key_path) = backend::resolve_connection_info(config)?;
-    let addr = if hostname.contains(':') {
-        format!("[{}]:{}", hostname, port)
-    } else {
-        format!("{}:{}", hostname, port)
-    };
+    let (_, port, user, _) = backend::resolve_connection_info(config)?;
+    eprintln!(
+        "Connecting to {}@{}:{}...",
+        user,
+        config
+            .ssh_host
+            .as_deref()
+            .or(config.host.as_deref())
+            .unwrap_or("?"),
+        port
+    );
 
-    eprintln!("Connecting to {}@{}...", user, addr);
-    let session = ssh::SshSession::connect(&addr, &user, key_path.as_deref(), &config.container).await?;
-
-    let client = xray::client::XrayApiClient::new(&session);
+    let backend = backend::connect_backend(config).await?;
+    let client = xray::client::XrayApiClient::new(&backend);
     let users = client.list_users().await?;
 
     // Fetch stats for each user
@@ -309,6 +310,8 @@ async fn cli_list_users(config: &Config) -> error::Result<()> {
         }
         users_with_stats.push(user);
     }
+
+    let _ = backend.close().await;
 
     if users_with_stats.is_empty() {
         println!("No users found.");
