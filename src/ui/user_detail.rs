@@ -35,6 +35,10 @@ pub struct UserDetailState {
     pub delete_confirmed: bool,
     /// Whether clipboard copy was attempted
     pub clipboard_copied: bool,
+    /// Cached vless:// URL (populated after first generation)
+    pub cached_vless_url: Option<String>,
+    /// Error message from fetching online IPs (None = no error or not yet fetched)
+    pub online_ips_error: Option<String>,
 }
 
 impl Default for UserDetailState {
@@ -46,6 +50,8 @@ impl Default for UserDetailState {
             delete_input: String::new(),
             delete_confirmed: false,
             clipboard_copied: false,
+            cached_vless_url: None,
+            online_ips_error: None,
         }
     }
 }
@@ -55,20 +61,24 @@ impl UserDetailState {
     pub fn open(&mut self, user: XrayUser) {
         self.user = Some(user);
         self.online_ips.clear();
+        self.online_ips_error = None;
         self.mode = DetailMode::View;
         self.delete_input.clear();
         self.delete_confirmed = false;
         self.clipboard_copied = false;
+        self.cached_vless_url = None;
     }
 
     /// Reset state when leaving detail view
     pub fn close(&mut self) {
         self.user = None;
         self.online_ips.clear();
+        self.online_ips_error = None;
         self.mode = DetailMode::View;
         self.delete_input.clear();
         self.delete_confirmed = false;
         self.clipboard_copied = false;
+        self.cached_vless_url = None;
     }
 
     /// Handle key input. Returns true if the event was consumed.
@@ -196,6 +206,7 @@ pub fn draw(state: &UserDetailState, frame: &mut ratatui::Frame, area: Rect) {
         DetailMode::View => draw_view(
             user,
             &state.online_ips,
+            state.online_ips_error.as_deref(),
             state.clipboard_copied,
             frame,
             inner,
@@ -209,6 +220,7 @@ pub fn draw(state: &UserDetailState, frame: &mut ratatui::Frame, area: Rect) {
 fn draw_view(
     user: &XrayUser,
     online_ips: &[String],
+    online_ips_error: Option<&str>,
     _clipboard_copied: bool,
     frame: &mut ratatui::Frame,
     area: Rect,
@@ -318,7 +330,12 @@ fn draw_view(
         .split(remaining);
 
     let mut ip_lines: Vec<Line> = Vec::new();
-    if !online_ips.is_empty() {
+    if let Some(err) = online_ips_error {
+        ip_lines.push(Line::from(Span::styled(
+            format!("    IP fetch failed: {}", err),
+            theme::alert_style(),
+        )));
+    } else if !online_ips.is_empty() {
         ip_lines.push(Line::from(Span::styled(
             "    Connected IPs:",
             theme::muted_style(),

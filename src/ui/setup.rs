@@ -239,6 +239,8 @@ impl SetupState {
                         return true;
                     }
                     value.push(c);
+                    // Invalidate any stale connection test result when form is edited
+                    self.test_result = TestResult::None;
                     true
                 } else {
                     false
@@ -247,6 +249,8 @@ impl SetupState {
             KeyCode::Backspace => {
                 if let Some(value) = self.focused_value_mut() {
                     value.pop();
+                    // Invalidate any stale connection test result when form is edited
+                    self.test_result = TestResult::None;
                     true
                 } else {
                     false
@@ -804,5 +808,32 @@ mod tests {
         state.container.clear();
         state.handle_key(make_key(KeyCode::Char('x')));
         assert_eq!(state.container, "x");
+    }
+
+    #[test]
+    fn test_typing_clears_test_result() {
+        let mut state = SetupState::default();
+        state.test_result = TestResult::Success("Connected!".to_string());
+        // Typing in a field should clear stale test result
+        state.handle_key(make_key(KeyCode::Char('a')));
+        assert!(matches!(state.test_result, TestResult::None));
+    }
+
+    #[test]
+    fn test_backspace_clears_test_result() {
+        let mut state = SetupState::default();
+        state.ssh_host = "vps".to_string();
+        state.test_result = TestResult::Success("Connected!".to_string());
+        state.handle_key(make_key(KeyCode::Backspace));
+        assert!(matches!(state.test_result, TestResult::None));
+    }
+
+    #[test]
+    fn test_navigation_preserves_test_result() {
+        let mut state = SetupState::default();
+        state.test_result = TestResult::Success("Connected!".to_string());
+        // Tab navigation should NOT clear test result
+        state.handle_key(make_key(KeyCode::Tab));
+        assert!(matches!(state.test_result, TestResult::Success(_)));
     }
 }

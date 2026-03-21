@@ -177,7 +177,11 @@ pub async fn upload_and_restart(
 
     // Use base64 encoding to safely transfer JSON over shell
     let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
-    let write_cmd = format!("sh -c 'echo {} | base64 -d > {}'", b64, SERVER_CONFIG_PATH);
+    let tmp = format!("{}.tmp", SERVER_CONFIG_PATH);
+    let write_cmd = format!(
+        "sh -c 'echo {} | base64 -d > {} && mv {} {}'",
+        b64, tmp, tmp, SERVER_CONFIG_PATH
+    );
     let result = session.exec_command(&write_cmd).await?;
     if !result.success() {
         return Err(AppError::Xray(format!(

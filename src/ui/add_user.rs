@@ -28,6 +28,8 @@ pub struct AddUserState {
     pub name: String,
     pub result: AddUserResult,
     pub confirmed: bool,
+    /// Cached vless:// URL after successful add
+    pub cached_vless_url: Option<String>,
 }
 
 impl Default for AddUserState {
@@ -36,6 +38,7 @@ impl Default for AddUserState {
             name: String::new(),
             result: AddUserResult::None,
             confirmed: false,
+            cached_vless_url: None,
         }
     }
 }
@@ -46,6 +49,7 @@ impl AddUserState {
         self.name.clear();
         self.result = AddUserResult::None;
         self.confirmed = false;
+        self.cached_vless_url = None;
     }
 
     /// Handle a key event, returns true if the event was consumed

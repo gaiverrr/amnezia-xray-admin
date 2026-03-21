@@ -60,6 +60,11 @@ impl<'a> XrayApiClient<'a> {
     }
 
     /// Add a new user with the given name. Returns the generated UUID.
+    ///
+    /// Persists to disk first, then updates the running Xray instance.
+    /// If the runtime API call fails, the user is on disk and will appear
+    /// after the next container restart — this ordering avoids the worse
+    /// failure mode of a user existing in runtime but missing from disk.
     pub async fn add_user(&self, name: &str) -> Result<String> {
         // Validate name before any mutations to avoid partial failures
         let email = XrayUser::email_from_name(name);
@@ -67,30 +72,35 @@ impl<'a> XrayApiClient<'a> {
 
         let uuid = Uuid::new_v4().to_string();
 
-        // 1. Call xray api adu to add user to running instance
-        let user_json = build_adu_json(&uuid, &email, VLESS_INBOUND_TAG);
-        self.exec_api_adu(&user_json).await?;
-
-        // 2. Update server.json on disk
+        // 1. Persist to server.json on disk first
         let mut config = read_server_config(self.session).await?;
         let client = ServerJsonClient {
             id: uuid.clone(),
             flow: "xtls-rprx-vision".to_string(),
-            email: Some(email),
+            email: Some(email.clone()),
             level: Some(0),
         };
         config.add_client(&client)?;
         self.write_server_config(&config).await?;
 
-        // 3. Update clientsTable
+        // 2. Persist to clientsTable
         let mut table = read_clients_table(self.session).await?;
         table.add(uuid.clone(), name.to_string());
         self.write_clients_table(&table).await?;
+
+        // 3. Add user to running Xray instance via API
+        let user_json = build_adu_json(&uuid, &email, VLESS_INBOUND_TAG);
+        self.exec_api_adu(&user_json).await?;
 
         Ok(uuid)
     }
 
     /// Remove a user by UUID.
+    ///
+    /// Revokes live access first via the API, then removes from disk.
+    /// This ordering ensures that if the disk write fails, the user's
+    /// access is already revoked — avoiding the worse failure mode of
+    /// a user appearing deleted in the UI while still having live access.
     pub async fn remove_user(&self, uuid: &str) -> Result<()> {
         // Find the user's email first
         let config = read_server_config(self.session).await?;
@@ -104,10 +114,10 @@ impl<'a> XrayApiClient<'a> {
             .or_else(|| table.name_for_uuid(uuid).map(XrayUser::email_from_name))
             .ok_or_else(|| AppError::Xray(format!("user {} not found", uuid)))?;
 
-        // 1. Call xray api rmu to remove from running instance
+        // 1. Remove from running Xray instance via API first (revoke access)
         self.exec_api_rmu(&email).await?;
 
-        // 2. Update server.json
+        // 2. Update server.json on disk
         let mut config = config;
         config.remove_client(uuid)?;
         self.write_server_config(&config).await?;
@@ -200,7 +210,12 @@ impl<'a> XrayApiClient<'a> {
     async fn write_server_config(&self, config: &ServerConfig) -> Result<()> {
         let json = config.to_json();
         let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
-        let cmd = format!("sh -c 'echo {} | base64 -d > {}'", b64, SERVER_CONFIG_PATH);
+        // Atomic write: decode to temp file, then mv to avoid concurrent readers seeing truncated JSON
+        let tmp = format!("{}.tmp", SERVER_CONFIG_PATH);
+        let cmd = format!(
+            "sh -c 'echo {} | base64 -d > {} && mv {} {}'",
+            b64, tmp, tmp, SERVER_CONFIG_PATH
+        );
         let result = self.session.exec_command(&cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
@@ -214,7 +229,12 @@ impl<'a> XrayApiClient<'a> {
     async fn write_clients_table(&self, table: &ClientsTable) -> Result<()> {
         let json = table.to_json();
         let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
-        let cmd = format!("sh -c 'echo {} | base64 -d > {}'", b64, CLIENTS_TABLE_PATH);
+        // Atomic write: decode to temp file, then mv to avoid concurrent readers seeing truncated JSON
+        let tmp = format!("{}.tmp", CLIENTS_TABLE_PATH);
+        let cmd = format!(
+            "sh -c 'echo {} | base64 -d > {} && mv {} {}'",
+            b64, tmp, tmp, CLIENTS_TABLE_PATH
+        );
         let result = self.session.exec_command(&cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(

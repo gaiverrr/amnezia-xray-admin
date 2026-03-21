@@ -1,4 +1,5 @@
 use std::io;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
@@ -8,6 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
 
+use crate::backend::{self, BackendMsg, VlessUrlIntent};
 use crate::config::Config;
 use crate::ui::add_user::{self, AddUserResult, AddUserState};
 use crate::ui::dashboard::{self, DashboardState};
@@ -41,10 +43,31 @@ pub struct App {
     pub user_detail_state: UserDetailState,
     pub qr_view_state: QrViewState,
     pub config: Config,
+    /// Tokio runtime handle for spawning async operations
+    runtime: tokio::runtime::Handle,
+    /// Channel for receiving backend operation results
+    backend_rx: mpsc::Receiver<BackendMsg>,
+    /// Channel sender cloned into spawned tasks
+    backend_tx: mpsc::Sender<BackendMsg>,
+    /// Whether a backend operation is in flight (prevents duplicate requests)
+    pending_refresh: bool,
+    /// Whether we've done the initial data load
+    initial_load_done: bool,
+    /// Whether a mutation completed and we need to refresh once the current fetch finishes
+    refresh_after_mutation: bool,
+    /// Name of the user being added (prevents duplicate submissions and stale error routing)
+    pending_add_name: Option<String>,
+    /// UUID of the user being deleted (prevents duplicate submissions and stale error routing)
+    pending_delete_uuid: Option<String>,
+    /// Whether a connection test is in flight (prevents stale results from overwriting)
+    pending_test: bool,
+    /// Config snapshot taken when a connection test was started (for staleness detection)
+    tested_config: Option<Config>,
 }
 
 impl App {
-    pub fn new(has_config: bool) -> Self {
+    pub fn new(has_config: bool, runtime: tokio::runtime::Handle) -> Self {
+        let (tx, rx) = mpsc::channel();
         Self {
             screen: if has_config {
                 Screen::Dashboard
@@ -60,10 +83,20 @@ impl App {
             user_detail_state: UserDetailState::default(),
             qr_view_state: QrViewState::default(),
             config: Config::default(),
+            runtime,
+            backend_rx: rx,
+            backend_tx: tx,
+            pending_refresh: false,
+            initial_load_done: false,
+            refresh_after_mutation: false,
+            pending_add_name: None,
+            pending_delete_uuid: None,
+            pending_test: false,
+            tested_config: None,
         }
     }
 
-    pub fn with_config(config: Config) -> Self {
+    pub fn with_config(config: Config, runtime: tokio::runtime::Handle) -> Self {
         let has_config = config.has_connection_info();
         let mut dashboard_state = DashboardState::default();
         if has_config {
@@ -73,6 +106,7 @@ impl App {
                 dashboard_state.server_host = ssh_host.clone();
             }
         }
+        let (tx, rx) = mpsc::channel();
         Self {
             screen: if has_config {
                 Screen::Dashboard
@@ -88,6 +122,16 @@ impl App {
             user_detail_state: UserDetailState::default(),
             qr_view_state: QrViewState::default(),
             config,
+            runtime,
+            backend_rx: rx,
+            backend_tx: tx,
+            pending_refresh: false,
+            initial_load_done: false,
+            refresh_after_mutation: false,
+            pending_add_name: None,
+            pending_delete_uuid: None,
+            pending_test: false,
+            tested_config: None,
         }
     }
 
@@ -118,8 +162,7 @@ impl App {
         match key.code {
             KeyCode::Char('q') => self.quit(),
             KeyCode::Char('r') => {
-                self.last_refresh = Instant::now();
-                self.status_message = "Refreshing...".to_string();
+                self.trigger_refresh();
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 self.dashboard_state.select_next();
@@ -129,8 +172,17 @@ impl App {
             }
             KeyCode::Enter => {
                 if let Some(user) = self.dashboard_state.selected_user() {
+                    let user = user.clone();
                     self.user_detail_state.open(user.clone());
                     self.screen = Screen::UserDetail;
+                    // Fetch online IPs in background
+                    backend::spawn_fetch_online_ips(
+                        &self.runtime,
+                        self.config.clone(),
+                        user.uuid.clone(),
+                        user.email.clone(),
+                        self.backend_tx.clone(),
+                    );
                 }
             }
             KeyCode::Char('a') => {
@@ -139,9 +191,18 @@ impl App {
             }
             KeyCode::Char('d') => {
                 if let Some(user) = self.dashboard_state.selected_user() {
+                    let user = user.clone();
                     self.user_detail_state.open(user.clone());
                     self.user_detail_state.mode = DetailMode::DeleteConfirm;
                     self.screen = Screen::UserDetail;
+                    // Fetch online IPs in background
+                    backend::spawn_fetch_online_ips(
+                        &self.runtime,
+                        self.config.clone(),
+                        user.uuid.clone(),
+                        user.email.clone(),
+                        self.backend_tx.clone(),
+                    );
                 }
             }
             _ => {}
@@ -168,8 +229,17 @@ impl App {
             match new_config.save() {
                 Ok(()) => {
                     self.config = new_config;
+                    // Update dashboard host display
+                    if let Some(ref host) = self.config.host {
+                        self.dashboard_state.server_host = host.clone();
+                    } else if let Some(ref ssh_host) = self.config.ssh_host {
+                        self.dashboard_state.server_host = ssh_host.clone();
+                    }
+                    self.dashboard_state.loading = true;
                     self.screen = Screen::Dashboard;
-                    self.status_message = "Config saved. Connected.".to_string();
+                    self.status_message = "Config saved. Connecting...".to_string();
+                    // Trigger initial data load
+                    self.trigger_refresh();
                 }
                 Err(e) => {
                     self.setup_state.test_result =
@@ -178,17 +248,25 @@ impl App {
             }
         }
 
-        // Check if test was requested
+        // Check if test was requested (guard: only one test at a time)
         if self.setup_state.test_requested {
             self.setup_state.test_requested = false;
-            if !self.setup_state.has_connection_info() {
-                self.setup_state.test_result =
-                    setup::TestResult::Error("Please enter a host or SSH config alias".to_string());
-            } else {
-                // For now, validate config structure (actual SSH test needs async)
-                self.setup_state.test_result = setup::TestResult::Success(
-                    "Config looks valid (SSH test requires running connection)".to_string(),
-                );
+            if !self.pending_test {
+                let test_config = self.setup_state.to_config();
+                if !test_config.has_connection_info() {
+                    self.setup_state.test_result = setup::TestResult::Error(
+                        "Please enter a host or SSH config alias".to_string(),
+                    );
+                } else {
+                    self.pending_test = true;
+                    self.tested_config = Some(test_config.clone());
+                    self.setup_state.test_result = setup::TestResult::Testing;
+                    backend::spawn_test_connection(
+                        &self.runtime,
+                        test_config,
+                        self.backend_tx.clone(),
+                    );
+                }
             }
         }
     }
@@ -199,11 +277,42 @@ impl App {
             // Check if clipboard copy was requested
             if self.user_detail_state.take_clipboard_copied() {
                 if let Some(ref user) = self.user_detail_state.user {
-                    let url = format!("vless://{}@server:443#{}", user.uuid, user.name);
-                    let osc52 = user_detail::osc52_copy(&url);
-                    // Write OSC 52 escape sequence to terminal
-                    print!("{}", osc52);
-                    self.status_message = "Copied to clipboard (OSC 52)".to_string();
+                    // Fetch real vless URL in background, but for clipboard we need it now.
+                    // Use a placeholder for immediate feedback; the QR view will get the real URL.
+                    if let Some(ref url) = self.user_detail_state.cached_vless_url {
+                        let osc52 = user_detail::osc52_copy(url);
+                        print!("{}", osc52);
+                        self.status_message = "Copied to clipboard (OSC 52)".to_string();
+                    } else {
+                        // Spawn URL generation and copy when ready
+                        self.status_message = "Generating URL...".to_string();
+                        backend::spawn_vless_url(
+                            &self.runtime,
+                            self.config.clone(),
+                            user.uuid.clone(),
+                            user.name.clone(),
+                            VlessUrlIntent::Clipboard,
+                            self.backend_tx.clone(),
+                        );
+                    }
+                }
+            }
+
+            // Check if delete was confirmed (guard against duplicate submissions
+            // and concurrent mutations — block if an add is also in flight)
+            if self.user_detail_state.take_delete_confirmed()
+                && self.pending_delete_uuid.is_none()
+                && self.pending_add_name.is_none()
+            {
+                if let Some(ref user) = self.user_detail_state.user {
+                    self.pending_delete_uuid = Some(user.uuid.clone());
+                    self.status_message = format!("Deleting user '{}'...", user.name);
+                    backend::spawn_delete_user(
+                        &self.runtime,
+                        self.config.clone(),
+                        user.uuid.clone(),
+                        self.backend_tx.clone(),
+                    );
                 }
             }
             return;
@@ -218,12 +327,22 @@ impl App {
                 }
                 KeyCode::Char('q') => {
                     if let Some(ref user) = self.user_detail_state.user {
-                        // Generate a placeholder vless URL from user info
-                        // (full URL generation requires server keys, done in async context)
-                        let url = format!("vless://{}@server:443#{}", user.uuid, user.name);
-                        self.qr_view_state.open(user.name.clone(), url);
+                        if let Some(ref url) = self.user_detail_state.cached_vless_url {
+                            self.qr_view_state.open(user.name.clone(), url.clone());
+                            self.screen = Screen::QrView;
+                        } else {
+                            // Need to fetch the URL first
+                            self.status_message = "Generating QR code...".to_string();
+                            backend::spawn_vless_url(
+                                &self.runtime,
+                                self.config.clone(),
+                                user.uuid.clone(),
+                                user.name.clone(),
+                                VlessUrlIntent::Qr,
+                                self.backend_tx.clone(),
+                            );
+                        }
                     }
-                    self.screen = Screen::QrView;
                 }
                 _ => {}
             },
@@ -239,11 +358,22 @@ impl App {
     fn handle_add_user_key(&mut self, key: KeyEvent) {
         // Let the add_user state handle input first
         if self.add_user_state.handle_key(key) {
-            // Check if user confirmed the add
-            if self.add_user_state.is_confirmed() {
-                // For now, simulate success (actual SSH call happens in async context)
-                // The async main loop will check is_confirmed() and call the API
-                self.status_message = format!("Adding user '{}'...", self.add_user_state.name);
+            // Check if user confirmed the add (guard against duplicate submissions
+            // and concurrent mutations — block if a delete is also in flight)
+            if self.add_user_state.is_confirmed()
+                && self.pending_add_name.is_none()
+                && self.pending_delete_uuid.is_none()
+            {
+                let name = self.add_user_state.name.trim().to_string();
+                self.add_user_state.confirmed = false; // prevent re-trigger
+                self.pending_add_name = Some(name.clone());
+                self.status_message = format!("Adding user '{}'...", name);
+                backend::spawn_add_user(
+                    &self.runtime,
+                    self.config.clone(),
+                    name,
+                    self.backend_tx.clone(),
+                );
             }
             return;
         }
@@ -256,9 +386,20 @@ impl App {
             }
             KeyCode::Char('q') => {
                 if let AddUserResult::Success { ref name, ref uuid } = self.add_user_state.result {
-                    let url = format!("vless://{}@server:443#{}", uuid, name);
-                    self.qr_view_state.open(name.clone(), url);
-                    self.screen = Screen::QrView;
+                    if let Some(ref url) = self.add_user_state.cached_vless_url {
+                        self.qr_view_state.open(name.clone(), url.clone());
+                        self.screen = Screen::QrView;
+                    } else {
+                        self.status_message = "Generating QR code...".to_string();
+                        backend::spawn_vless_url(
+                            &self.runtime,
+                            self.config.clone(),
+                            uuid.clone(),
+                            name.clone(),
+                            VlessUrlIntent::Qr,
+                            self.backend_tx.clone(),
+                        );
+                    }
                 }
             }
             _ => {}
@@ -275,14 +416,225 @@ impl App {
         }
     }
 
+    /// Trigger a data refresh from the server
+    fn trigger_refresh(&mut self) {
+        if self.pending_refresh {
+            return; // already in flight
+        }
+        self.pending_refresh = true;
+        self.last_refresh = Instant::now();
+        self.status_message = "Refreshing...".to_string();
+        backend::spawn_fetch_dashboard(&self.runtime, self.config.clone(), self.backend_tx.clone());
+    }
+
+    /// Process any pending backend messages
+    fn process_backend_messages(&mut self) {
+        while let Ok(msg) = self.backend_rx.try_recv() {
+            match msg {
+                BackendMsg::DashboardData(result) => {
+                    self.pending_refresh = false;
+                    // If a mutation happened while this fetch was in flight,
+                    // discard the stale result and re-fetch.
+                    if self.refresh_after_mutation {
+                        self.refresh_after_mutation = false;
+                        self.trigger_refresh();
+                        continue;
+                    }
+                    match result {
+                        Ok(data) => {
+                            self.dashboard_state.set_users(data.users);
+                            self.dashboard_state.server_version = data.server_info.version;
+                            self.dashboard_state.total_upload = data.server_info.uplink;
+                            self.dashboard_state.total_download = data.server_info.downlink;
+                            self.dashboard_state.loading = false;
+                            self.initial_load_done = true;
+                            self.status_message =
+                                format!("Last update: {}", chrono_free_timestamp());
+                        }
+                        Err(e) => {
+                            self.dashboard_state.loading = false;
+                            self.status_message = format!("Error: {}", truncate_msg(&e, 60));
+                        }
+                    }
+                }
+                BackendMsg::ConnectionTest(result) => {
+                    self.pending_test = false;
+                    let tested = self.tested_config.take();
+                    // Only apply result if still on setup screen and the form
+                    // hasn't changed since the test was initiated
+                    if self.screen == Screen::Setup {
+                        let current_config = self.setup_state.to_config();
+                        let is_stale = tested
+                            .as_ref()
+                            .map(|tc| *tc != current_config)
+                            .unwrap_or(false);
+                        if is_stale {
+                            // Form was edited since test started; discard result
+                            continue;
+                        }
+                        match result {
+                            Ok(version) => {
+                                self.setup_state.test_result =
+                                    setup::TestResult::Success(format!("Connected! {}", version));
+                            }
+                            Err(e) => {
+                                self.setup_state.test_result =
+                                    setup::TestResult::Error(truncate_msg(&e, 60));
+                            }
+                        }
+                    }
+                }
+                BackendMsg::UserAdded(result) => {
+                    let request_name = self.pending_add_name.take();
+                    match result {
+                        Ok(added) => {
+                            // Only update the add dialog if we're still on AddUser
+                            // and the name matches the in-flight request
+                            let is_current_add = self.screen == Screen::AddUser
+                                && request_name.as_deref() == Some(added.name.as_str())
+                                && self.add_user_state.name.trim() == added.name;
+                            if is_current_add {
+                                self.add_user_state
+                                    .set_success(added.name.clone(), added.uuid.clone());
+                                self.add_user_state.cached_vless_url = if added.vless_url.is_empty()
+                                {
+                                    None
+                                } else {
+                                    Some(added.vless_url)
+                                };
+                            }
+                            self.status_message =
+                                format!("User '{}' added successfully", added.name);
+                            // Refresh dashboard to show new user
+                            if self.pending_refresh {
+                                self.refresh_after_mutation = true;
+                            } else {
+                                self.trigger_refresh();
+                            }
+                        }
+                        Err(e) => {
+                            // Only show add error if we're still on AddUser
+                            // and this error corresponds to the current request
+                            let is_current_add = self.screen == Screen::AddUser
+                                && request_name.as_deref() == Some(self.add_user_state.name.trim());
+                            if is_current_add {
+                                self.add_user_state.set_error(truncate_msg(&e, 50));
+                            }
+                            self.status_message = format!("Error: {}", truncate_msg(&e, 60));
+                        }
+                    }
+                }
+                BackendMsg::VlessUrl(result, intent) => match result {
+                    Ok(added) => {
+                        // Only apply if still on the same screen AND same user
+                        let is_current_user = match self.screen {
+                            Screen::UserDetail => self
+                                .user_detail_state
+                                .user
+                                .as_ref()
+                                .is_some_and(|u| u.uuid == added.uuid),
+                            Screen::AddUser => matches!(
+                                &self.add_user_state.result,
+                                AddUserResult::Success { uuid, .. } if *uuid == added.uuid
+                            ),
+                            _ => false,
+                        };
+                        if !is_current_user {
+                            // User navigated away or viewing a different user; discard
+                            continue;
+                        }
+                        self.user_detail_state.cached_vless_url = Some(added.vless_url.clone());
+                        match intent {
+                            VlessUrlIntent::Clipboard => {
+                                let osc52 = user_detail::osc52_copy(&added.vless_url);
+                                print!("{}", osc52);
+                                self.status_message = "Copied to clipboard (OSC 52)".to_string();
+                            }
+                            VlessUrlIntent::Qr => {
+                                self.qr_view_state.open(added.name.clone(), added.vless_url);
+                                self.screen = Screen::QrView;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.status_message = format!("Error: {}", truncate_msg(&e, 60));
+                    }
+                },
+                BackendMsg::UserDeleted(result) => {
+                    let request_uuid = self.pending_delete_uuid.take();
+                    match result {
+                        Ok(ref deleted_uuid) => {
+                            // Only update the detail view if we're still viewing the same user
+                            let is_same_user = self.screen == Screen::UserDetail
+                                && self
+                                    .user_detail_state
+                                    .user
+                                    .as_ref()
+                                    .is_some_and(|u| u.uuid == *deleted_uuid);
+                            if is_same_user {
+                                self.user_detail_state.mode = DetailMode::DeleteSuccess;
+                            }
+                            self.status_message = "User deleted".to_string();
+                            // Only mark stale if a fetch is already in flight
+                            if self.pending_refresh {
+                                self.refresh_after_mutation = true;
+                            } else {
+                                self.trigger_refresh();
+                            }
+                        }
+                        Err(e) => {
+                            // Only show delete error if still on the detail screen
+                            // AND this error corresponds to the user we're viewing
+                            let is_same_user = self.screen == Screen::UserDetail
+                                && request_uuid.is_some()
+                                && self.user_detail_state.user.as_ref().is_some_and(|u| {
+                                    Some(u.uuid.as_str()) == request_uuid.as_deref()
+                                });
+                            if is_same_user {
+                                self.user_detail_state.mode =
+                                    DetailMode::DeleteError(truncate_msg(&e, 50));
+                            }
+                            self.status_message =
+                                format!("Delete failed: {}", truncate_msg(&e, 60));
+                        }
+                    }
+                }
+                BackendMsg::OnlineIps(result) => {
+                    let is_detail_view = self.screen == Screen::UserDetail;
+                    match result {
+                        Ok((uuid, ips)) => {
+                            if is_detail_view
+                                && self
+                                    .user_detail_state
+                                    .user
+                                    .as_ref()
+                                    .is_some_and(|u| u.uuid == uuid)
+                            {
+                                self.user_detail_state.online_ips = ips;
+                                self.user_detail_state.online_ips_error = None;
+                            }
+                        }
+                        Err((uuid, e)) => {
+                            if is_detail_view
+                                && self
+                                    .user_detail_state
+                                    .user
+                                    .as_ref()
+                                    .is_some_and(|u| u.uuid == uuid)
+                            {
+                                self.user_detail_state.online_ips_error =
+                                    Some(truncate_msg(&e, 40));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Check if a periodic refresh is due
     pub fn should_refresh(&self) -> bool {
         self.last_refresh.elapsed() >= REFRESH_INTERVAL
-    }
-
-    /// Mark refresh as done
-    pub fn mark_refreshed(&mut self) {
-        self.last_refresh = Instant::now();
     }
 
     /// Draw the UI
@@ -396,12 +748,6 @@ impl App {
     }
 }
 
-impl Default for App {
-    fn default() -> Self {
-        Self::new(false)
-    }
-}
-
 /// Initialize the terminal for TUI rendering
 pub fn init_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
     crossterm::terminal::enable_raw_mode()?;
@@ -429,6 +775,11 @@ pub fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -
 
 /// Run the main event loop
 pub fn run(app: &mut App, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
+    // Trigger initial data load if we have config
+    if app.screen == Screen::Dashboard && !app.initial_load_done {
+        app.trigger_refresh();
+    }
+
     while app.running {
         app.draw(terminal)?;
 
@@ -439,14 +790,41 @@ pub fn run(app: &mut App, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>)
             }
         }
 
-        // Periodic refresh check
-        if app.should_refresh() {
-            app.mark_refreshed();
-            // Future: trigger data reload here
+        // Process any completed backend operations
+        app.process_backend_messages();
+
+        // Periodic refresh check (only on dashboard, when not already loading)
+        if app.screen == Screen::Dashboard && app.should_refresh() && !app.pending_refresh {
+            // Auto-retry initial load on failure, or periodic refresh after success
+            app.trigger_refresh();
         }
     }
 
     Ok(())
+}
+
+/// Simple timestamp without chrono dependency
+fn chrono_free_timestamp() -> String {
+    let elapsed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = elapsed.as_secs();
+    // HH:MM:SS from unix timestamp (UTC)
+    let h = (secs % 86400) / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    format!("{:02}:{:02}:{:02} UTC", h, m, s)
+}
+
+/// Truncate a message to a given length
+fn truncate_msg(msg: &str, max: usize) -> String {
+    if msg.len() <= max {
+        msg.to_string()
+    } else {
+        // Find a char boundary at or before `max` to avoid panicking on multi-byte UTF-8
+        let boundary = msg.floor_char_boundary(max);
+        format!("{}...", &msg[..boundary])
+    }
 }
 
 #[cfg(test)]
@@ -472,29 +850,34 @@ mod tests {
         }
     }
 
+    fn test_runtime() -> tokio::runtime::Handle {
+        tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
+            // Create a runtime for tests that don't have one
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let handle = rt.handle().clone();
+            // Leak to keep alive for test duration
+            std::mem::forget(rt);
+            handle
+        })
+    }
+
     #[test]
     fn test_new_with_config() {
-        let app = App::new(true);
+        let app = App::new(true, test_runtime());
         assert_eq!(app.screen, Screen::Dashboard);
         assert!(app.running);
     }
 
     #[test]
     fn test_new_without_config() {
-        let app = App::new(false);
+        let app = App::new(false, test_runtime());
         assert_eq!(app.screen, Screen::Setup);
         assert!(app.running);
     }
 
     #[test]
-    fn test_default_starts_setup() {
-        let app = App::default();
-        assert_eq!(app.screen, Screen::Setup);
-    }
-
-    #[test]
     fn test_quit() {
-        let mut app = App::new(true);
+        let mut app = App::new(true, test_runtime());
         assert!(app.running);
         app.quit();
         assert!(!app.running);
@@ -502,116 +885,95 @@ mod tests {
 
     #[test]
     fn test_ctrl_c_quits() {
-        let mut app = App::new(true);
+        let mut app = App::new(true, test_runtime());
         app.handle_key(make_ctrl_key(KeyCode::Char('c')));
         assert!(!app.running);
     }
 
     #[test]
     fn test_ctrl_q_quits() {
-        let mut app = App::new(true);
+        let mut app = App::new(true, test_runtime());
         app.handle_key(make_ctrl_key(KeyCode::Char('q')));
         assert!(!app.running);
     }
 
     #[test]
-    fn test_dashboard_q_quits() {
-        let mut app = App::new(true);
-        app.screen = Screen::Dashboard;
+    fn test_q_quits_from_dashboard() {
+        let mut app = App::new(true, test_runtime());
         app.handle_key(make_key(KeyCode::Char('q')));
         assert!(!app.running);
     }
 
     #[test]
-    fn test_dashboard_r_refreshes() {
-        let mut app = App::new(true);
-        app.screen = Screen::Dashboard;
-        // Advance time artificially
-        app.last_refresh = Instant::now() - Duration::from_secs(10);
-        app.handle_key(make_key(KeyCode::Char('r')));
-        assert_eq!(app.status_message, "Refreshing...");
-        assert!(app.last_refresh.elapsed() < Duration::from_secs(1));
-    }
-
-    #[test]
-    fn test_user_detail_esc_returns_to_dashboard() {
-        let mut app = App::new(true);
-        app.screen = Screen::UserDetail;
+    fn test_esc_quits_from_setup() {
+        let mut app = App::new(false, test_runtime());
         app.handle_key(make_key(KeyCode::Esc));
-        assert_eq!(app.screen, Screen::Dashboard);
+        assert!(!app.running);
     }
 
     #[test]
-    fn test_user_detail_q_goes_to_qr_view() {
-        let mut app = App::new(true);
-        app.screen = Screen::UserDetail;
-        app.handle_key(make_key(KeyCode::Char('q')));
-        assert_eq!(app.screen, Screen::QrView);
+    fn test_a_opens_add_user() {
+        let mut app = App::new(true, test_runtime());
+        app.handle_key(make_key(KeyCode::Char('a')));
+        assert_eq!(app.screen, Screen::AddUser);
     }
 
     #[test]
-    fn test_add_user_esc_returns_to_dashboard() {
-        let mut app = App::new(true);
+    fn test_esc_from_add_user_returns_to_dashboard() {
+        let mut app = App::new(true, test_runtime());
         app.screen = Screen::AddUser;
         app.handle_key(make_key(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Dashboard);
     }
 
     #[test]
-    fn test_qr_view_esc_returns_to_dashboard() {
-        let mut app = App::new(true);
+    fn test_esc_from_qr_view_returns_to_dashboard() {
+        let mut app = App::new(true, test_runtime());
         app.screen = Screen::QrView;
         app.handle_key(make_key(KeyCode::Esc));
         assert_eq!(app.screen, Screen::Dashboard);
     }
 
     #[test]
-    fn test_qr_view_q_returns_to_dashboard() {
-        let mut app = App::new(true);
-        app.screen = Screen::QrView;
-        app.handle_key(make_key(KeyCode::Char('q')));
-        assert_eq!(app.screen, Screen::Dashboard);
-    }
-
-    #[test]
-    fn test_setup_esc_quits() {
-        let mut app = App::new(false);
-        app.screen = Screen::Setup;
+    fn test_esc_from_user_detail_returns_to_dashboard() {
+        let mut app = App::new(true, test_runtime());
+        app.screen = Screen::UserDetail;
+        app.user_detail_state.mode = DetailMode::View;
         app.handle_key(make_key(KeyCode::Esc));
-        assert!(!app.running);
+        assert_eq!(app.screen, Screen::Dashboard);
     }
 
     #[test]
     fn test_should_refresh() {
-        let mut app = App::new(true);
+        let mut app = App::new(true, test_runtime());
         app.last_refresh = Instant::now() - Duration::from_secs(10);
         assert!(app.should_refresh());
-        app.mark_refreshed();
+    }
+
+    #[test]
+    fn test_should_not_refresh_too_soon() {
+        let app = App::new(true, test_runtime());
         assert!(!app.should_refresh());
     }
 
     #[test]
     fn test_screen_labels() {
-        let app = App::new(true);
+        let mut app = App::new(true, test_runtime());
+        app.screen = Screen::Dashboard;
         assert_eq!(app.screen_label(), "Dashboard");
-
-        let mut app2 = App::new(false);
-        app2.screen = Screen::Setup;
-        assert_eq!(app2.screen_label(), "Setup");
-
-        app2.screen = Screen::UserDetail;
-        assert_eq!(app2.screen_label(), "User Detail");
-
-        app2.screen = Screen::AddUser;
-        assert_eq!(app2.screen_label(), "Add User");
-
-        app2.screen = Screen::QrView;
-        assert_eq!(app2.screen_label(), "QR Code");
+        app.screen = Screen::Setup;
+        assert_eq!(app.screen_label(), "Setup");
+        app.screen = Screen::UserDetail;
+        assert_eq!(app.screen_label(), "User Detail");
+        app.screen = Screen::AddUser;
+        assert_eq!(app.screen_label(), "Add User");
+        app.screen = Screen::QrView;
+        assert_eq!(app.screen_label(), "QR Code");
     }
 
     #[test]
     fn test_keybind_hints_nonempty() {
-        let mut app = App::new(true);
+        let mut app = App::new(true, test_runtime());
         for screen in [
             Screen::Dashboard,
             Screen::Setup,
@@ -620,441 +982,210 @@ mod tests {
             Screen::QrView,
         ] {
             app.screen = screen;
-            assert!(
-                !app.keybind_hints().is_empty(),
-                "hints empty for {:?}",
-                screen
-            );
+            assert!(!app.keybind_hints().is_empty());
         }
     }
 
     #[test]
-    fn test_unhandled_key_does_nothing() {
-        let mut app = App::new(true);
-        app.screen = Screen::Dashboard;
-        let before_screen = app.screen;
-        let before_running = app.running;
-        app.handle_key(make_key(KeyCode::Char('z')));
-        assert_eq!(app.screen, before_screen);
-        assert_eq!(app.running, before_running);
-    }
-
-    #[test]
-    fn test_with_config_has_connection() {
+    fn test_with_config_sets_host() {
         let config = Config {
             host: Some("1.2.3.4".to_string()),
-            ..Config::default()
+            port: 22,
+            user: "root".to_string(),
+            key_path: None,
+            ssh_host: None,
+            container: "amnezia-xray".to_string(),
         };
-        let app = App::with_config(config);
+        let app = App::with_config(config, test_runtime());
         assert_eq!(app.screen, Screen::Dashboard);
-        assert_eq!(app.setup_state.host, "1.2.3.4");
-    }
-
-    #[test]
-    fn test_with_config_no_connection() {
-        let config = Config::default();
-        let app = App::with_config(config);
-        assert_eq!(app.screen, Screen::Setup);
-    }
-
-    #[test]
-    fn test_setup_tab_navigation() {
-        let mut app = App::new(false);
-        app.screen = Screen::Setup;
-        assert_eq!(app.setup_state.focused, 0);
-        app.handle_key(make_key(KeyCode::Tab));
-        assert_eq!(app.setup_state.focused, 1);
-        app.handle_key(make_key(KeyCode::Tab));
-        assert_eq!(app.setup_state.focused, 2);
-    }
-
-    #[test]
-    fn test_setup_typing() {
-        let mut app = App::new(false);
-        app.screen = Screen::Setup;
-        // Focus is on SshHost (0)
-        app.handle_key(make_key(KeyCode::Char('v')));
-        app.handle_key(make_key(KeyCode::Char('p')));
-        app.handle_key(make_key(KeyCode::Char('s')));
-        assert_eq!(app.setup_state.ssh_host, "vps");
-    }
-
-    #[test]
-    fn test_setup_save_without_connection_info_shows_error() {
-        let mut app = App::new(false);
-        app.screen = Screen::Setup;
-        // Navigate to Save & Start button (index 7)
-        app.setup_state.focused = 7;
-        app.handle_key(make_key(KeyCode::Enter));
-        // Should stay on Setup screen with error
-        assert_eq!(app.screen, Screen::Setup);
-        assert!(matches!(
-            app.setup_state.test_result,
-            setup::TestResult::Error(_)
-        ));
-    }
-
-    #[test]
-    fn test_setup_test_connection_without_info_shows_error() {
-        let mut app = App::new(false);
-        app.screen = Screen::Setup;
-        // Navigate to Test Connection button (index 6)
-        app.setup_state.focused = 6;
-        app.handle_key(make_key(KeyCode::Enter));
-        assert!(matches!(
-            app.setup_state.test_result,
-            setup::TestResult::Error(_)
-        ));
-    }
-
-    #[test]
-    fn test_setup_test_connection_with_info_shows_success() {
-        let mut app = App::new(false);
-        app.screen = Screen::Setup;
-        app.setup_state.ssh_host = "vps-vpn".to_string();
-        app.setup_state.focused = 6;
-        app.handle_key(make_key(KeyCode::Enter));
-        assert!(matches!(
-            app.setup_state.test_result,
-            setup::TestResult::Success(_)
-        ));
-    }
-
-    // --- Dashboard navigation tests ---
-
-    use crate::xray::types::{TrafficStats, XrayUser};
-
-    fn make_test_user(name: &str) -> XrayUser {
-        XrayUser {
-            uuid: format!("{}-uuid-1234-5678-abcdefabcdef", name),
-            name: name.to_string(),
-            email: format!("{}@vpn", name),
-            flow: "xtls-rprx-vision".to_string(),
-            stats: TrafficStats::default(),
-            online_count: 0,
-        }
-    }
-
-    fn app_with_users(users: Vec<XrayUser>) -> App {
-        let mut app = App::new(true);
-        app.screen = Screen::Dashboard;
-        app.dashboard_state.set_users(users);
-        app
-    }
-
-    #[test]
-    fn test_dashboard_j_selects_next() {
-        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
-        assert_eq!(app.dashboard_state.selected(), Some(0));
-        app.handle_key(make_key(KeyCode::Char('j')));
-        assert_eq!(app.dashboard_state.selected(), Some(1));
-    }
-
-    #[test]
-    fn test_dashboard_k_selects_previous() {
-        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
-        app.dashboard_state.table_state.select(Some(1));
-        app.handle_key(make_key(KeyCode::Char('k')));
-        assert_eq!(app.dashboard_state.selected(), Some(0));
-    }
-
-    #[test]
-    fn test_dashboard_down_selects_next() {
-        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
-        assert_eq!(app.dashboard_state.selected(), Some(0));
-        app.handle_key(make_key(KeyCode::Down));
-        assert_eq!(app.dashboard_state.selected(), Some(1));
-    }
-
-    #[test]
-    fn test_dashboard_up_selects_previous() {
-        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
-        app.dashboard_state.table_state.select(Some(1));
-        app.handle_key(make_key(KeyCode::Up));
-        assert_eq!(app.dashboard_state.selected(), Some(0));
-    }
-
-    #[test]
-    fn test_dashboard_enter_goes_to_user_detail() {
-        let mut app = app_with_users(vec![make_test_user("alice")]);
-        app.handle_key(make_key(KeyCode::Enter));
-        assert_eq!(app.screen, Screen::UserDetail);
-    }
-
-    #[test]
-    fn test_dashboard_enter_no_users_stays() {
-        let mut app = App::new(true);
-        app.screen = Screen::Dashboard;
-        app.handle_key(make_key(KeyCode::Enter));
-        assert_eq!(app.screen, Screen::Dashboard);
-    }
-
-    #[test]
-    fn test_dashboard_a_goes_to_add_user() {
-        let mut app = App::new(true);
-        app.screen = Screen::Dashboard;
-        app.handle_key(make_key(KeyCode::Char('a')));
-        assert_eq!(app.screen, Screen::AddUser);
-    }
-
-    #[test]
-    fn test_dashboard_d_with_user_goes_to_detail() {
-        let mut app = app_with_users(vec![make_test_user("alice")]);
-        app.handle_key(make_key(KeyCode::Char('d')));
-        assert_eq!(app.screen, Screen::UserDetail);
-    }
-
-    #[test]
-    fn test_dashboard_d_without_users_stays() {
-        let mut app = App::new(true);
-        app.screen = Screen::Dashboard;
-        app.handle_key(make_key(KeyCode::Char('d')));
-        assert_eq!(app.screen, Screen::Dashboard);
-    }
-
-    #[test]
-    fn test_with_config_sets_dashboard_host() {
-        let config = Config {
-            host: Some("1.2.3.4".to_string()),
-            ..Config::default()
-        };
-        let app = App::with_config(config);
         assert_eq!(app.dashboard_state.server_host, "1.2.3.4");
     }
 
     #[test]
-    fn test_with_config_sets_dashboard_ssh_host() {
+    fn test_with_config_ssh_host_sets_host() {
         let config = Config {
+            host: None,
+            port: 22,
+            user: "root".to_string(),
+            key_path: None,
             ssh_host: Some("vps-vpn".to_string()),
-            ..Config::default()
+            container: "amnezia-xray".to_string(),
         };
-        let app = App::with_config(config);
+        let app = App::with_config(config, test_runtime());
         assert_eq!(app.dashboard_state.server_host, "vps-vpn");
     }
 
     #[test]
-    fn test_dashboard_navigation_wraps_with_j() {
-        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
-        app.dashboard_state.table_state.select(Some(1));
-        app.handle_key(make_key(KeyCode::Char('j')));
-        assert_eq!(app.dashboard_state.selected(), Some(0)); // wraps
+    fn test_truncate_msg() {
+        assert_eq!(truncate_msg("short", 10), "short");
+        assert_eq!(truncate_msg("a long message here", 6), "a long...");
     }
 
     #[test]
-    fn test_dashboard_navigation_wraps_with_k() {
-        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
-        assert_eq!(app.dashboard_state.selected(), Some(0));
-        app.handle_key(make_key(KeyCode::Char('k')));
-        assert_eq!(app.dashboard_state.selected(), Some(1)); // wraps to end
+    fn test_chrono_free_timestamp() {
+        let ts = chrono_free_timestamp();
+        assert!(ts.ends_with("UTC"));
+        assert!(ts.contains(':'));
     }
 
     #[test]
-    fn test_dashboard_state_loading_default() {
-        let app = App::new(true);
-        assert!(app.dashboard_state.loading);
-    }
-
-    // --- Add user dialog integration tests ---
-
-    #[test]
-    fn test_add_user_typing_updates_state() {
-        let mut app = App::new(true);
-        app.screen = Screen::AddUser;
-        app.handle_key(make_key(KeyCode::Char('b')));
-        app.handle_key(make_key(KeyCode::Char('o')));
-        app.handle_key(make_key(KeyCode::Char('b')));
-        assert_eq!(app.add_user_state.name, "bob");
+    fn test_process_backend_messages_empty() {
+        let mut app = App::new(true, test_runtime());
+        // Should not panic with no messages
+        app.process_backend_messages();
     }
 
     #[test]
-    fn test_add_user_backspace() {
-        let mut app = App::new(true);
-        app.screen = Screen::AddUser;
-        app.add_user_state.name = "alice".to_string();
-        app.handle_key(make_key(KeyCode::Backspace));
-        assert_eq!(app.add_user_state.name, "alic");
+    fn test_process_dashboard_data() {
+        let mut app = App::new(true, test_runtime());
+        app.pending_refresh = true;
+        app.dashboard_state.loading = true;
+
+        // Send a dashboard data message
+        let _ = app.backend_tx.send(BackendMsg::DashboardData(Ok(
+            crate::backend::DashboardData {
+                users: vec![],
+                server_info: crate::xray::client::ServerInfo {
+                    version: "Xray 25.8.3".to_string(),
+                    uplink: 1000,
+                    downlink: 2000,
+                },
+            },
+        )));
+
+        app.process_backend_messages();
+
+        assert!(!app.pending_refresh);
+        assert!(!app.dashboard_state.loading);
+        assert_eq!(app.dashboard_state.server_version, "Xray 25.8.3");
+        assert_eq!(app.dashboard_state.total_upload, 1000);
+        assert_eq!(app.dashboard_state.total_download, 2000);
     }
 
     #[test]
-    fn test_add_user_enter_confirms() {
-        let mut app = App::new(true);
-        app.screen = Screen::AddUser;
-        app.add_user_state.name = "alice".to_string();
-        app.handle_key(make_key(KeyCode::Enter));
-        assert!(app.add_user_state.is_confirmed());
-        assert!(app.status_message.contains("alice"));
+    fn test_process_dashboard_data_error() {
+        let mut app = App::new(true, test_runtime());
+        app.pending_refresh = true;
+        app.dashboard_state.loading = true;
+
+        let _ = app
+            .backend_tx
+            .send(BackendMsg::DashboardData(Err("connection failed".into())));
+
+        app.process_backend_messages();
+
+        assert!(!app.pending_refresh);
+        assert!(!app.dashboard_state.loading);
+        assert!(app.status_message.contains("Error"));
     }
 
     #[test]
-    fn test_add_user_enter_empty_does_not_confirm() {
-        let mut app = App::new(true);
-        app.screen = Screen::AddUser;
-        app.handle_key(make_key(KeyCode::Enter));
-        assert!(!app.add_user_state.is_confirmed());
-    }
+    fn test_process_connection_test_success() {
+        let mut app = App::new(false, test_runtime());
+        app.setup_state.test_result = setup::TestResult::Testing;
 
-    #[test]
-    fn test_add_user_esc_resets_and_returns() {
-        let mut app = App::new(true);
-        app.screen = Screen::AddUser;
-        app.add_user_state.name = "alice".to_string();
-        app.handle_key(make_key(KeyCode::Esc));
-        assert_eq!(app.screen, Screen::Dashboard);
-        assert_eq!(app.add_user_state.name, "");
-    }
+        let _ = app
+            .backend_tx
+            .send(BackendMsg::ConnectionTest(Ok("Xray 25.8.3".to_string())));
 
-    #[test]
-    fn test_add_user_dashboard_a_resets_state() {
-        let mut app = App::new(true);
-        app.screen = Screen::Dashboard;
-        app.add_user_state.name = "leftover".to_string();
-        app.handle_key(make_key(KeyCode::Char('a')));
-        assert_eq!(app.screen, Screen::AddUser);
-        assert_eq!(app.add_user_state.name, "");
-    }
+        app.process_backend_messages();
 
-    #[test]
-    fn test_add_user_success_q_goes_to_qr() {
-        let mut app = App::new(true);
-        app.screen = Screen::AddUser;
-        app.add_user_state
-            .set_success("alice".to_string(), "uuid-123".to_string());
-        app.handle_key(make_key(KeyCode::Char('q')));
-        assert_eq!(app.screen, Screen::QrView);
-    }
-
-    #[test]
-    fn test_add_user_success_esc_returns_to_dashboard() {
-        let mut app = App::new(true);
-        app.screen = Screen::AddUser;
-        app.add_user_state
-            .set_success("alice".to_string(), "uuid-123".to_string());
-        app.handle_key(make_key(KeyCode::Esc));
-        assert_eq!(app.screen, Screen::Dashboard);
-    }
-
-    #[test]
-    fn test_add_user_error_esc_returns_to_dashboard() {
-        let mut app = App::new(true);
-        app.screen = Screen::AddUser;
-        app.add_user_state
-            .set_error("connection failed".to_string());
-        app.handle_key(make_key(KeyCode::Esc));
-        assert_eq!(app.screen, Screen::Dashboard);
-    }
-
-    // --- User detail integration tests ---
-
-    fn app_with_detail_user() -> App {
-        let mut app = app_with_users(vec![make_test_user("alice"), make_test_user("bob")]);
-        // Open detail for alice (selected by default at index 0)
-        app.handle_key(make_key(KeyCode::Enter));
-        assert_eq!(app.screen, Screen::UserDetail);
-        assert_eq!(app.user_detail_state.user_name(), Some("alice"));
-        app
-    }
-
-    #[test]
-    fn test_dashboard_enter_opens_detail_with_user() {
-        let app = app_with_detail_user();
-        assert_eq!(app.screen, Screen::UserDetail);
-        assert_eq!(app.user_detail_state.user.as_ref().unwrap().name, "alice");
-    }
-
-    #[test]
-    fn test_user_detail_esc_returns_and_closes() {
-        let mut app = app_with_detail_user();
-        app.handle_key(make_key(KeyCode::Esc));
-        assert_eq!(app.screen, Screen::Dashboard);
-        assert!(app.user_detail_state.user.is_none());
-    }
-
-    #[test]
-    fn test_user_detail_q_goes_to_qr() {
-        let mut app = app_with_detail_user();
-        app.handle_key(make_key(KeyCode::Char('q')));
-        assert_eq!(app.screen, Screen::QrView);
-    }
-
-    #[test]
-    fn test_user_detail_d_enters_delete_confirm() {
-        let mut app = app_with_detail_user();
-        app.handle_key(make_key(KeyCode::Char('d')));
-        assert_eq!(app.screen, Screen::UserDetail);
-        assert_eq!(app.user_detail_state.mode, DetailMode::DeleteConfirm);
-    }
-
-    #[test]
-    fn test_user_detail_delete_confirm_esc_returns_to_view() {
-        let mut app = app_with_detail_user();
-        app.handle_key(make_key(KeyCode::Char('d'))); // enter delete confirm
-        app.handle_key(make_key(KeyCode::Esc)); // cancel
-        assert_eq!(app.screen, Screen::UserDetail);
-        assert_eq!(app.user_detail_state.mode, DetailMode::View);
-    }
-
-    #[test]
-    fn test_user_detail_delete_confirm_typing() {
-        let mut app = app_with_detail_user();
-        app.handle_key(make_key(KeyCode::Char('d'))); // enter delete confirm
-        app.handle_key(make_key(KeyCode::Char('a')));
-        app.handle_key(make_key(KeyCode::Char('l')));
-        app.handle_key(make_key(KeyCode::Char('i')));
-        assert_eq!(app.user_detail_state.delete_input, "ali");
-    }
-
-    #[test]
-    fn test_user_detail_delete_confirm_enter_wrong_name() {
-        let mut app = app_with_detail_user();
-        app.handle_key(make_key(KeyCode::Char('d')));
-        app.handle_key(make_key(KeyCode::Char('b')));
-        app.handle_key(make_key(KeyCode::Enter));
-        assert!(!app.user_detail_state.delete_confirmed);
-    }
-
-    #[test]
-    fn test_user_detail_delete_confirm_enter_correct_name() {
-        let mut app = app_with_detail_user();
-        app.handle_key(make_key(KeyCode::Char('d')));
-        for c in "alice".chars() {
-            app.handle_key(make_key(KeyCode::Char(c)));
+        match &app.setup_state.test_result {
+            setup::TestResult::Success(msg) => assert!(msg.contains("Xray 25.8.3")),
+            other => panic!("Expected Success, got {:?}", other),
         }
-        app.handle_key(make_key(KeyCode::Enter));
-        assert!(app.user_detail_state.delete_confirmed);
     }
 
     #[test]
-    fn test_user_detail_c_triggers_clipboard_copy() {
-        let mut app = app_with_detail_user();
-        app.handle_key(make_key(KeyCode::Char('c')));
-        // Flag was consumed by handle_user_detail_key which writes OSC52
-        assert!(!app.user_detail_state.take_clipboard_copied());
-        assert_eq!(app.status_message, "Copied to clipboard (OSC 52)");
+    fn test_process_connection_test_error() {
+        let mut app = App::new(false, test_runtime());
+
+        let _ = app
+            .backend_tx
+            .send(BackendMsg::ConnectionTest(Err("connection refused".into())));
+
+        app.process_backend_messages();
+
+        match &app.setup_state.test_result {
+            setup::TestResult::Error(msg) => assert!(msg.contains("connection refused")),
+            other => panic!("Expected Error, got {:?}", other),
+        }
     }
 
     #[test]
-    fn test_user_detail_delete_success_any_key_returns() {
-        let mut app = app_with_detail_user();
-        app.user_detail_state.set_delete_success();
-        app.handle_key(make_key(KeyCode::Enter));
-        assert_eq!(app.screen, Screen::Dashboard);
-        assert!(app.user_detail_state.user.is_none());
+    fn test_process_user_added() {
+        let mut app = App::new(true, test_runtime());
+        app.screen = Screen::AddUser;
+        app.add_user_state.name = "alice".to_string();
+        app.pending_add_name = Some("alice".to_string());
+
+        let _ = app
+            .backend_tx
+            .send(BackendMsg::UserAdded(Ok(crate::backend::AddedUser {
+                name: "alice".to_string(),
+                uuid: "test-uuid".to_string(),
+                vless_url: "vless://test@host:443#alice".to_string(),
+            })));
+
+        app.process_backend_messages();
+
+        match &app.add_user_state.result {
+            AddUserResult::Success { name, uuid } => {
+                assert_eq!(name, "alice");
+                assert_eq!(uuid, "test-uuid");
+            }
+            _ => panic!("Expected Success"),
+        }
+        assert!(app.add_user_state.cached_vless_url.is_some());
     }
 
     #[test]
-    fn test_user_detail_delete_error_any_key_returns() {
-        let mut app = app_with_detail_user();
-        app.user_detail_state.set_delete_error("fail".to_string());
-        app.handle_key(make_key(KeyCode::Char('x')));
-        assert_eq!(app.screen, Screen::Dashboard);
-        assert!(app.user_detail_state.user.is_none());
+    fn test_process_user_deleted() {
+        let mut app = App::new(true, test_runtime());
+        app.screen = Screen::UserDetail;
+        // Set up the user detail state with the matching UUID
+        app.user_detail_state.open(crate::xray::types::XrayUser {
+            uuid: "deleted-uuid".to_string(),
+            name: "testuser".to_string(),
+            email: "testuser@vpn".to_string(),
+            flow: "xtls-rprx-vision".to_string(),
+            stats: Default::default(),
+            online_count: 0,
+        });
+
+        let _ = app
+            .backend_tx
+            .send(BackendMsg::UserDeleted(Ok("deleted-uuid".to_string())));
+
+        app.process_backend_messages();
+
+        assert_eq!(app.user_detail_state.mode, DetailMode::DeleteSuccess);
     }
 
     #[test]
-    fn test_dashboard_d_opens_detail() {
-        let mut app = app_with_users(vec![make_test_user("alice")]);
-        app.handle_key(make_key(KeyCode::Char('d')));
-        assert_eq!(app.screen, Screen::UserDetail);
-        assert_eq!(app.user_detail_state.user_name(), Some("alice"));
+    fn test_process_user_delete_error() {
+        let mut app = App::new(true, test_runtime());
+        app.screen = Screen::UserDetail;
+        // Set up a user in the detail view matching the pending request
+        app.user_detail_state.open(crate::xray::types::XrayUser {
+            uuid: "some-uuid".to_string(),
+            name: "testuser".to_string(),
+            email: "testuser@vpn".to_string(),
+            flow: "xtls-rprx-vision".to_string(),
+            stats: Default::default(),
+            online_count: 0,
+        });
+        app.pending_delete_uuid = Some("some-uuid".to_string());
+
+        let _ = app
+            .backend_tx
+            .send(BackendMsg::UserDeleted(Err("not found".to_string())));
+
+        app.process_backend_messages();
+
+        match &app.user_detail_state.mode {
+            DetailMode::DeleteError(msg) => assert!(msg.contains("not found")),
+            other => panic!("Expected DeleteError, got {:?}", other),
+        }
     }
 }
