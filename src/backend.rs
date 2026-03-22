@@ -11,6 +11,7 @@ use crate::error::AppError;
 use crate::ssh::{expand_tilde, resolve_ssh_host, SshSession};
 use crate::xray::client::{generate_vless_url, ServerInfo, XrayApiClient};
 use crate::xray::config::{ensure_api_enabled, read_server_config};
+use crate::ui::telegram_setup::DeployStatus;
 use crate::xray::types::{VlessUrlParams, XrayUser};
 
 /// Path to the Xray public key file on the server (used for vless:// URLs).
@@ -39,6 +40,8 @@ pub enum BackendMsg {
     VlessUrl(Result<AddedUser, String>, VlessUrlIntent),
     /// Online IPs fetched for a user (Ok = (uuid, ips), Err = (uuid, error))
     OnlineIps(Result<(String, Vec<String>), (String, String)>),
+    /// Telegram bot deployment progress update
+    DeployProgress(DeployStatus),
     /// Telegram bot deployment result
     DeployBot(Result<String, String>),
 }
@@ -342,7 +345,7 @@ pub fn spawn_deploy_bot(
     tx: mpsc::Sender<BackendMsg>,
 ) {
     runtime.spawn(async move {
-        let result = deploy_bot(&config, &token).await;
+        let result = deploy_bot_with_progress(&config, &token, &tx).await;
         let _ = tx.send(BackendMsg::DeployBot(result));
     });
 }
@@ -378,7 +381,25 @@ async fn upload_chunked(
     Ok(())
 }
 
+/// Deploy bot with progress updates sent to the TUI channel.
+async fn deploy_bot_with_progress(
+    config: &Config,
+    token: &str,
+    tx: &mpsc::Sender<BackendMsg>,
+) -> Result<String, String> {
+    let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::Connecting));
+    deploy_bot_inner(config, token, Some(tx)).await
+}
+
 pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> {
+    deploy_bot_inner(config, token, None).await
+}
+
+async fn deploy_bot_inner(
+    config: &Config,
+    token: &str,
+    tx: Option<&mpsc::Sender<BackendMsg>>,
+) -> Result<String, String> {
     use crate::ui::telegram_setup::generate_compose_yaml;
     use base64::Engine;
 
@@ -432,6 +453,8 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
         ));
     }
 
+    if let Some(tx) = tx { let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::CreatingCompose)); }
+
     // Upload source files for Docker build context (chunked to avoid ARG_MAX)
     for filename in &["Cargo.toml", "Cargo.lock"] {
         let content = std::fs::read_to_string(filename).map_err(|e| {
@@ -472,7 +495,8 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
         return Err(format!("Failed to extract src/: {}", result.combined_output()));
     }
 
-    // Build image
+    // Build image (this is the slowest step — compiling Rust from source, 5-15 minutes)
+    if let Some(tx) = tx { let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::BuildingImage)); }
     let result = backend
         .exec_on_host("cd /opt/axadmin && docker build -t axadmin . 2>&1")
         .await
@@ -487,6 +511,7 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
         .await;
 
     // Start container
+    if let Some(tx) = tx { let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::StartingBot)); }
     let run_cmd = format!(
         "docker run -d --name axadmin --restart unless-stopped \
          -v /var/run/docker.sock:/var/run/docker.sock \
@@ -505,6 +530,7 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
     }
 
     // Verify container is running
+    if let Some(tx) = tx { let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::Verifying)); }
     let result = backend
         .exec_on_host("docker inspect axadmin --format '{{.State.Status}}' 2>&1")
         .await

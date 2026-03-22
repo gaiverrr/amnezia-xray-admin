@@ -405,31 +405,44 @@ fn draw_deploy_button(state: &TelegramSetupState, frame: &mut ratatui::Frame, ar
     );
 }
 
+fn deploy_spinner() -> char {
+    // Simple time-based spinner
+    let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    frames[(ms / 150) as usize % frames.len()]
+}
+
 fn draw_deploy_status(state: &TelegramSetupState, frame: &mut ratatui::Frame, area: Rect) {
     let (text, style) = match &state.deploy_status {
         DeployStatus::None => return,
         DeployStatus::Connecting => (
-            "  Connecting to VPS...".to_string(),
-            theme::secondary_style(),
-        ),
-        DeployStatus::BuildingImage => (
-            "  Building Docker image (this may take a few minutes)...".to_string(),
+            format!("  {} [1/5] Connecting to VPS...", deploy_spinner()),
             theme::secondary_style(),
         ),
         DeployStatus::CreatingCompose => (
-            "  Creating docker-compose configuration...".to_string(),
+            format!("  {} [2/5] Uploading files to VPS...", deploy_spinner()),
+            theme::secondary_style(),
+        ),
+        DeployStatus::BuildingImage => (
+            format!(
+                "  {} [3/5] Building Docker image (compiling Rust — 5-15 min, please wait)...",
+                deploy_spinner()
+            ),
             theme::secondary_style(),
         ),
         DeployStatus::StartingBot => (
-            "  Starting bot container...".to_string(),
+            format!("  {} [4/5] Starting bot container...", deploy_spinner()),
             theme::secondary_style(),
         ),
         DeployStatus::Verifying => (
-            "  Verifying bot is running...".to_string(),
+            format!("  {} [5/5] Verifying bot is running...", deploy_spinner()),
             theme::secondary_style(),
         ),
-        DeployStatus::Success(msg) => (format!("  OK: {}", msg), theme::title_style()),
-        DeployStatus::Error(msg) => (format!("  Error: {}", msg), theme::alert_style()),
+        DeployStatus::Success(msg) => (format!("  ✓ {}", msg), theme::title_style()),
+        DeployStatus::Error(msg) => (format!("  ✗ Error: {}", msg), theme::alert_style()),
     };
 
     frame.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);

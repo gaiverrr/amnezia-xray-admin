@@ -660,6 +660,11 @@ impl App {
                         }
                     }
                 }
+                BackendMsg::DeployProgress(status) => {
+                    if self.screen == Screen::TelegramSetup {
+                        self.telegram_setup_state.deploy_status = status;
+                    }
+                }
                 BackendMsg::DeployBot(result) => {
                     self.pending_deploy = false;
                     if self.screen == Screen::TelegramSetup {
