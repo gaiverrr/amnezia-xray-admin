@@ -5,6 +5,7 @@
 
 use std::sync::mpsc;
 
+use base64::Engine;
 use crate::backend_trait::{SshBackend, XrayBackend};
 use crate::config::Config;
 use crate::error::AppError;
@@ -347,6 +348,37 @@ pub fn spawn_deploy_bot(
     });
 }
 
+/// Upload data to a remote file in chunks to avoid ARG_MAX limits.
+/// Large base64 strings (e.g. Cargo.lock ~40KB) exceed shell argument limits.
+async fn upload_chunked(
+    backend: &SshBackend,
+    data: &[u8],
+    remote_path: &str,
+) -> Result<(), String> {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(data);
+    const CHUNK: usize = 48_000; // well within 128KB ARG_MAX
+
+    for (i, chunk) in b64.as_bytes().chunks(CHUNK).enumerate() {
+        let chunk_str = std::str::from_utf8(chunk).unwrap();
+        let op = if i == 0 { ">" } else { ">>" };
+        let cmd = format!("printf '%s' '{}' {} {}.b64", chunk_str, op, remote_path);
+        let result = backend.exec_on_host(&cmd).await
+            .map_err(|e| format!("upload chunk failed: {}", e))?;
+        if !result.success() {
+            return Err(format!("upload chunk failed: {}", result.combined_output()));
+        }
+    }
+
+    let cmd = format!("base64 -d {}.b64 > {} && rm -f {}.b64", remote_path, remote_path, remote_path);
+    let result = backend.exec_on_host(&cmd).await
+        .map_err(|e| format!("base64 decode failed: {}", e))?;
+    if !result.success() {
+        return Err(format!("base64 decode failed: {}", result.combined_output()));
+    }
+    Ok(())
+}
+
 pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> {
     use crate::ui::telegram_setup::generate_compose_yaml;
     use base64::Engine;
@@ -401,7 +433,7 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
         ));
     }
 
-    // Upload source files for Docker build context
+    // Upload source files for Docker build context (chunked to avoid ARG_MAX)
     for filename in &["Cargo.toml", "Cargo.lock"] {
         let content = std::fs::read_to_string(filename).map_err(|e| {
             format!(
@@ -409,25 +441,12 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
                 filename, e
             )
         })?;
-        let content_b64 = base64::engine::general_purpose::STANDARD.encode(content.as_bytes());
-        let cmd = format!(
-            "echo '{}' | base64 -d > /opt/axadmin/{}",
-            content_b64, filename
-        );
-        let result = backend
-            .exec_on_host(&cmd)
+        upload_chunked(&backend, content.as_bytes(), &format!("/opt/axadmin/{}", filename))
             .await
             .map_err(|e| format!("Failed to upload {}: {}", filename, e))?;
-        if !result.success() {
-            return Err(format!(
-                "Failed to upload {}: {}",
-                filename,
-                result.stderr.trim()
-            ));
-        }
     }
 
-    // Upload src/ directory as tar archive
+    // Upload src/ directory as tar archive (chunked to avoid ARG_MAX)
     let tar_output = tokio::process::Command::new("tar")
         .args(["cf", "-", "src/"])
         .output()
@@ -443,14 +462,15 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
             "Failed to tar src/ directory. Run --deploy-bot from the repo directory.".to_string(),
         );
     }
-    let tar_b64 = base64::engine::general_purpose::STANDARD.encode(&tar_output.stdout);
-    let upload_src_cmd = format!("echo '{}' | base64 -d | tar xf - -C /opt/axadmin/", tar_b64);
-    let result = backend
-        .exec_on_host(&upload_src_cmd)
+    upload_chunked(&backend, &tar_output.stdout, "/tmp/axadmin-src.tar")
         .await
         .map_err(|e| format!("Failed to upload src/: {}", e))?;
+    let result = backend
+        .exec_on_host("tar xf /tmp/axadmin-src.tar -C /opt/axadmin/ && rm -f /tmp/axadmin-src.tar")
+        .await
+        .map_err(|e| format!("Failed to extract src/: {}", e))?;
     if !result.success() {
-        return Err(format!("Failed to upload src/: {}", result.stderr.trim()));
+        return Err(format!("Failed to extract src/: {}", result.combined_output()));
     }
 
     // Build image
