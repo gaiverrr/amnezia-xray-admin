@@ -350,6 +350,29 @@ pub fn spawn_deploy_bot(
     });
 }
 
+/// Get VPS public IP by running curl on the host (not inside container).
+async fn get_vps_public_ip(backend: &SshBackend) -> String {
+    for url in &[
+        "https://ifconfig.me",
+        "https://icanhazip.com",
+        "https://api.ipify.org",
+    ] {
+        if let Ok(result) = backend
+            .exec_on_host(&format!("curl -sf --max-time 5 {}", url))
+            .await
+        {
+            if result.success() {
+                let ip = result.stdout.trim().to_string();
+                if !ip.is_empty() && ip.parse::<std::net::IpAddr>().is_ok() {
+                    return ip;
+                }
+            }
+        }
+    }
+    // Fallback: use the SSH host from config
+    "UNKNOWN_IP".to_string()
+}
+
 /// Deploy bot with progress updates sent to the TUI channel.
 async fn deploy_bot_with_progress(
     config: &Config,
@@ -397,6 +420,9 @@ async fn deploy_bot_inner(
     if let Some(tx) = tx {
         let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::StartingBot));
     }
+    // Get VPS public IP so the bot can generate correct vless:// URLs
+    let vps_ip = get_vps_public_ip(&backend).await;
+
     let run_cmd = format!(
         "docker run -d --name axadmin --restart unless-stopped \
          -v /var/run/docker.sock:/var/run/docker.sock \
@@ -404,8 +430,8 @@ async fn deploy_bot_inner(
          -e ADMIN_ID='{}' \
          -e XRAY_CONTAINER='{}' \
          ghcr.io/gaiverrr/amnezia-xray-admin:latest \
-         --telegram-bot --local --container '{}' --admin-id {} 2>&1",
-        token, admin_id, config.container, config.container, admin_id
+         --telegram-bot --local --container '{}' --admin-id {} --host '{}' 2>&1",
+        token, admin_id, config.container, config.container, admin_id, vps_ip
     );
     let result = backend
         .exec_on_host(&run_cmd)
