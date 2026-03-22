@@ -5,7 +5,6 @@
 
 use std::sync::mpsc;
 
-use base64::Engine;
 use crate::backend_trait::{SshBackend, XrayBackend};
 use crate::config::Config;
 use crate::error::AppError;
