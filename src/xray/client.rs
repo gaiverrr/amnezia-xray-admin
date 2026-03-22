@@ -534,17 +534,24 @@ fn is_valid_timestamp(s: &str) -> bool {
 // -- Command construction (pure functions, testable) --
 
 /// Build the JSON payload for `xray api adu`.
+/// Format: full xray config with inbounds array (required by xray v25+).
+/// Client fields (id, flow, email, level) are flat — no nested "account" object.
 pub fn build_adu_json(uuid: &str, email: &str, inbound_tag: &str) -> String {
     serde_json::json!({
-        "inboundTag": inbound_tag,
-        "user": {
-            "email": email,
-            "level": 0,
-            "account": {
-                "id": uuid,
-                "flow": "xtls-rprx-vision"
+        "inbounds": [{
+            "protocol": "vless",
+            "tag": inbound_tag,
+            "port": 443,
+            "settings": {
+                "decryption": "none",
+                "clients": [{
+                    "id": uuid,
+                    "flow": "xtls-rprx-vision",
+                    "email": email,
+                    "level": 0
+                }]
             }
-        }
+        }]
     })
     .to_string()
 }
@@ -921,11 +928,16 @@ mod tests {
         let json = build_adu_json("test-uuid", "alice@vpn", "vless-in");
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(parsed["inboundTag"], "vless-in");
-        assert_eq!(parsed["user"]["email"], "alice@vpn");
-        assert_eq!(parsed["user"]["level"], 0);
-        assert_eq!(parsed["user"]["account"]["id"], "test-uuid");
-        assert_eq!(parsed["user"]["account"]["flow"], "xtls-rprx-vision");
+        let inbound = &parsed["inbounds"][0];
+        assert_eq!(inbound["protocol"], "vless");
+        assert_eq!(inbound["tag"], "vless-in");
+        assert_eq!(inbound["port"], 443);
+        assert_eq!(inbound["settings"]["decryption"], "none");
+        let client = &inbound["settings"]["clients"][0];
+        assert_eq!(client["id"], "test-uuid");
+        assert_eq!(client["email"], "alice@vpn");
+        assert_eq!(client["level"], 0);
+        assert_eq!(client["flow"], "xtls-rprx-vision");
     }
 
     #[test]
@@ -933,7 +945,10 @@ mod tests {
         let json = build_adu_json("uuid-123", "bob's-phone@vpn", "vless-in");
         // Should still be valid JSON
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["user"]["email"], "bob's-phone@vpn");
+        assert_eq!(
+            parsed["inbounds"][0]["settings"]["clients"][0]["email"],
+            "bob's-phone@vpn"
+        );
     }
 
     #[test]
@@ -1202,13 +1217,16 @@ stat: {
         );
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        // Verify structure matches what xray api expects
-        assert!(parsed.get("inboundTag").is_some());
-        assert!(parsed.get("user").is_some());
-        assert!(parsed["user"].get("email").is_some());
-        assert!(parsed["user"].get("account").is_some());
-        assert!(parsed["user"]["account"].get("id").is_some());
-        assert!(parsed["user"]["account"].get("flow").is_some());
+        // Verify structure matches xray v25+ api adu format
+        let inbound = &parsed["inbounds"][0];
+        assert_eq!(inbound["protocol"], "vless");
+        assert_eq!(inbound["tag"], "vless-in");
+        assert_eq!(inbound["port"], 443);
+        assert_eq!(inbound["settings"]["decryption"], "none");
+        let client = &inbound["settings"]["clients"][0];
+        assert!(client.get("id").is_some());
+        assert!(client.get("email").is_some());
+        assert!(client.get("flow").is_some());
     }
 
     #[test]
