@@ -28,6 +28,8 @@ pub struct BotState {
 const URL_PREFIX: &str = "url:";
 /// Callback query prefix for QR inline buttons.
 const QR_PREFIX: &str = "qr:";
+/// Callback query prefix for delete user selection buttons.
+const DELETE_PREFIX: &str = "delete:";
 /// Callback query prefix for delete confirmation buttons.
 const DELETE_CONFIRM_PREFIX: &str = "delete_confirm:";
 /// Callback query prefix for delete cancel buttons.
@@ -275,7 +277,16 @@ async fn handle_command(
         Command::Delete(name) => {
             let name = name.trim().to_string();
             if name.is_empty() {
-                bot.send_message(chat_id, "Usage: /delete <name>").await?;
+                match cmd_user_keyboard(&state, DELETE_PREFIX).await {
+                    Ok(keyboard) => {
+                        bot.send_message(chat_id, "Select a user to delete:")
+                            .reply_markup(keyboard)
+                            .await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(chat_id, format!("Error: {}", e)).await?;
+                    }
+                }
             } else {
                 match cmd_delete_prompt(&state, &name).await {
                     Ok((text, keyboard)) => {
@@ -503,6 +514,23 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
             }
             Err(e) => {
                 bot.send_message(chat_id, format!("Error: {}", e)).await?;
+            }
+        }
+    } else if let Some(user_name) = data.strip_prefix(DELETE_PREFIX) {
+        // User selected from /delete inline keyboard — show confirmation
+        match cmd_delete_prompt(&state, user_name).await {
+            Ok((text, keyboard)) => {
+                bot.answer_callback_query(q.id.clone()).await?;
+                if let Some(ref msg) = q.message {
+                    bot.edit_message_text(chat_id, msg.id(), &text)
+                        .reply_markup(keyboard)
+                        .await?;
+                }
+            }
+            Err(e) => {
+                bot.answer_callback_query(q.id.clone())
+                    .text(format!("Error: {}", e))
+                    .await?;
             }
         }
     } else if let Some(uuid) = data.strip_prefix(DELETE_CONFIRM_PREFIX) {
@@ -1113,5 +1141,88 @@ mod tests {
         let cli = crate::config::Cli::parse_from(["app", "--admin-id", "999"]);
         config.merge_cli(&cli);
         assert_eq!(config.telegram_admin_chat_id, Some(999));
+    }
+
+    // -- /delete inline buttons tests --
+
+    #[test]
+    fn test_build_user_keyboard_delete_prefix() {
+        let users = vec![
+            XrayUser {
+                uuid: "uuid-1".to_string(),
+                name: "Alice".to_string(),
+                email: "Alice@vpn".to_string(),
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            },
+            XrayUser {
+                uuid: "uuid-2".to_string(),
+                name: "Bob".to_string(),
+                email: "Bob@vpn".to_string(),
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            },
+        ];
+        let keyboard = build_user_keyboard(&users, DELETE_PREFIX);
+        let buttons = &keyboard.inline_keyboard;
+        assert_eq!(buttons.len(), 2);
+        assert_eq!(buttons[0][0].text, "Alice");
+        assert_eq!(buttons[1][0].text, "Bob");
+
+        let alice_data = match &buttons[0][0].kind {
+            teloxide::types::InlineKeyboardButtonKind::CallbackData(d) => d.clone(),
+            _ => panic!("expected callback data"),
+        };
+        let bob_data = match &buttons[1][0].kind {
+            teloxide::types::InlineKeyboardButtonKind::CallbackData(d) => d.clone(),
+            _ => panic!("expected callback data"),
+        };
+        assert_eq!(alice_data, "delete:Alice");
+        assert_eq!(bob_data, "delete:Bob");
+    }
+
+    #[test]
+    fn test_delete_callback_data_parsing() {
+        // Verify DELETE_PREFIX correctly strips from callback data
+        let callback_data = "delete:Alice";
+        let user_name = callback_data.strip_prefix(DELETE_PREFIX);
+        assert_eq!(user_name, Some("Alice"));
+
+        let callback_data = "delete:Bob's Phone [iOS]";
+        let user_name = callback_data.strip_prefix(DELETE_PREFIX);
+        assert_eq!(user_name, Some("Bob's Phone [iOS]"));
+    }
+
+    #[test]
+    fn test_delete_callback_data_no_match() {
+        let callback_data = "url:Alice";
+        assert!(callback_data.strip_prefix(DELETE_PREFIX).is_none());
+
+        let callback_data = "qr:Alice";
+        assert!(callback_data.strip_prefix(DELETE_PREFIX).is_none());
+    }
+
+    #[test]
+    fn test_delete_prefix_does_not_match_confirm_cancel() {
+        // "delete:" should NOT match "delete_confirm:" or "delete_cancel:"
+        let confirm_data = "delete_confirm:uuid-123";
+        assert!(confirm_data.strip_prefix(DELETE_PREFIX).is_none());
+
+        let cancel_data = "delete_cancel:uuid-123";
+        assert!(cancel_data.strip_prefix(DELETE_PREFIX).is_none());
+    }
+
+    #[test]
+    fn test_delete_confirm_cancel_prefixes_distinct() {
+        // Verify all delete-related prefixes are distinct
+        assert_ne!(DELETE_PREFIX, DELETE_CONFIRM_PREFIX);
+        assert_ne!(DELETE_PREFIX, DELETE_CANCEL_PREFIX);
+        assert_ne!(DELETE_CONFIRM_PREFIX, DELETE_CANCEL_PREFIX);
+
+        // None is a prefix of another (important for strip_prefix correctness)
+        assert!(!DELETE_CONFIRM_PREFIX.starts_with(DELETE_PREFIX));
+        assert!(!DELETE_CANCEL_PREFIX.starts_with(DELETE_PREFIX));
     }
 }

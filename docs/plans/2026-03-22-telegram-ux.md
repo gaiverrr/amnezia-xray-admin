@@ -54,15 +54,15 @@ Two improvements to the Telegram bot:
 - [x] run tests — must pass before next task
 
 ### Task 4: Inline buttons for /delete without argument
-- [ ] modify `/delete` handler:
+- [x] modify `/delete` handler:
   - without argument: show user list as inline keyboard
   - callback data: "delete:{user_name}"
-- [ ] when button pressed: show confirmation inline keyboard ("Yes, delete {name}" / "Cancel")
+- [x] when button pressed: show confirmation inline keyboard ("Yes, delete {name}" / "Cancel")
   - callback data: "confirm_delete:{user_name}" / "cancel_delete"
-- [ ] on confirm: delete user, send success message
-- [ ] on cancel: send "Cancelled" message
-- [ ] write tests for delete confirmation flow
-- [ ] run tests — must pass before next task
+- [x] on confirm: delete user, send success message
+- [x] on cancel: send "Cancelled" message
+- [x] write tests for delete confirmation flow
+- [x] run tests — must pass before next task
 
 ### Task 5: /add without argument prompts for name
 - [ ] modify `/add` handler:
