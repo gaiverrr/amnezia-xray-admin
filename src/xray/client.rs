@@ -553,7 +553,7 @@ pub fn build_adu_json(uuid: &str, email: &str, inbound_tag: &str) -> String {
 /// Returns Err if email contains shell-unsafe characters.
 pub fn build_rmu_cmd(email: &str) -> Result<String> {
     Ok(format!(
-        "xray api rmu -s {} -email {}",
+        "xray api rmu -s {} -tag=vless-in {}",
         API_ADDR,
         shell_quote(email)
     ))
@@ -939,7 +939,10 @@ mod tests {
     #[test]
     fn test_build_rmu_cmd() {
         let cmd = build_rmu_cmd("alice@vpn").unwrap();
-        assert_eq!(cmd, "xray api rmu -s 127.0.0.1:8080 -email 'alice@vpn'");
+        assert_eq!(
+            cmd,
+            "xray api rmu -s 127.0.0.1:8080 -tag=vless-in 'alice@vpn'"
+        );
     }
 
     #[test]
