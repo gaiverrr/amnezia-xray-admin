@@ -82,14 +82,14 @@ Two improvements to the Telegram bot:
 - [x] run tests — must pass before next task
 
 ### Task 7: Verify acceptance criteria
-- [ ] verify /url without arg shows inline buttons
-- [ ] verify /qr without arg shows inline buttons
-- [ ] verify /delete without arg shows inline buttons + confirmation
-- [ ] verify /add without arg shows usage hint
-- [ ] verify --admin-id is required for --deploy-bot
-- [ ] verify bot rejects non-admin users
-- [ ] run full test suite: `cargo test`
-- [ ] run linter: `cargo clippy`
+- [x] verify /url without arg shows inline buttons
+- [x] verify /qr without arg shows inline buttons
+- [x] verify /delete without arg shows inline buttons + confirmation
+- [x] verify /add without arg shows usage hint
+- [x] verify --admin-id is required for --deploy-bot
+- [x] verify bot rejects non-admin users
+- [x] run full test suite: `cargo test`
+- [x] run linter: `cargo clippy`
 
 ### Task 8: [Final] Update documentation
 - [ ] update CLAUDE.md with Telegram bot changes
