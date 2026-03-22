@@ -170,18 +170,36 @@ pub fn validate_user_name(name: &str) -> Option<String> {
     None
 }
 
+/// Result of building an inline keyboard for user selection.
+pub struct UserKeyboardResult {
+    pub keyboard: InlineKeyboardMarkup,
+    pub skipped_names: Vec<String>,
+    pub unnamed_count: usize,
+}
+
 /// Build an inline keyboard listing users, with each button using the given callback prefix.
 ///
 /// Each button shows the user's name and has callback data `"{prefix}{name}"`.
 /// Users with empty names or callback data exceeding Telegram's 64-byte limit are skipped.
-pub fn build_user_keyboard(users: &[XrayUser], callback_prefix: &str) -> InlineKeyboardMarkup {
+/// Returns the keyboard markup, skipped names, and count of unnamed users.
+pub fn build_user_keyboard(users: &[XrayUser], callback_prefix: &str) -> UserKeyboardResult {
     /// Telegram's maximum callback_data size in bytes.
     const MAX_CALLBACK_DATA_BYTES: usize = 64;
+
+    let mut skipped_names: Vec<String> = Vec::new();
+    let unnamed_count = users.iter().filter(|u| u.name.is_empty()).count();
 
     let buttons: Vec<Vec<InlineKeyboardButton>> = users
         .iter()
         .filter(|u| !u.name.is_empty())
-        .filter(|u| callback_prefix.len() + u.name.len() <= MAX_CALLBACK_DATA_BYTES)
+        .filter(|u| {
+            if callback_prefix.len() + u.name.len() > MAX_CALLBACK_DATA_BYTES {
+                skipped_names.push(u.name.clone());
+                false
+            } else {
+                true
+            }
+        })
         .map(|u| {
             vec![InlineKeyboardButton::callback(
                 &u.name,
@@ -189,7 +207,101 @@ pub fn build_user_keyboard(users: &[XrayUser], callback_prefix: &str) -> InlineK
             )]
         })
         .collect();
-    InlineKeyboardMarkup::new(buttons)
+    UserKeyboardResult {
+        keyboard: InlineKeyboardMarkup::new(buttons),
+        skipped_names,
+        unnamed_count,
+    }
+}
+
+/// Format a truncated list of skipped user names, keeping the total under a safe length.
+/// Shows as many names as fit, then "and N more" if truncated.
+fn format_skipped_names(skipped: &[String], max_bytes: usize) -> String {
+    if skipped.is_empty() {
+        return String::new();
+    }
+    let mut result = String::new();
+    for (shown, name) in skipped.iter().enumerate() {
+        let separator = if shown == 0 { "" } else { ", " };
+        let remaining = skipped.len() - shown;
+        let suffix = format!(" and {} more", remaining - 1);
+        let needed = separator.len() + name.len();
+        let budget_with_suffix = if remaining > 1 {
+            needed + suffix.len()
+        } else {
+            needed
+        };
+        if result.len() + budget_with_suffix > max_bytes {
+            if result.is_empty() {
+                // First name already exceeds budget — truncate it
+                let ellipsis = "...";
+                let avail = max_bytes.saturating_sub(ellipsis.len());
+                // Truncate at a char boundary
+                let truncated = &name[..name.floor_char_boundary(avail)];
+                return format!("{}{}", truncated, ellipsis);
+            }
+            result.push_str(&format!(" and {} more", remaining));
+            return result;
+        }
+        result.push_str(separator);
+        result.push_str(name);
+    }
+    result
+}
+
+/// Format a user-selection prompt, appending notes about skipped or unnamed users if any.
+fn format_selection_message(base_msg: &str, skipped: &[String], unnamed_count: usize) -> String {
+    let mut notes = Vec::new();
+    if !skipped.is_empty() {
+        let template_overhead = base_msg.len() + 100;
+        let max_names = 3500usize.saturating_sub(template_overhead);
+        let names = format_skipped_names(skipped, max_names);
+        notes.push(format!(
+            "{} user(s) have names too long for inline buttons. Use the command with the name directly: {}",
+            skipped.len(),
+            names
+        ));
+    }
+    if unnamed_count > 0 {
+        notes.push(format!(
+            "{} unnamed user(s) not shown. Use /users to see them.",
+            unnamed_count
+        ));
+    }
+    if notes.is_empty() {
+        base_msg.to_string()
+    } else {
+        format!("{}\n\nNote: {}", base_msg, notes.join("\n"))
+    }
+}
+
+/// Format the message when no inline buttons are available.
+fn format_empty_keyboard_message(
+    command_hint: &str,
+    skipped: &[String],
+    unnamed_count: usize,
+) -> String {
+    let mut parts = Vec::new();
+    if !skipped.is_empty() {
+        let names = format_skipped_names(skipped, 3900);
+        parts.push(format!(
+            "{} user(s) have names too long for inline buttons. Use {} directly for: {}",
+            skipped.len(),
+            command_hint,
+            names
+        ));
+    }
+    if unnamed_count > 0 {
+        parts.push(format!(
+            "{} user(s) have no name set. Use /users to see them.",
+            unnamed_count
+        ));
+    }
+    if parts.is_empty() {
+        "No users found.".to_string()
+    } else {
+        parts.join("\n\n")
+    }
 }
 
 /// Build an inline keyboard for delete confirmation.
@@ -284,10 +396,24 @@ async fn handle_command(
             let name = name.trim().to_string();
             if name.is_empty() {
                 match cmd_user_keyboard(&state, DELETE_PREFIX).await {
-                    Ok(keyboard) => {
-                        bot.send_message(chat_id, "Select a user to delete:")
-                            .reply_markup(keyboard)
-                            .await?;
+                    Ok(result) => {
+                        if result.keyboard.inline_keyboard.is_empty() {
+                            let msg = format_empty_keyboard_message(
+                                "/delete <name>",
+                                &result.skipped_names,
+                                result.unnamed_count,
+                            );
+                            bot.send_message(chat_id, msg).await?;
+                        } else {
+                            let msg = format_selection_message(
+                                "Select a user to delete:",
+                                &result.skipped_names,
+                                result.unnamed_count,
+                            );
+                            bot.send_message(chat_id, msg)
+                                .reply_markup(result.keyboard)
+                                .await?;
+                        }
                     }
                     Err(e) => {
                         bot.send_message(chat_id, format!("Error: {}", e)).await?;
@@ -310,10 +436,24 @@ async fn handle_command(
             let name = name.trim().to_string();
             if name.is_empty() {
                 match cmd_user_keyboard(&state, URL_PREFIX).await {
-                    Ok(keyboard) => {
-                        bot.send_message(chat_id, "Select a user:")
-                            .reply_markup(keyboard)
-                            .await?;
+                    Ok(result) => {
+                        if result.keyboard.inline_keyboard.is_empty() {
+                            let msg = format_empty_keyboard_message(
+                                "/url <name>",
+                                &result.skipped_names,
+                                result.unnamed_count,
+                            );
+                            bot.send_message(chat_id, msg).await?;
+                        } else {
+                            let msg = format_selection_message(
+                                "Select a user:",
+                                &result.skipped_names,
+                                result.unnamed_count,
+                            );
+                            bot.send_message(chat_id, msg)
+                                .reply_markup(result.keyboard)
+                                .await?;
+                        }
                     }
                     Err(e) => {
                         bot.send_message(chat_id, format!("Error: {}", e)).await?;
@@ -331,10 +471,24 @@ async fn handle_command(
             let name = name.trim().to_string();
             if name.is_empty() {
                 match cmd_user_keyboard(&state, QR_PREFIX).await {
-                    Ok(keyboard) => {
-                        bot.send_message(chat_id, "Select a user:")
-                            .reply_markup(keyboard)
-                            .await?;
+                    Ok(result) => {
+                        if result.keyboard.inline_keyboard.is_empty() {
+                            let msg = format_empty_keyboard_message(
+                                "/qr <name>",
+                                &result.skipped_names,
+                                result.unnamed_count,
+                            );
+                            bot.send_message(chat_id, msg).await?;
+                        } else {
+                            let msg = format_selection_message(
+                                "Select a user:",
+                                &result.skipped_names,
+                                result.unnamed_count,
+                            );
+                            bot.send_message(chat_id, msg)
+                                .reply_markup(result.keyboard)
+                                .await?;
+                        }
                     }
                     Err(e) => {
                         bot.send_message(chat_id, format!("Error: {}", e)).await?;
@@ -424,7 +578,7 @@ async fn cmd_delete_execute(
 async fn cmd_user_keyboard(
     state: &BotState,
     callback_prefix: &str,
-) -> std::result::Result<InlineKeyboardMarkup, crate::error::AppError> {
+) -> std::result::Result<UserKeyboardResult, crate::error::AppError> {
     let client = XrayApiClient::new(state.backend.as_ref());
     let users = client.list_users().await?;
     Ok(build_user_keyboard(&users, callback_prefix))
@@ -982,8 +1136,10 @@ mod tests {
                 online_count: 0,
             },
         ];
-        let keyboard = build_user_keyboard(&users, URL_PREFIX);
-        let buttons = &keyboard.inline_keyboard;
+        let result = build_user_keyboard(&users, URL_PREFIX);
+        assert!(result.skipped_names.is_empty());
+        assert_eq!(result.unnamed_count, 0);
+        let buttons = &result.keyboard.inline_keyboard;
         assert_eq!(buttons.len(), 2, "should have two rows");
         assert_eq!(buttons[0][0].text, "Alice");
         assert_eq!(buttons[1][0].text, "Bob");
@@ -1021,16 +1177,19 @@ mod tests {
                 online_count: 0,
             },
         ];
-        let keyboard = build_user_keyboard(&users, "url:");
-        let buttons = &keyboard.inline_keyboard;
+        let result = build_user_keyboard(&users, "url:");
+        let buttons = &result.keyboard.inline_keyboard;
         assert_eq!(buttons.len(), 1, "should skip unnamed user");
         assert_eq!(buttons[0][0].text, "Alice");
+        assert_eq!(result.unnamed_count, 1);
     }
 
     #[test]
     fn test_build_user_keyboard_empty_list() {
-        let keyboard = build_user_keyboard(&[], "url:");
-        assert!(keyboard.inline_keyboard.is_empty());
+        let result = build_user_keyboard(&[], "url:");
+        assert!(result.keyboard.inline_keyboard.is_empty());
+        assert!(result.skipped_names.is_empty());
+        assert_eq!(result.unnamed_count, 0);
     }
 
     #[test]
@@ -1045,8 +1204,8 @@ mod tests {
         }];
 
         for prefix in &["url:", "qr:", "delete:"] {
-            let keyboard = build_user_keyboard(&users, prefix);
-            let data = match &keyboard.inline_keyboard[0][0].kind {
+            let result = build_user_keyboard(&users, prefix);
+            let data = match &result.keyboard.inline_keyboard[0][0].kind {
                 teloxide::types::InlineKeyboardButtonKind::CallbackData(d) => d.clone(),
                 _ => panic!("expected callback data"),
             };
@@ -1112,8 +1271,9 @@ mod tests {
                 online_count: 0,
             },
         ];
-        let keyboard = build_user_keyboard(&users, QR_PREFIX);
-        let buttons = &keyboard.inline_keyboard;
+        let result = build_user_keyboard(&users, QR_PREFIX);
+        assert!(result.skipped_names.is_empty());
+        let buttons = &result.keyboard.inline_keyboard;
         assert_eq!(buttons.len(), 2);
         assert_eq!(buttons[0][0].text, "Alice");
         assert_eq!(buttons[1][0].text, "Bob");
@@ -1185,8 +1345,9 @@ mod tests {
                 online_count: 0,
             },
         ];
-        let keyboard = build_user_keyboard(&users, DELETE_PREFIX);
-        let buttons = &keyboard.inline_keyboard;
+        let result = build_user_keyboard(&users, DELETE_PREFIX);
+        assert!(result.skipped_names.is_empty());
+        let buttons = &result.keyboard.inline_keyboard;
         assert_eq!(buttons.len(), 2);
         assert_eq!(buttons[0][0].text, "Alice");
         assert_eq!(buttons[1][0].text, "Bob");
@@ -1244,5 +1405,130 @@ mod tests {
         // None is a prefix of another (important for strip_prefix correctness)
         assert!(!DELETE_CONFIRM_PREFIX.starts_with(DELETE_PREFIX));
         assert!(!DELETE_CANCEL_PREFIX.starts_with(DELETE_PREFIX));
+    }
+
+    #[test]
+    fn test_build_user_keyboard_skips_long_names() {
+        // "delete:" is 7 bytes, so max name is 57 bytes
+        let long_name = "a".repeat(58);
+        let short_name = "Alice".to_string();
+        let users = vec![
+            XrayUser {
+                uuid: "uuid-1".to_string(),
+                name: short_name.clone(),
+                email: "Alice@vpn".to_string(),
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            },
+            XrayUser {
+                uuid: "uuid-2".to_string(),
+                name: long_name.clone(),
+                email: "long@vpn".to_string(),
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            },
+        ];
+        let result = build_user_keyboard(&users, DELETE_PREFIX);
+        assert_eq!(result.keyboard.inline_keyboard.len(), 1);
+        assert_eq!(result.keyboard.inline_keyboard[0][0].text, "Alice");
+        assert_eq!(result.skipped_names, vec![long_name]);
+    }
+
+    #[test]
+    fn test_build_user_keyboard_all_skipped() {
+        let long_name = "a".repeat(61); // exceeds 64 bytes with "url:" prefix
+        let users = vec![XrayUser {
+            uuid: "uuid-1".to_string(),
+            name: long_name.clone(),
+            email: "long@vpn".to_string(),
+            flow: String::new(),
+            stats: TrafficStats::default(),
+            online_count: 0,
+        }];
+        let result = build_user_keyboard(&users, URL_PREFIX);
+        assert!(result.keyboard.inline_keyboard.is_empty());
+        assert_eq!(result.skipped_names, vec![long_name]);
+    }
+
+    #[test]
+    fn test_build_user_keyboard_all_unnamed() {
+        let users = vec![
+            XrayUser {
+                uuid: "uuid-1".to_string(),
+                name: String::new(),
+                email: "@vpn".to_string(),
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            },
+            XrayUser {
+                uuid: "uuid-2".to_string(),
+                name: String::new(),
+                email: "@vpn".to_string(),
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            },
+        ];
+        let result = build_user_keyboard(&users, URL_PREFIX);
+        assert!(result.keyboard.inline_keyboard.is_empty());
+        assert!(result.skipped_names.is_empty());
+        assert_eq!(result.unnamed_count, 2);
+    }
+
+    #[test]
+    fn test_format_empty_keyboard_message_no_users() {
+        let msg = format_empty_keyboard_message("/url <name>", &[], 0);
+        assert_eq!(msg, "No users found.");
+    }
+
+    #[test]
+    fn test_format_empty_keyboard_message_unnamed_only() {
+        let msg = format_empty_keyboard_message("/url <name>", &[], 3);
+        assert!(msg.contains("3 user(s) have no name set"));
+        assert!(msg.contains("/users"));
+    }
+
+    #[test]
+    fn test_format_empty_keyboard_message_skipped_and_unnamed() {
+        let skipped = vec!["LongName".to_string()];
+        let msg = format_empty_keyboard_message("/delete <name>", &skipped, 2);
+        assert!(msg.contains("1 user(s) have names too long"));
+        assert!(msg.contains("LongName"));
+        assert!(msg.contains("2 user(s) have no name set"));
+    }
+
+    #[test]
+    fn test_format_selection_message_no_skipped() {
+        let msg = format_selection_message("Select a user:", &[], 0);
+        assert_eq!(msg, "Select a user:");
+    }
+
+    #[test]
+    fn test_format_selection_message_with_skipped() {
+        let skipped = vec!["LongUserName".to_string()];
+        let msg = format_selection_message("Select a user:", &skipped, 0);
+        assert!(msg.contains("Select a user:"));
+        assert!(msg.contains("LongUserName"));
+        assert!(msg.contains("1 user(s)"));
+    }
+
+    #[test]
+    fn test_format_selection_message_with_unnamed() {
+        let msg = format_selection_message("Select a user:", &[], 3);
+        assert!(msg.contains("Select a user:"));
+        assert!(msg.contains("3 unnamed user(s) not shown"));
+        assert!(msg.contains("/users"));
+    }
+
+    #[test]
+    fn test_format_selection_message_with_skipped_and_unnamed() {
+        let skipped = vec!["LongName".to_string()];
+        let msg = format_selection_message("Select a user:", &skipped, 2);
+        assert!(msg.contains("Select a user:"));
+        assert!(msg.contains("LongName"));
+        assert!(msg.contains("2 unnamed user(s) not shown"));
     }
 }
