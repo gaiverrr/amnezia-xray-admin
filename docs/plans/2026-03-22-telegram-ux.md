@@ -45,13 +45,13 @@ Two improvements to the Telegram bot:
 - [x] run tests — must pass before next task
 
 ### Task 3: Inline buttons for /qr without argument
-- [ ] modify `/qr` handler:
+- [x] modify `/qr` handler:
   - without argument: show user list as inline keyboard
   - callback data: "qr:{user_name}"
-- [ ] when button pressed: generate QR PNG, send as photo
-- [ ] reuse inline keyboard building from Task 2 (extract helper function `build_user_keyboard(users, prefix)`)
-- [ ] write tests for keyboard building
-- [ ] run tests — must pass before next task
+- [x] when button pressed: generate QR PNG, send as photo
+- [x] reuse inline keyboard building from Task 2 (extract helper function `build_user_keyboard(users, prefix)`)
+- [x] write tests for keyboard building
+- [x] run tests — must pass before next task
 
 ### Task 4: Inline buttons for /delete without argument
 - [ ] modify `/delete` handler:

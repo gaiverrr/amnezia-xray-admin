@@ -26,6 +26,8 @@ pub struct BotState {
 
 /// Callback query prefix for URL inline buttons.
 const URL_PREFIX: &str = "url:";
+/// Callback query prefix for QR inline buttons.
+const QR_PREFIX: &str = "qr:";
 /// Callback query prefix for delete confirmation buttons.
 const DELETE_CONFIRM_PREFIX: &str = "delete_confirm:";
 /// Callback query prefix for delete cancel buttons.
@@ -311,7 +313,16 @@ async fn handle_command(
         Command::Qr(name) => {
             let name = name.trim().to_string();
             if name.is_empty() {
-                bot.send_message(chat_id, "Usage: /qr <name>").await?;
+                match cmd_user_keyboard(&state, QR_PREFIX).await {
+                    Ok(keyboard) => {
+                        bot.send_message(chat_id, "Select a user:")
+                            .reply_markup(keyboard)
+                            .await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(chat_id, format!("Error: {}", e)).await?;
+                    }
+                }
             } else {
                 match cmd_qr(&state, &name).await {
                     Ok((png_bytes, caption)) => {
@@ -477,6 +488,22 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
         bot.answer_callback_query(q.id.clone()).await?;
         if let Some(ref msg) = q.message {
             bot.edit_message_text(chat_id, msg.id(), &text).await?;
+        }
+    } else if let Some(user_name) = data.strip_prefix(QR_PREFIX) {
+        bot.answer_callback_query(q.id.clone()).await?;
+        match cmd_qr(&state, user_name).await {
+            Ok((png_bytes, caption)) => {
+                let input = InputFile::memory(png_bytes).file_name("qr.png");
+                bot.send_photo(chat_id, input).caption(caption).await?;
+                // Remove the inline keyboard from the original message
+                if let Some(ref msg) = q.message {
+                    bot.edit_message_text(chat_id, msg.id(), format!("QR for {}", user_name))
+                        .await?;
+                }
+            }
+            Err(e) => {
+                bot.send_message(chat_id, format!("Error: {}", e)).await?;
+            }
         }
     } else if let Some(uuid) = data.strip_prefix(DELETE_CONFIRM_PREFIX) {
         let text = match cmd_delete_execute(&state, uuid).await {
@@ -995,6 +1022,64 @@ mod tests {
     fn test_url_callback_data_no_match() {
         let callback_data = "qr:Alice";
         assert!(callback_data.strip_prefix(URL_PREFIX).is_none());
+    }
+
+    #[test]
+    fn test_qr_callback_data_parsing() {
+        let callback_data = "qr:Alice";
+        let user_name = callback_data.strip_prefix(QR_PREFIX);
+        assert_eq!(user_name, Some("Alice"));
+
+        let callback_data = "qr:Bob's Phone [iOS]";
+        let user_name = callback_data.strip_prefix(QR_PREFIX);
+        assert_eq!(user_name, Some("Bob's Phone [iOS]"));
+    }
+
+    #[test]
+    fn test_qr_callback_data_no_match() {
+        let callback_data = "url:Alice";
+        assert!(callback_data.strip_prefix(QR_PREFIX).is_none());
+
+        let callback_data = "delete:Alice";
+        assert!(callback_data.strip_prefix(QR_PREFIX).is_none());
+    }
+
+    #[test]
+    fn test_build_user_keyboard_qr_prefix() {
+        let users = vec![
+            XrayUser {
+                uuid: "uuid-1".to_string(),
+                name: "Alice".to_string(),
+                email: "Alice@vpn".to_string(),
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            },
+            XrayUser {
+                uuid: "uuid-2".to_string(),
+                name: "Bob".to_string(),
+                email: "Bob@vpn".to_string(),
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            },
+        ];
+        let keyboard = build_user_keyboard(&users, QR_PREFIX);
+        let buttons = &keyboard.inline_keyboard;
+        assert_eq!(buttons.len(), 2);
+        assert_eq!(buttons[0][0].text, "Alice");
+        assert_eq!(buttons[1][0].text, "Bob");
+
+        let alice_data = match &buttons[0][0].kind {
+            teloxide::types::InlineKeyboardButtonKind::CallbackData(d) => d.clone(),
+            _ => panic!("expected callback data"),
+        };
+        let bob_data = match &buttons[1][0].kind {
+            teloxide::types::InlineKeyboardButtonKind::CallbackData(d) => d.clone(),
+            _ => panic!("expected callback data"),
+        };
+        assert_eq!(alice_data, "qr:Alice");
+        assert_eq!(bob_data, "qr:Bob");
     }
 
     #[test]
