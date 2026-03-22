@@ -858,6 +858,17 @@ mod tests {
     }
 
     #[test]
+    fn test_add_without_argument_shows_usage_hint() {
+        // /add without argument passes empty string to validate_user_name,
+        // which returns a usage hint instead of proceeding with add
+        let result = validate_user_name("");
+        assert_eq!(result, Some("Usage: /add <name>".to_string()));
+
+        let result_whitespace = validate_user_name("   ");
+        assert_eq!(result_whitespace, Some("Usage: /add <name>".to_string()));
+    }
+
+    #[test]
     fn test_validate_user_name_too_long() {
         let long_name = "a".repeat(65);
         let result = validate_user_name(&long_name);

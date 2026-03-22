@@ -65,13 +65,13 @@ Two improvements to the Telegram bot:
 - [x] run tests — must pass before next task
 
 ### Task 5: /add without argument prompts for name
-- [ ] modify `/add` handler:
+- [x] modify `/add` handler:
   - with argument: existing behavior
   - without argument: reply "Send me the user name:" and set conversation state to awaiting_name
-- [ ] add simple state machine: when next text message arrives from admin → treat as user name, call add_user
-- [ ] alternative simpler approach: just reply "Usage: /add <name>" with example
-- [ ] write tests for handler behavior
-- [ ] run tests — must pass before next task
+- [x] add simple state machine: when next text message arrives from admin → treat as user name, call add_user
+- [x] alternative simpler approach: just reply "Usage: /add <name>" with example
+- [x] write tests for handler behavior
+- [x] run tests — must pass before next task
 
 ### Task 6: Update deploy flow with admin-id
 - [ ] update `deploy_bot()` in `src/backend.rs`: pass ADMIN_ID env var to Docker container
