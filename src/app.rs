@@ -98,7 +98,10 @@ impl App {
             add_user_state: AddUserState::default(),
             user_detail_state: UserDetailState::default(),
             qr_view_state: QrViewState::default(),
-            telegram_setup_state: TelegramSetupState::from_token(config.telegram_token.as_deref()),
+            telegram_setup_state: TelegramSetupState::from_config(
+                config.telegram_token.as_deref(),
+                config.telegram_admin_chat_id,
+            ),
             config,
             runtime,
             backend_rx: rx,
@@ -187,8 +190,10 @@ impl App {
                 }
             }
             KeyCode::Char('t') => {
-                self.telegram_setup_state =
-                    TelegramSetupState::from_token(self.config.telegram_token.as_deref());
+                self.telegram_setup_state = TelegramSetupState::from_config(
+                    self.config.telegram_token.as_deref(),
+                    self.config.telegram_admin_chat_id,
+                );
                 self.screen = Screen::TelegramSetup;
             }
             _ => {}
@@ -418,6 +423,7 @@ impl App {
         if self.telegram_setup_state.deploy_requested && !self.pending_deploy {
             self.telegram_setup_state.deploy_requested = false;
             let token = self.telegram_setup_state.token.trim().to_string();
+            let admin_id_str = self.telegram_setup_state.admin_id.trim().to_string();
 
             if !telegram_setup::is_valid_token(&token) {
                 self.telegram_setup_state.deploy_status = telegram_setup::DeployStatus::Error(
@@ -426,8 +432,18 @@ impl App {
                 return;
             }
 
-            // Save token to config
+            let admin_id: i64 = match admin_id_str.parse() {
+                Ok(id) => id,
+                Err(_) => {
+                    self.telegram_setup_state.deploy_status =
+                        telegram_setup::DeployStatus::Error("Invalid Admin ID (must be a number)".to_string());
+                    return;
+                }
+            };
+
+            // Save token and admin ID to config
             self.config.telegram_token = Some(token.clone());
+            self.config.telegram_admin_chat_id = Some(admin_id);
             if let Err(e) = self.config.save() {
                 self.telegram_setup_state.deploy_status =
                     telegram_setup::DeployStatus::Error(format!("Config save failed: {}", e));
@@ -1293,9 +1309,11 @@ mod tests {
     fn test_telegram_setup_preserves_token_from_config() {
         let mut app = App::new(true, test_runtime());
         app.config.telegram_token = Some("123:abc".to_string());
+        app.config.telegram_admin_chat_id = Some(987654321);
         app.handle_key(make_key(KeyCode::Char('t')));
         assert_eq!(app.screen, Screen::TelegramSetup);
         assert_eq!(app.telegram_setup_state.token, "123:abc");
+        assert_eq!(app.telegram_setup_state.admin_id, "987654321");
     }
 
     #[test]

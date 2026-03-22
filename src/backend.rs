@@ -613,4 +613,41 @@ mod tests {
         assert_eq!(PUBLIC_KEY_PATH, "/opt/amnezia/xray/xray_public.key");
         assert!(PUBLIC_KEY_PATH.starts_with("/opt/amnezia/"));
     }
+
+    #[tokio::test]
+    async fn test_deploy_bot_requires_admin_id() {
+        let config = Config {
+            host: Some("1.2.3.4".to_string()),
+            port: 22,
+            user: "root".to_string(),
+            key_path: None,
+            ssh_host: None,
+            container: "amnezia-xray".to_string(),
+            telegram_token: None,
+            telegram_admin_chat_id: None, // no admin_id
+        };
+        let result = deploy_bot(&config, "123:abc").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("admin_id is required"));
+    }
+
+    #[tokio::test]
+    async fn test_deploy_bot_with_admin_id_attempts_connection() {
+        let config = Config {
+            host: Some("192.0.2.1".to_string()), // non-routable IP
+            port: 22,
+            user: "root".to_string(),
+            key_path: None,
+            ssh_host: None,
+            container: "amnezia-xray".to_string(),
+            telegram_token: None,
+            telegram_admin_chat_id: Some(123456789),
+        };
+        // With admin_id set, it should pass the admin_id check and fail at SSH connection
+        let result = deploy_bot(&config, "123:abc").await;
+        assert!(result.is_err());
+        // Should NOT be the "admin_id is required" error
+        let err = result.unwrap_err();
+        assert!(!err.contains("admin_id is required"), "got: {}", err);
+    }
 }

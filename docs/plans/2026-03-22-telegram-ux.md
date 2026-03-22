@@ -74,12 +74,12 @@ Two improvements to the Telegram bot:
 - [x] run tests — must pass before next task
 
 ### Task 6: Update deploy flow with admin-id
-- [ ] update `deploy_bot()` in `src/backend.rs`: pass ADMIN_ID env var to Docker container
-- [ ] update docker-compose generation (if exists) with ADMIN_ID
-- [ ] update TUI Telegram setup screen: add admin ID field (or auto-detect hint)
-- [ ] add hint in setup: "To find your Telegram ID: send /start to @userinfobot"
-- [ ] write tests for deploy command generation with admin_id
-- [ ] run tests — must pass before next task
+- [x] update `deploy_bot()` in `src/backend.rs`: pass ADMIN_ID env var to Docker container
+- [x] update docker-compose generation (if exists) with ADMIN_ID
+- [x] update TUI Telegram setup screen: add admin ID field (or auto-detect hint)
+- [x] add hint in setup: "To find your Telegram ID: send /start to @userinfobot"
+- [x] write tests for deploy command generation with admin_id
+- [x] run tests — must pass before next task
 
 ### Task 7: Verify acceptance criteria
 - [ ] verify /url without arg shows inline buttons

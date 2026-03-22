@@ -9,11 +9,16 @@ use super::theme;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TelegramField {
     Token,
+    AdminId,
     DeployToVps,
 }
 
 impl TelegramField {
-    pub const ALL: [TelegramField; 2] = [TelegramField::Token, TelegramField::DeployToVps];
+    pub const ALL: [TelegramField; 3] = [
+        TelegramField::Token,
+        TelegramField::AdminId,
+        TelegramField::DeployToVps,
+    ];
 
     #[allow(dead_code)]
     pub fn is_button(&self) -> bool {
@@ -39,6 +44,7 @@ pub enum DeployStatus {
 #[derive(Debug, Clone)]
 pub struct TelegramSetupState {
     pub token: String,
+    pub admin_id: String,
     pub focused: usize,
     pub deploy_status: DeployStatus,
     pub deploy_requested: bool,
@@ -48,6 +54,7 @@ impl Default for TelegramSetupState {
     fn default() -> Self {
         Self {
             token: String::new(),
+            admin_id: String::new(),
             focused: 0,
             deploy_status: DeployStatus::None,
             deploy_requested: false,
@@ -56,12 +63,19 @@ impl Default for TelegramSetupState {
 }
 
 impl TelegramSetupState {
-    /// Pre-fill token from config if available
-    pub fn from_token(token: Option<&str>) -> Self {
+    /// Pre-fill token and admin ID from config if available
+    pub fn from_config(token: Option<&str>, admin_id: Option<i64>) -> Self {
         Self {
             token: token.unwrap_or_default().to_string(),
+            admin_id: admin_id.map(|id| id.to_string()).unwrap_or_default(),
             ..Default::default()
         }
+    }
+
+    /// Pre-fill token from config if available (legacy helper, used in tests)
+    #[cfg(test)]
+    pub fn from_token(token: Option<&str>) -> Self {
+        Self::from_config(token, None)
     }
 
     /// Get the currently focused field
@@ -96,7 +110,7 @@ impl TelegramSetupState {
             }
             KeyCode::Enter => {
                 if self.focused_field() == TelegramField::DeployToVps {
-                    if !self.token.trim().is_empty() {
+                    if !self.token.trim().is_empty() && !self.admin_id.trim().is_empty() {
                         self.deploy_requested = true;
                     }
                 } else {
@@ -104,22 +118,30 @@ impl TelegramSetupState {
                 }
                 true
             }
-            KeyCode::Char(c) => {
-                if self.focused_field() == TelegramField::Token {
+            KeyCode::Char(c) => match self.focused_field() {
+                TelegramField::Token => {
                     self.token.push(c);
                     true
-                } else {
-                    false
                 }
-            }
-            KeyCode::Backspace => {
-                if self.focused_field() == TelegramField::Token {
+                TelegramField::AdminId => {
+                    if c.is_ascii_digit() {
+                        self.admin_id.push(c);
+                    }
+                    true
+                }
+                _ => false,
+            },
+            KeyCode::Backspace => match self.focused_field() {
+                TelegramField::Token => {
                     self.token.pop();
                     true
-                } else {
-                    false
                 }
-            }
+                TelegramField::AdminId => {
+                    self.admin_id.pop();
+                    true
+                }
+                _ => false,
+            },
             _ => false,
         }
     }
@@ -193,6 +215,9 @@ pub fn draw(state: &TelegramSetupState, frame: &mut ratatui::Frame, area: Rect) 
             Constraint::Length(1), // spacer
             Constraint::Length(1), // token input
             Constraint::Length(1), // spacer
+            Constraint::Length(1), // admin id input
+            Constraint::Length(1), // admin id hint
+            Constraint::Length(1), // spacer
             Constraint::Length(1), // deploy button
             Constraint::Length(1), // spacer
             Constraint::Length(3), // deploy status
@@ -220,8 +245,8 @@ pub fn draw(state: &TelegramSetupState, frame: &mut ratatui::Frame, area: Rect) 
             theme::text_style(),
         )),
         Line::from(Span::styled(
-            "  4. After deploy, send /start to your bot to become admin",
-            theme::muted_style(),
+            "  4. Enter your Telegram ID (only you will be able to control the bot)",
+            theme::text_style(),
         )),
     ];
     frame.render_widget(Paragraph::new(instructions), chunks[0]);
@@ -229,11 +254,23 @@ pub fn draw(state: &TelegramSetupState, frame: &mut ratatui::Frame, area: Rect) 
     // Token input
     draw_token_input(state, frame, chunks[2]);
 
+    // Admin ID input
+    draw_admin_id_input(state, frame, chunks[4]);
+
+    // Admin ID hint
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "                  To find your Telegram ID: send /start to @userinfobot",
+            theme::muted_style(),
+        ))),
+        chunks[5],
+    );
+
     // Deploy button
-    draw_deploy_button(state, frame, chunks[4]);
+    draw_deploy_button(state, frame, chunks[7]);
 
     // Deploy status
-    draw_deploy_status(state, frame, chunks[6]);
+    draw_deploy_status(state, frame, chunks[9]);
 }
 
 fn draw_token_input(state: &TelegramSetupState, frame: &mut ratatui::Frame, area: Rect) {
@@ -280,6 +317,60 @@ fn draw_token_input(state: &TelegramSetupState, frame: &mut ratatui::Frame, area
         } else {
             masked
         }
+    };
+
+    let value_style = if focused {
+        theme::title_style()
+    } else {
+        theme::text_style()
+    };
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(display_value, value_style))),
+        cols[3],
+    );
+}
+
+fn draw_admin_id_input(state: &TelegramSetupState, frame: &mut ratatui::Frame, area: Rect) {
+    let focused = state.focused_field() == TelegramField::AdminId;
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(2),  // margin
+            Constraint::Length(14), // label
+            Constraint::Length(2),  // separator
+            Constraint::Min(20),    // input
+        ])
+        .split(area);
+
+    let label_style = if focused {
+        theme::secondary_style()
+    } else {
+        theme::muted_style()
+    };
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled("Admin ID", label_style))),
+        cols[1],
+    );
+
+    let separator = if focused { "> " } else { ": " };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(separator, label_style))),
+        cols[2],
+    );
+
+    let display_value = if state.admin_id.is_empty() {
+        if focused {
+            "_".to_string()
+        } else {
+            String::new()
+        }
+    } else if focused {
+        format!("{}_", state.admin_id)
+    } else {
+        state.admin_id.clone()
     };
 
     let value_style = if focused {
@@ -373,6 +464,7 @@ mod tests {
     fn test_default_state() {
         let state = TelegramSetupState::default();
         assert_eq!(state.token, "");
+        assert_eq!(state.admin_id, "");
         assert_eq!(state.focused, 0);
         assert!(!state.deploy_requested);
         assert_eq!(state.deploy_status, DeployStatus::None);
@@ -382,6 +474,7 @@ mod tests {
     fn test_from_token() {
         let state = TelegramSetupState::from_token(Some("123:abc"));
         assert_eq!(state.token, "123:abc");
+        assert_eq!(state.admin_id, "");
     }
 
     #[test]
@@ -391,9 +484,25 @@ mod tests {
     }
 
     #[test]
+    fn test_from_config() {
+        let state = TelegramSetupState::from_config(Some("123:abc"), Some(987654321));
+        assert_eq!(state.token, "123:abc");
+        assert_eq!(state.admin_id, "987654321");
+    }
+
+    #[test]
+    fn test_from_config_none_admin_id() {
+        let state = TelegramSetupState::from_config(Some("123:abc"), None);
+        assert_eq!(state.token, "123:abc");
+        assert_eq!(state.admin_id, "");
+    }
+
+    #[test]
     fn test_focus_next() {
         let mut state = TelegramSetupState::default();
         assert_eq!(state.focused_field(), TelegramField::Token);
+        state.focus_next();
+        assert_eq!(state.focused_field(), TelegramField::AdminId);
         state.focus_next();
         assert_eq!(state.focused_field(), TelegramField::DeployToVps);
         state.focus_next();
@@ -417,6 +526,35 @@ mod tests {
     }
 
     #[test]
+    fn test_typing_admin_id() {
+        let mut state = TelegramSetupState::default();
+        state.focused = 1; // AdminId
+        state.handle_key(make_key(KeyCode::Char('1')));
+        state.handle_key(make_key(KeyCode::Char('2')));
+        state.handle_key(make_key(KeyCode::Char('3')));
+        assert_eq!(state.admin_id, "123");
+    }
+
+    #[test]
+    fn test_typing_admin_id_ignores_non_digits() {
+        let mut state = TelegramSetupState::default();
+        state.focused = 1; // AdminId
+        state.handle_key(make_key(KeyCode::Char('1')));
+        state.handle_key(make_key(KeyCode::Char('a')));
+        state.handle_key(make_key(KeyCode::Char('2')));
+        assert_eq!(state.admin_id, "12");
+    }
+
+    #[test]
+    fn test_backspace_admin_id() {
+        let mut state = TelegramSetupState::default();
+        state.admin_id = "123".to_string();
+        state.focused = 1; // AdminId
+        state.handle_key(make_key(KeyCode::Backspace));
+        assert_eq!(state.admin_id, "12");
+    }
+
+    #[test]
     fn test_backspace_token() {
         let mut state = TelegramSetupState::default();
         state.token = "123".to_string();
@@ -427,23 +565,24 @@ mod tests {
     #[test]
     fn test_typing_on_button_not_consumed() {
         let mut state = TelegramSetupState::default();
-        state.focused = 1; // DeployToVps
+        state.focused = 2; // DeployToVps
         let consumed = state.handle_key(make_key(KeyCode::Char('x')));
         assert!(!consumed);
     }
 
     #[test]
-    fn test_enter_on_token_moves_to_deploy() {
+    fn test_enter_on_token_moves_to_admin_id() {
         let mut state = TelegramSetupState::default();
         state.handle_key(make_key(KeyCode::Enter));
-        assert_eq!(state.focused_field(), TelegramField::DeployToVps);
+        assert_eq!(state.focused_field(), TelegramField::AdminId);
     }
 
     #[test]
-    fn test_enter_on_deploy_with_token() {
+    fn test_enter_on_deploy_with_token_and_admin_id() {
         let mut state = TelegramSetupState::default();
         state.token = "123:abc".to_string();
-        state.focused = 1;
+        state.admin_id = "987654321".to_string();
+        state.focused = 2; // DeployToVps
         state.handle_key(make_key(KeyCode::Enter));
         assert!(state.deploy_requested);
     }
@@ -451,7 +590,17 @@ mod tests {
     #[test]
     fn test_enter_on_deploy_without_token() {
         let mut state = TelegramSetupState::default();
-        state.focused = 1;
+        state.admin_id = "123".to_string();
+        state.focused = 2; // DeployToVps
+        state.handle_key(make_key(KeyCode::Enter));
+        assert!(!state.deploy_requested);
+    }
+
+    #[test]
+    fn test_enter_on_deploy_without_admin_id() {
+        let mut state = TelegramSetupState::default();
+        state.token = "123:abc".to_string();
+        state.focused = 2; // DeployToVps
         state.handle_key(make_key(KeyCode::Enter));
         assert!(!state.deploy_requested);
     }
