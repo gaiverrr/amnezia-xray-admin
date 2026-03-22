@@ -350,91 +350,6 @@ pub fn spawn_deploy_bot(
     });
 }
 
-/// Detect VPS architecture (x86_64 or aarch64).
-async fn detect_vps_arch(backend: &SshBackend) -> String {
-    if let Ok(result) = backend.exec_on_host("uname -m").await {
-        let arch = result.stdout.trim().to_string();
-        match arch.as_str() {
-            "x86_64" | "amd64" => return "x86_64-unknown-linux-gnu".to_string(),
-            "aarch64" | "arm64" => return "aarch64-unknown-linux-gnu".to_string(),
-            _ => {}
-        }
-    }
-    "x86_64-unknown-linux-gnu".to_string() // default
-}
-
-/// Cross-compile the binary locally for the given target.
-/// Uses `cross` if available, falls back to `cargo build --target`.
-async fn cross_compile_locally(target: &str) -> Result<Vec<u8>, String> {
-    // Check if cross is available
-    let use_cross = tokio::process::Command::new("cross")
-        .arg("--version")
-        .output()
-        .await
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    let (cmd, args) = if use_cross {
-        ("cross", vec!["build", "--release", "--target", target])
-    } else {
-        ("cargo", vec!["build", "--release", "--target", target])
-    };
-
-    let output = tokio::process::Command::new(cmd)
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| format!("Failed to run {}: {}. Install cross: cargo install cross", cmd, e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if !use_cross && stderr.contains("linker") {
-            return Err(format!(
-                "Cross-compilation failed (missing linker for {}). Install cross:\n  cargo install cross\nThen retry deploy.",
-                target
-            ));
-        }
-        return Err(format!(
-            "Build failed: {}",
-            stderr.chars().take(500).collect::<String>()
-        ));
-    }
-
-    let binary_path = format!("target/{}/release/amnezia-xray-admin", target);
-    std::fs::read(&binary_path).map_err(|e| format!("Failed to read compiled binary at {}: {}", binary_path, e))
-}
-
-/// Upload data to a remote file in chunks to avoid ARG_MAX limits.
-/// Large base64 strings (e.g. Cargo.lock ~40KB) exceed shell argument limits.
-async fn upload_chunked(
-    backend: &SshBackend,
-    data: &[u8],
-    remote_path: &str,
-) -> Result<(), String> {
-    use base64::Engine;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(data);
-    const CHUNK: usize = 48_000; // well within 128KB ARG_MAX
-
-    for (i, chunk) in b64.as_bytes().chunks(CHUNK).enumerate() {
-        let chunk_str = std::str::from_utf8(chunk).unwrap();
-        let op = if i == 0 { ">" } else { ">>" };
-        let cmd = format!("printf '%s' '{}' {} {}.b64", chunk_str, op, remote_path);
-        let result = backend.exec_on_host(&cmd).await
-            .map_err(|e| format!("upload chunk failed: {}", e))?;
-        if !result.success() {
-            return Err(format!("upload chunk failed: {}", result.combined_output()));
-        }
-    }
-
-    let cmd = format!("base64 -d {}.b64 > {} && rm -f {}.b64", remote_path, remote_path, remote_path);
-    let result = backend.exec_on_host(&cmd).await
-        .map_err(|e| format!("base64 decode failed: {}", e))?;
-    if !result.success() {
-        return Err(format!("base64 decode failed: {}", result.combined_output()));
-    }
-    Ok(())
-}
-
 /// Deploy bot with progress updates sent to the TUI channel.
 async fn deploy_bot_with_progress(
     config: &Config,
@@ -454,82 +369,21 @@ async fn deploy_bot_inner(
     token: &str,
     tx: Option<&mpsc::Sender<BackendMsg>>,
 ) -> Result<String, String> {
-    use crate::ui::telegram_setup::generate_compose_yaml;
-    use base64::Engine;
-
     let admin_id = config
         .telegram_admin_chat_id
         .ok_or_else(|| "admin_id is required for deploy".to_string())?;
 
     let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
 
-    // Create directory
-    backend
-        .exec_on_host("mkdir -p /opt/axadmin")
-        .await
-        .map_err(|e| format!("Failed to create directory: {}", e))?;
-
-    // Write docker-compose.yml
-    let compose = generate_compose_yaml(token, &config.container, admin_id);
-    let compose_b64 = base64::engine::general_purpose::STANDARD.encode(compose.as_bytes());
-    // Use subshell with umask to create the file with restricted permissions
-    // from the start, avoiding a window where the token is world-readable.
-    let write_cmd = format!(
-        "(umask 077 && echo '{}' | base64 -d > /opt/axadmin/docker-compose.yml)",
-        compose_b64
-    );
-    let result = backend
-        .exec_on_host(&write_cmd)
-        .await
-        .map_err(|e| format!("Failed to write compose file: {}", e))?;
-    if !result.success() {
-        return Err(format!(
-            "Failed to write compose file: {}",
-            result.stderr.trim()
-        ));
-    }
-
-    // Write Dockerfile
-    let dockerfile = include_str!("../Dockerfile");
-    let dockerfile_b64 = base64::engine::general_purpose::STANDARD.encode(dockerfile.as_bytes());
-    let write_df_cmd = format!(
-        "echo '{}' | base64 -d > /opt/axadmin/Dockerfile",
-        dockerfile_b64
-    );
-    let result = backend
-        .exec_on_host(&write_df_cmd)
-        .await
-        .map_err(|e| format!("Failed to write Dockerfile: {}", e))?;
-    if !result.success() {
-        return Err(format!(
-            "Failed to write Dockerfile: {}",
-            result.stderr.trim()
-        ));
-    }
-
-    // Cross-compile binary locally for Linux x86_64
+    // Pull pre-built Docker image from GitHub Container Registry
     if let Some(tx) = tx { let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::BuildingImage)); }
 
-    let target = detect_vps_arch(&backend).await;
-    let binary = cross_compile_locally(&target).await?;
-
-    // Upload binary + Dockerfile to VPS
-    if let Some(tx) = tx { let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::CreatingCompose)); }
-    upload_chunked(&backend, &binary, "/opt/axadmin/amnezia-xray-admin")
-        .await
-        .map_err(|e| format!("Failed to upload binary: {}", e))?;
-    backend
-        .exec_on_host("chmod +x /opt/axadmin/amnezia-xray-admin")
-        .await
-        .map_err(|e| format!("Failed to chmod binary: {}", e))?;
-
-    // Build minimal Docker image (no compilation — just copies the binary, ~10 seconds)
     let result = backend
-        .exec_on_host("cd /opt/axadmin && docker build -t axadmin . 2>&1")
+        .exec_on_host("docker pull ghcr.io/gaiverrr/amnezia-xray-admin:latest 2>&1")
         .await
-        .map_err(|e| format!("Docker build failed: {}", e))?;
+        .map_err(|e| format!("Docker pull failed: {}", e))?;
     if !result.success() {
-        return Err(format!("Docker build failed: {}", result.combined_output()));
+        return Err(format!("Docker pull failed: {}", result.combined_output()));
     }
 
     // Stop existing container if running
@@ -545,7 +399,8 @@ async fn deploy_bot_inner(
          -e TELEGRAM_TOKEN='{}' \
          -e ADMIN_ID='{}' \
          -e XRAY_CONTAINER='{}' \
-         axadmin --telegram-bot --local --container '{}' --admin-id {} 2>&1",
+         ghcr.io/gaiverrr/amnezia-xray-admin:latest \
+         --telegram-bot --local --container '{}' --admin-id {} 2>&1",
         token, admin_id, config.container, config.container, admin_id
     );
     let result = backend

@@ -80,3 +80,40 @@ jobs:
           files: |
             amnezia-xray-admin-*.tar.gz
             amnezia-xray-admin-*.tar.gz.sha256
+
+  # Build and push Docker image to GitHub Container Registry
+  # Used by --deploy-bot to pull pre-built image on VPS
+  docker:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux x86_64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: amnezia-xray-admin-x86_64-unknown-linux-gnu
+
+      - name: Extract binary for Docker
+        run: |
+          tar xzf amnezia-xray-admin-x86_64-unknown-linux-gnu.tar.gz
+          chmod +x amnezia-xray-admin
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}

@@ -175,7 +175,8 @@ pub fn is_valid_token(token: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Generate a docker-compose.yml content for the Telegram bot
+/// Generate a docker-compose.yml content for the Telegram bot (kept for future use)
+#[allow(dead_code)]
 pub fn generate_compose_yaml(token: &str, container: &str, admin_id: i64) -> String {
     format!(
         r#"services:
@@ -422,23 +423,20 @@ fn draw_deploy_status(state: &TelegramSetupState, frame: &mut ratatui::Frame, ar
             format!("  {} [1/5] Connecting to VPS...", deploy_spinner()),
             theme::secondary_style(),
         ),
-        DeployStatus::CreatingCompose => (
-            format!("  {} [3/5] Uploading binary to VPS...", deploy_spinner()),
+        DeployStatus::BuildingImage => (
+            format!("  {} [2/4] Pulling Docker image...", deploy_spinner()),
             theme::secondary_style(),
         ),
-        DeployStatus::BuildingImage => (
-            format!(
-                "  {} [2/5] Compiling for Linux (this runs on your Mac, not VPS)...",
-                deploy_spinner()
-            ),
+        DeployStatus::CreatingCompose => (
+            format!("  {} [3/4] Configuring...", deploy_spinner()),
             theme::secondary_style(),
         ),
         DeployStatus::StartingBot => (
-            format!("  {} [4/5] Starting bot container...", deploy_spinner()),
+            format!("  {} [3/4] Starting bot container...", deploy_spinner()),
             theme::secondary_style(),
         ),
         DeployStatus::Verifying => (
-            format!("  {} [5/5] Verifying bot is running...", deploy_spinner()),
+            format!("  {} [4/4] Verifying bot is running...", deploy_spinner()),
             theme::secondary_style(),
         ),
         DeployStatus::Success(msg) => (format!("  ✓ {}", msg), theme::title_style()),
