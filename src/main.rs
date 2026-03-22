@@ -636,7 +636,10 @@ async fn cli_add_user(config: &Config, name: &str, local: bool) -> error::Result
     // URL generation is best-effort: if it fails, the user was still added successfully.
     match backend::build_vless_url(backend.as_ref(), &uuid, name).await {
         Ok(vless_url) => println!("URL:   {}", vless_url),
-        Err(e) => eprintln!("Warning: URL generation failed: {}. Use --user-url to retry.", e),
+        Err(e) => eprintln!(
+            "Warning: URL generation failed: {}. Use --user-url to retry.",
+            e
+        ),
     }
 
     Ok(())

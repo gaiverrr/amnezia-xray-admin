@@ -435,8 +435,9 @@ impl App {
             let admin_id: i64 = match admin_id_str.parse() {
                 Ok(id) => id,
                 Err(_) => {
-                    self.telegram_setup_state.deploy_status =
-                        telegram_setup::DeployStatus::Error("Invalid Admin ID (must be a number)".to_string());
+                    self.telegram_setup_state.deploy_status = telegram_setup::DeployStatus::Error(
+                        "Invalid Admin ID (must be a number)".to_string(),
+                    );
                     return;
                 }
             };

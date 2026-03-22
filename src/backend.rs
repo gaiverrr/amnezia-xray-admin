@@ -9,9 +9,9 @@ use crate::backend_trait::{SshBackend, XrayBackend};
 use crate::config::Config;
 use crate::error::AppError;
 use crate::ssh::{expand_tilde, resolve_ssh_host, SshSession};
+use crate::ui::telegram_setup::DeployStatus;
 use crate::xray::client::{generate_vless_url, ServerInfo, XrayApiClient};
 use crate::xray::config::{ensure_api_enabled, read_server_config};
-use crate::ui::telegram_setup::DeployStatus;
 use crate::xray::types::{VlessUrlParams, XrayUser};
 
 /// Path to the Xray public key file on the server (used for vless:// URLs).
@@ -376,7 +376,9 @@ async fn deploy_bot_inner(
     let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
 
     // Pull pre-built Docker image from GitHub Container Registry
-    if let Some(tx) = tx { let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::BuildingImage)); }
+    if let Some(tx) = tx {
+        let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::BuildingImage));
+    }
 
     let result = backend
         .exec_on_host("docker pull ghcr.io/gaiverrr/amnezia-xray-admin:latest 2>&1")
@@ -392,7 +394,9 @@ async fn deploy_bot_inner(
         .await;
 
     // Start container
-    if let Some(tx) = tx { let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::StartingBot)); }
+    if let Some(tx) = tx {
+        let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::StartingBot));
+    }
     let run_cmd = format!(
         "docker run -d --name axadmin --restart unless-stopped \
          -v /var/run/docker.sock:/var/run/docker.sock \
@@ -412,7 +416,9 @@ async fn deploy_bot_inner(
     }
 
     // Verify container is running
-    if let Some(tx) = tx { let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::Verifying)); }
+    if let Some(tx) = tx {
+        let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::Verifying));
+    }
     let result = backend
         .exec_on_host("docker inspect axadmin --format '{{.State.Status}}' 2>&1")
         .await

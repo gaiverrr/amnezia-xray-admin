@@ -84,7 +84,12 @@ pub fn help_text() -> String {
 
 /// Format the welcome message shown after /start for the admin.
 pub fn welcome_text() -> String {
-    ["Welcome, admin!", "", "Use /help to see available commands."].join("\n")
+    [
+        "Welcome, admin!",
+        "",
+        "Use /help to see available commands.",
+    ]
+    .join("\n")
 }
 
 /// Format the access denied message for non-admin users.
