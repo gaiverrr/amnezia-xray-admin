@@ -215,7 +215,12 @@ fn main() {
 /// Create a backend for CLI commands: either LocalBackend (--local) or SshBackend (default).
 async fn connect_cli_backend(config: &Config, local: bool) -> error::Result<Box<dyn XrayBackend>> {
     if local {
-        let hostname = get_local_hostname().await;
+        // Use --host if provided (e.g. from deploy), otherwise auto-detect
+        let hostname = if let Some(ref host) = config.host {
+            host.clone()
+        } else {
+            get_local_hostname().await
+        };
         Ok(Box::new(LocalBackend::new(
             config.container.clone(),
             hostname,
