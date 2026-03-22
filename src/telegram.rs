@@ -159,7 +159,7 @@ pub fn validate_user_name(name: &str) -> Option<String> {
     // Telegram callback_data has a 64-byte limit. With the longest prefix
     // "delete:" (7 bytes), names must stay under 57 bytes. Use 50 for margin.
     if trimmed.len() > 50 {
-        return Some("Name too long (max 50 characters).".to_string());
+        return Some("Name too long (max 50 bytes).".to_string());
     }
     if trimmed.chars().any(|c| c.is_control()) {
         return Some("Name must not contain control characters.".to_string());
@@ -481,15 +481,18 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
         None => return Ok(()),
     };
 
+    // Use q.from.id for the admin check (the user who pressed the button),
+    // not q.message.chat().id (which would be the group ID in group chats).
+    let caller_id = ChatId(q.from.id.0 as i64);
     let chat_id = match q.message {
         Some(ref msg) => msg.chat().id,
         None => return Ok(()),
     };
 
-    // Check admin access
+    // Check admin access using caller_id (who pressed the button)
     {
         let config = state.config.lock().await;
-        if !is_admin(&config, chat_id) {
+        if !is_admin(&config, caller_id) {
             bot.answer_callback_query(q.id.clone())
                 .text("Access denied.")
                 .await?;
