@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 cargo build                    # dev build
 cargo build --release          # release build
-cargo test                     # all 405 tests
+cargo test                     # all 443 tests
 cargo test xray::client        # run tests in one module
 cargo test test_build_rmu      # run a single test by name
 cargo clippy                   # lint (expect dead_code warnings in telegram module)
@@ -34,6 +34,14 @@ cargo run -- --restore                              # restore latest backup
 cargo run -- --restore <timestamp>                  # restore specific backup (YYYYMMDD-HHMMSS)
 cargo run -- --telegram-bot --local --container c  # run Telegram bot daemon
 cargo run -- --deploy-bot --telegram-token <TOKEN> --admin-id <ID>  # deploy bot to VPS via SSH
+```
+
+### Deploy prerequisites
+
+Bot deploy cross-compiles locally for Linux, then uploads the binary to VPS. Requires `cross`:
+```bash
+cargo install cross
+```
 ```
 
 ## Architecture
@@ -64,7 +72,9 @@ cargo run -- --deploy-bot --telegram-token <TOKEN> --admin-id <ID>  # deploy bot
 
 **Guard flags** (`pending_refresh`, `pending_add_name`, etc.) prevent duplicate async operations. `refresh_after_mutation` handles stale fetch results after add/delete.
 
-**Telegram bot**: Uses `teloxide` framework. Runs as `--telegram-bot` mode with `LocalBackend` on VPS. Admin ID set at deploy time via `--admin-id` (no first-/start auto-detect). Commands: /users, /status, /add, /delete, /url, /qr. Commands /url, /qr, /delete without argument show inline keyboard buttons for user selection. /delete includes confirmation step.
+**Telegram bot**: Uses `teloxide` framework. Runs as `--telegram-bot` mode with `LocalBackend` on VPS. Admin ID set at deploy time via `--admin-id`. Commands: /users, /status, /add, /delete, /url, /qr with inline keyboard buttons.
+
+**Deploy strategy**: Cross-compiles binary locally (Mac/Linux → linux-x86_64/aarch64 via `cross`), uploads pre-built binary to VPS, wraps in minimal Docker image (debian:slim + docker.io). No Rust toolchain needed on VPS. Auto-detects VPS architecture.
 
 ## Module Responsibilities
 

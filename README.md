@@ -125,7 +125,7 @@ amnezia-xray-admin --local --container amnezia-xray --list-users
 
 ## Telegram Bot
 
-Manage your VPN users from Telegram. The bot runs as a Docker container on your VPS and communicates with the xray container directly.
+Manage your VPN users from Telegram. The bot is cross-compiled on your machine and deployed as a lightweight Docker container on VPS (no Rust needed on the server).
 
 ### Bot commands
 
@@ -147,9 +147,20 @@ Press `t` on the dashboard to open the Telegram Bot setup screen. Follow the ins
 ### Setup via CLI
 
 ```sh
-# Deploy bot to VPS (connects via SSH, pulls Docker image, starts container)
+# Install cross-compiler (one-time setup)
+cargo install cross
+
+# Deploy bot to VPS (cross-compiles locally, uploads binary, starts Docker container)
 amnezia-xray-admin --ssh-host vps-vpn --deploy-bot --telegram-token "123456:ABC..." --admin-id 123456789
 ```
+
+**How deploy works:**
+1. Cross-compiles the binary on your local machine for Linux (auto-detects VPS architecture)
+2. Uploads the pre-built binary (~10MB) to VPS via SSH
+3. Creates a minimal Docker container (debian + docker CLI + binary)
+4. Starts the bot with `--restart unless-stopped` (survives VPS reboots)
+
+No Rust toolchain is installed on the VPS. Docker build takes ~10 seconds.
 
 The `--admin-id` flag sets your Telegram user ID as the bot admin. To find your ID, send `/start` to [@userinfobot](https://t.me/userinfobot) on Telegram. Only the admin can use bot commands; all other users get "Access denied".
 
@@ -182,6 +193,7 @@ CLI arguments override config file values. Run `amnezia-xray-admin --help` for a
 - A VPS running the **amnezia-xray** Docker container
 - SSH access to the VPS (key-based auth or ssh-agent)
 - Xray configured with VLESS + XTLS-Reality
+- For bot deploy: `cross` (`cargo install cross`) + Docker on your local machine
 
 The tool will automatically enable the Xray gRPC API on first connection if it's not already configured.
 
