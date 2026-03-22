@@ -36,13 +36,13 @@ Two improvements to the Telegram bot:
 - [x] run tests — must pass before next task
 
 ### Task 2: Inline buttons for /url without argument
-- [ ] modify `/url` handler in `src/telegram.rs`:
+- [x] modify `/url` handler in `src/telegram.rs`:
   - with argument: existing behavior (return URL for named user)
   - without argument: fetch user list, send inline keyboard with user names as buttons
-- [ ] add callback query handler for "url:{user_name}" callback data
-- [ ] when button pressed: generate URL, send as reply
-- [ ] write tests for callback data parsing
-- [ ] run tests — must pass before next task
+- [x] add callback query handler for "url:{user_name}" callback data
+- [x] when button pressed: generate URL, send as reply
+- [x] write tests for callback data parsing
+- [x] run tests — must pass before next task
 
 ### Task 3: Inline buttons for /qr without argument
 - [ ] modify `/qr` handler:

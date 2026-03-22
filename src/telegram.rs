@@ -24,6 +24,8 @@ pub struct BotState {
     pub config: Mutex<Config>,
 }
 
+/// Callback query prefix for URL inline buttons.
+const URL_PREFIX: &str = "url:";
 /// Callback query prefix for delete confirmation buttons.
 const DELETE_CONFIRM_PREFIX: &str = "delete_confirm:";
 /// Callback query prefix for delete cancel buttons.
@@ -162,6 +164,24 @@ pub fn validate_user_name(name: &str) -> Option<String> {
     None
 }
 
+/// Build an inline keyboard listing users, with each button using the given callback prefix.
+///
+/// Each button shows the user's name and has callback data `"{prefix}{name}"`.
+/// Users with empty names are skipped.
+pub fn build_user_keyboard(users: &[XrayUser], callback_prefix: &str) -> InlineKeyboardMarkup {
+    let buttons: Vec<Vec<InlineKeyboardButton>> = users
+        .iter()
+        .filter(|u| !u.name.is_empty())
+        .map(|u| {
+            vec![InlineKeyboardButton::callback(
+                &u.name,
+                format!("{}{}", callback_prefix, u.name),
+            )]
+        })
+        .collect();
+    InlineKeyboardMarkup::new(buttons)
+}
+
 /// Build an inline keyboard for delete confirmation.
 pub fn delete_confirmation_keyboard(user_uuid: &str) -> InlineKeyboardMarkup {
     let confirm = InlineKeyboardButton::callback(
@@ -270,7 +290,16 @@ async fn handle_command(
         Command::Url(name) => {
             let name = name.trim().to_string();
             if name.is_empty() {
-                bot.send_message(chat_id, "Usage: /url <name>").await?;
+                match cmd_user_keyboard(&state, URL_PREFIX).await {
+                    Ok(keyboard) => {
+                        bot.send_message(chat_id, "Select a user:")
+                            .reply_markup(keyboard)
+                            .await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(chat_id, format!("Error: {}", e)).await?;
+                    }
+                }
             } else {
                 let text = match cmd_url(&state, &name).await {
                     Ok(t) => t,
@@ -363,6 +392,16 @@ async fn cmd_delete_execute(
     Ok(format_delete_success_message(&name))
 }
 
+/// Build an inline keyboard listing all users, for use by /url, /qr, /delete without arguments.
+async fn cmd_user_keyboard(
+    state: &BotState,
+    callback_prefix: &str,
+) -> std::result::Result<InlineKeyboardMarkup, crate::error::AppError> {
+    let client = XrayApiClient::new(state.backend.as_ref());
+    let users = client.list_users().await?;
+    Ok(build_user_keyboard(&users, callback_prefix))
+}
+
 /// Execute /url command: get vless:// URL for a user.
 async fn cmd_url(
     state: &BotState,
@@ -430,7 +469,16 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
         }
     }
 
-    if let Some(uuid) = data.strip_prefix(DELETE_CONFIRM_PREFIX) {
+    if let Some(user_name) = data.strip_prefix(URL_PREFIX) {
+        let text = match cmd_url(&state, user_name).await {
+            Ok(t) => t,
+            Err(e) => format!("Error: {}", e),
+        };
+        bot.answer_callback_query(q.id.clone()).await?;
+        if let Some(ref msg) = q.message {
+            bot.edit_message_text(chat_id, msg.id(), &text).await?;
+        }
+    } else if let Some(uuid) = data.strip_prefix(DELETE_CONFIRM_PREFIX) {
         let text = match cmd_delete_execute(&state, uuid).await {
             Ok(t) => t,
             Err(e) => format!("Error: {}", e),
@@ -835,6 +883,118 @@ mod tests {
             .join(",");
         assert!(descriptions.contains("url"), "commands: {}", descriptions);
         assert!(descriptions.contains("qr"), "commands: {}", descriptions);
+    }
+
+    // -- Inline keyboard / callback data tests --
+
+    #[test]
+    fn test_build_user_keyboard_url_prefix() {
+        let users = vec![
+            XrayUser {
+                uuid: "uuid-1".to_string(),
+                name: "Alice".to_string(),
+                email: "Alice@vpn".to_string(),
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            },
+            XrayUser {
+                uuid: "uuid-2".to_string(),
+                name: "Bob".to_string(),
+                email: "Bob@vpn".to_string(),
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            },
+        ];
+        let keyboard = build_user_keyboard(&users, URL_PREFIX);
+        let buttons = &keyboard.inline_keyboard;
+        assert_eq!(buttons.len(), 2, "should have two rows");
+        assert_eq!(buttons[0][0].text, "Alice");
+        assert_eq!(buttons[1][0].text, "Bob");
+
+        // Verify callback data
+        let alice_data = match &buttons[0][0].kind {
+            teloxide::types::InlineKeyboardButtonKind::CallbackData(d) => d.clone(),
+            _ => panic!("expected callback data"),
+        };
+        let bob_data = match &buttons[1][0].kind {
+            teloxide::types::InlineKeyboardButtonKind::CallbackData(d) => d.clone(),
+            _ => panic!("expected callback data"),
+        };
+        assert_eq!(alice_data, "url:Alice");
+        assert_eq!(bob_data, "url:Bob");
+    }
+
+    #[test]
+    fn test_build_user_keyboard_skips_empty_names() {
+        let users = vec![
+            XrayUser {
+                uuid: "uuid-1".to_string(),
+                name: "Alice".to_string(),
+                email: "Alice@vpn".to_string(),
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            },
+            XrayUser {
+                uuid: "uuid-2".to_string(),
+                name: String::new(),
+                email: "@vpn".to_string(),
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            },
+        ];
+        let keyboard = build_user_keyboard(&users, "url:");
+        let buttons = &keyboard.inline_keyboard;
+        assert_eq!(buttons.len(), 1, "should skip unnamed user");
+        assert_eq!(buttons[0][0].text, "Alice");
+    }
+
+    #[test]
+    fn test_build_user_keyboard_empty_list() {
+        let keyboard = build_user_keyboard(&[], "url:");
+        assert!(keyboard.inline_keyboard.is_empty());
+    }
+
+    #[test]
+    fn test_build_user_keyboard_different_prefixes() {
+        let users = vec![XrayUser {
+            uuid: "uuid-1".to_string(),
+            name: "Alice".to_string(),
+            email: "Alice@vpn".to_string(),
+            flow: String::new(),
+            stats: TrafficStats::default(),
+            online_count: 0,
+        }];
+
+        for prefix in &["url:", "qr:", "delete:"] {
+            let keyboard = build_user_keyboard(&users, prefix);
+            let data = match &keyboard.inline_keyboard[0][0].kind {
+                teloxide::types::InlineKeyboardButtonKind::CallbackData(d) => d.clone(),
+                _ => panic!("expected callback data"),
+            };
+            assert_eq!(data, format!("{}Alice", prefix));
+        }
+    }
+
+    #[test]
+    fn test_url_callback_data_parsing() {
+        // Verify that URL_PREFIX correctly strips from callback data
+        let callback_data = "url:Alice";
+        let user_name = callback_data.strip_prefix(URL_PREFIX);
+        assert_eq!(user_name, Some("Alice"));
+
+        let callback_data = "url:Bob's Phone [iOS]";
+        let user_name = callback_data.strip_prefix(URL_PREFIX);
+        assert_eq!(user_name, Some("Bob's Phone [iOS]"));
+    }
+
+    #[test]
+    fn test_url_callback_data_no_match() {
+        let callback_data = "qr:Alice";
+        assert!(callback_data.strip_prefix(URL_PREFIX).is_none());
     }
 
     #[test]
