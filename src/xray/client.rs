@@ -60,6 +60,12 @@ impl<'a> XrayApiClient<'a> {
         if name.trim().is_empty() {
             return Err(AppError::Xray("user name cannot be empty".to_string()));
         }
+        // '@' breaks the email format (name@vpn), '>>>' is the stats delimiter
+        if name.contains('@') || name.contains(">>>") {
+            return Err(AppError::Xray(
+                "user name must not contain '@' or '>>>'".to_string(),
+            ));
+        }
         let email = XrayUser::email_from_name(name);
 
         let uuid = Uuid::new_v4().to_string();
@@ -193,7 +199,7 @@ impl<'a> XrayApiClient<'a> {
         self.write_server_config(&config).await?;
 
         // Restart container to pick up new config
-        let restart_cmd = format!("docker restart {}", self.backend.container_name());
+        let restart_cmd = format!("docker restart {}", shell_quote(self.backend.container_name()));
         let result = self.backend.exec_on_host(&restart_cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
@@ -327,7 +333,7 @@ impl<'a> XrayApiClient<'a> {
         }
 
         // Restart container to apply restored config
-        let restart_cmd = format!("docker restart {}", self.backend.container_name());
+        let restart_cmd = format!("docker restart {}", shell_quote(self.backend.container_name()));
         let result = self.backend.exec_on_host(&restart_cmd).await?;
         if !result.success() {
             return Err(AppError::Xray(format!(
