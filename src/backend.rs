@@ -350,6 +350,60 @@ pub fn spawn_deploy_bot(
     });
 }
 
+/// Detect VPS architecture (x86_64 or aarch64).
+async fn detect_vps_arch(backend: &SshBackend) -> String {
+    if let Ok(result) = backend.exec_on_host("uname -m").await {
+        let arch = result.stdout.trim().to_string();
+        match arch.as_str() {
+            "x86_64" | "amd64" => return "x86_64-unknown-linux-gnu".to_string(),
+            "aarch64" | "arm64" => return "aarch64-unknown-linux-gnu".to_string(),
+            _ => {}
+        }
+    }
+    "x86_64-unknown-linux-gnu".to_string() // default
+}
+
+/// Cross-compile the binary locally for the given target.
+/// Uses `cross` if available, falls back to `cargo build --target`.
+async fn cross_compile_locally(target: &str) -> Result<Vec<u8>, String> {
+    // Check if cross is available
+    let use_cross = tokio::process::Command::new("cross")
+        .arg("--version")
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    let (cmd, args) = if use_cross {
+        ("cross", vec!["build", "--release", "--target", target])
+    } else {
+        ("cargo", vec!["build", "--release", "--target", target])
+    };
+
+    let output = tokio::process::Command::new(cmd)
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run {}: {}. Install cross: cargo install cross", cmd, e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !use_cross && stderr.contains("linker") {
+            return Err(format!(
+                "Cross-compilation failed (missing linker for {}). Install cross:\n  cargo install cross\nThen retry deploy.",
+                target
+            ));
+        }
+        return Err(format!(
+            "Build failed: {}",
+            stderr.chars().take(500).collect::<String>()
+        ));
+    }
+
+    let binary_path = format!("target/{}/release/amnezia-xray-admin", target);
+    std::fs::read(&binary_path).map_err(|e| format!("Failed to read compiled binary at {}: {}", binary_path, e))
+}
+
 /// Upload data to a remote file in chunks to avoid ARG_MAX limits.
 /// Large base64 strings (e.g. Cargo.lock ~40KB) exceed shell argument limits.
 async fn upload_chunked(
@@ -453,50 +507,23 @@ async fn deploy_bot_inner(
         ));
     }
 
-    if let Some(tx) = tx { let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::CreatingCompose)); }
-
-    // Upload source files for Docker build context (chunked to avoid ARG_MAX)
-    for filename in &["Cargo.toml", "Cargo.lock"] {
-        let content = std::fs::read_to_string(filename).map_err(|e| {
-            format!(
-                "Failed to read {}: {} (run --deploy-bot from the repo directory)",
-                filename, e
-            )
-        })?;
-        upload_chunked(&backend, content.as_bytes(), &format!("/opt/axadmin/{}", filename))
-            .await
-            .map_err(|e| format!("Failed to upload {}: {}", filename, e))?;
-    }
-
-    // Upload src/ directory as tar archive (chunked to avoid ARG_MAX)
-    let tar_output = tokio::process::Command::new("tar")
-        .args(["cf", "-", "src/"])
-        .output()
-        .await
-        .map_err(|e| {
-            format!(
-                "Failed to tar src/: {} (run --deploy-bot from the repo directory)",
-                e
-            )
-        })?;
-    if !tar_output.status.success() {
-        return Err(
-            "Failed to tar src/ directory. Run --deploy-bot from the repo directory.".to_string(),
-        );
-    }
-    upload_chunked(&backend, &tar_output.stdout, "/tmp/axadmin-src.tar")
-        .await
-        .map_err(|e| format!("Failed to upload src/: {}", e))?;
-    let result = backend
-        .exec_on_host("tar xf /tmp/axadmin-src.tar -C /opt/axadmin/ && rm -f /tmp/axadmin-src.tar")
-        .await
-        .map_err(|e| format!("Failed to extract src/: {}", e))?;
-    if !result.success() {
-        return Err(format!("Failed to extract src/: {}", result.combined_output()));
-    }
-
-    // Build image (this is the slowest step — compiling Rust from source, 5-15 minutes)
+    // Cross-compile binary locally for Linux x86_64
     if let Some(tx) = tx { let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::BuildingImage)); }
+
+    let target = detect_vps_arch(&backend).await;
+    let binary = cross_compile_locally(&target).await?;
+
+    // Upload binary + Dockerfile to VPS
+    if let Some(tx) = tx { let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::CreatingCompose)); }
+    upload_chunked(&backend, &binary, "/opt/axadmin/amnezia-xray-admin")
+        .await
+        .map_err(|e| format!("Failed to upload binary: {}", e))?;
+    backend
+        .exec_on_host("chmod +x /opt/axadmin/amnezia-xray-admin")
+        .await
+        .map_err(|e| format!("Failed to chmod binary: {}", e))?;
+
+    // Build minimal Docker image (no compilation — just copies the binary, ~10 seconds)
     let result = backend
         .exec_on_host("cd /opt/axadmin && docker build -t axadmin . 2>&1")
         .await

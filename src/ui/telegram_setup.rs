@@ -423,12 +423,12 @@ fn draw_deploy_status(state: &TelegramSetupState, frame: &mut ratatui::Frame, ar
             theme::secondary_style(),
         ),
         DeployStatus::CreatingCompose => (
-            format!("  {} [2/5] Uploading files to VPS...", deploy_spinner()),
+            format!("  {} [3/5] Uploading binary to VPS...", deploy_spinner()),
             theme::secondary_style(),
         ),
         DeployStatus::BuildingImage => (
             format!(
-                "  {} [3/5] Building Docker image (compiling Rust — 5-15 min, please wait)...",
+                "  {} [2/5] Compiling for Linux (this runs on your Mac, not VPS)...",
                 deploy_spinner()
             ),
             theme::secondary_style(),
