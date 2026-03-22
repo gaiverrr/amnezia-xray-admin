@@ -350,8 +350,9 @@ pub fn spawn_deploy_bot(
     });
 }
 
-/// Get VPS public IP by running curl on the host (not inside container).
-async fn get_vps_public_ip(backend: &SshBackend) -> String {
+/// Get VPS public IP. Tries curl on the host first, falls back to SSH config host.
+async fn get_vps_public_ip(backend: &SshBackend, config: &Config) -> String {
+    // Try external service via SSH on the host
     for url in &[
         "https://ifconfig.me",
         "https://icanhazip.com",
@@ -369,8 +370,15 @@ async fn get_vps_public_ip(backend: &SshBackend) -> String {
             }
         }
     }
-    // Fallback: use the SSH host from config
-    "UNKNOWN_IP".to_string()
+    // Fallback: resolve from SSH config (host or ssh_host alias)
+    if let Ok((hostname, ..)) = resolve_connection_info(config) {
+        return hostname;
+    }
+    config
+        .host
+        .clone()
+        .or_else(|| config.ssh_host.clone())
+        .unwrap_or_else(|| "UNKNOWN_IP".to_string())
 }
 
 /// Deploy bot with progress updates sent to the TUI channel.
@@ -421,7 +429,7 @@ async fn deploy_bot_inner(
         let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::StartingBot));
     }
     // Get VPS public IP so the bot can generate correct vless:// URLs
-    let vps_ip = get_vps_public_ip(&backend).await;
+    let vps_ip = get_vps_public_ip(&backend, config).await;
 
     let run_cmd = format!(
         "docker run -d --name axadmin --restart unless-stopped \
