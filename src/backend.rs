@@ -475,28 +475,39 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
 
     // Build image
     let result = backend
-        .exec_on_host("cd /opt/axadmin && docker compose build 2>&1")
+        .exec_on_host("cd /opt/axadmin && docker build -t axadmin . 2>&1")
         .await
         .map_err(|e| format!("Docker build failed: {}", e))?;
     if !result.success() {
         return Err(format!("Docker build failed: {}", result.combined_output()));
     }
 
-    // Stop existing and start
+    // Stop existing container if running
     let _ = backend
-        .exec_on_host("cd /opt/axadmin && docker compose down 2>/dev/null")
+        .exec_on_host("docker stop axadmin 2>/dev/null; docker rm axadmin 2>/dev/null")
         .await;
+
+    // Start container
+    let run_cmd = format!(
+        "docker run -d --name axadmin --restart unless-stopped \
+         -v /var/run/docker.sock:/var/run/docker.sock \
+         -e TELEGRAM_TOKEN='{}' \
+         -e ADMIN_ID='{}' \
+         -e XRAY_CONTAINER='{}' \
+         axadmin --telegram-bot --local --container '{}' --admin-id {} 2>&1",
+        token, admin_id, config.container, config.container, admin_id
+    );
     let result = backend
-        .exec_on_host("cd /opt/axadmin && docker compose up -d 2>&1")
+        .exec_on_host(&run_cmd)
         .await
         .map_err(|e| format!("Docker start failed: {}", e))?;
     if !result.success() {
         return Err(format!("Docker start failed: {}", result.combined_output()));
     }
 
-    // Verify
+    // Verify container is running
     let result = backend
-        .exec_on_host("cd /opt/axadmin && docker compose ps --format '{{.Status}}' 2>&1")
+        .exec_on_host("docker inspect axadmin --format '{{.State.Status}}' 2>&1")
         .await
         .map_err(|e| format!("Verification failed: {}", e))?;
 
