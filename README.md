@@ -131,14 +131,14 @@ Manage your VPN users from Telegram. The bot runs as a Docker container on your 
 
 | Command | Description |
 |---------|-------------|
-| `/start` | Register as admin (first user only) |
+| `/start` | Welcome message (admin only) |
 | `/help` | Show available commands |
 | `/users` | List users with traffic stats |
 | `/status` | Server info + online users |
-| `/add <name>` | Add user, get QR code |
-| `/delete <name>` | Delete user (with confirmation) |
-| `/url <name>` | Get vless:// URL |
-| `/qr <name>` | Get QR code as image |
+| `/add <name>` | Add user, get QR code (without name: shows usage hint) |
+| `/delete [name]` | Delete user with confirmation (without name: shows user list as buttons) |
+| `/url [name]` | Get vless:// URL (without name: shows user list as buttons) |
+| `/qr [name]` | Get QR code as image (without name: shows user list as buttons) |
 
 ### Setup via TUI
 
@@ -148,10 +148,10 @@ Press `t` on the dashboard to open the Telegram Bot setup screen. Follow the ins
 
 ```sh
 # Deploy bot to VPS (connects via SSH, pulls Docker image, starts container)
-amnezia-xray-admin --ssh-host vps-vpn --deploy-bot --telegram-token "123456:ABC..."
+amnezia-xray-admin --ssh-host vps-vpn --deploy-bot --telegram-token "123456:ABC..." --admin-id 123456789
 ```
 
-Access control: the first user to send `/start` to the bot becomes the admin. All other users get "Access denied".
+The `--admin-id` flag sets your Telegram user ID as the bot admin. To find your ID, send `/start` to [@userinfobot](https://t.me/userinfobot) on Telegram. Only the admin can use bot commands; all other users get "Access denied".
 
 ## Configuration
 
@@ -172,6 +172,7 @@ container_name = "amnezia-xray"
 
 # Telegram bot (optional)
 # telegram_token = "123456:ABC..."
+# admin_id = 123456789  # Your Telegram user ID
 ```
 
 CLI arguments override config file values. Run `amnezia-xray-admin --help` for all options.

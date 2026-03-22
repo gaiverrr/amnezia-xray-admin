@@ -92,9 +92,9 @@ Two improvements to the Telegram bot:
 - [x] run linter: `cargo clippy`
 
 ### Task 8: [Final] Update documentation
-- [ ] update CLAUDE.md with Telegram bot changes
-- [ ] update README Telegram section with --admin-id
-- [ ] update CHANGELOG.md
+- [x] update CLAUDE.md with Telegram bot changes
+- [x] update README Telegram section with --admin-id
+- [x] update CHANGELOG.md
 
 ## Technical Details
 

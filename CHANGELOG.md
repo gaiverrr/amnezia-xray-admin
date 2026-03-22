@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Telegram bot: inline keyboard buttons for `/url`, `/qr`, `/delete` when called without argument
+- Telegram bot: `/delete` confirmation step with Yes/Cancel buttons
+- Telegram bot: `/add` without argument shows usage hint
+- Telegram bot: `--admin-id` flag for secure admin authentication (replaces first-/start auto-detect)
+- TUI Telegram setup screen: admin ID input field with @userinfobot hint
 - Auto-backup of server.json and clientsTable before every mutation (add, delete, rename, API setup)
 - CLI command `--backup` for creating timestamped backups
 - CLI command `--restore [timestamp]` for restoring from backups
