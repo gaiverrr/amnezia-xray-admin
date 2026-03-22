@@ -262,14 +262,9 @@ async fn get_local_hostname() -> String {
             return ip.to_string();
         }
     }
-    // Last resort fallback
-    if let Ok(output) = tokio::process::Command::new("hostname").output().await {
-        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !name.is_empty() {
-            return name;
-        }
-    }
-    "localhost".to_string()
+    // All methods failed — return a placeholder that signals the issue
+    eprintln!("Warning: could not determine server IP address. VPN URLs may be unusable.");
+    "UNKNOWN_IP".to_string()
 }
 
 /// Basic check that a string looks like an IPv4 or IPv6 address.

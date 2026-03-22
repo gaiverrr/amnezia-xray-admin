@@ -156,8 +156,10 @@ pub fn validate_user_name(name: &str) -> Option<String> {
     if trimmed.is_empty() {
         return Some("Usage: /add <name>".to_string());
     }
-    if trimmed.len() > 64 {
-        return Some("Name too long (max 64 characters).".to_string());
+    // Telegram callback_data has a 64-byte limit. With the longest prefix
+    // "delete:" (7 bytes), names must stay under 57 bytes. Use 50 for margin.
+    if trimmed.len() > 50 {
+        return Some("Name too long (max 50 characters).".to_string());
     }
     if trimmed.chars().any(|c| c.is_control()) {
         return Some("Name must not contain control characters.".to_string());
@@ -870,7 +872,7 @@ mod tests {
 
     #[test]
     fn test_validate_user_name_too_long() {
-        let long_name = "a".repeat(65);
+        let long_name = "a".repeat(51);
         let result = validate_user_name(&long_name);
         assert!(result.is_some());
         assert!(result.unwrap().contains("too long"));

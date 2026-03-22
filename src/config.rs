@@ -173,7 +173,7 @@ pub struct Config {
     /// Telegram bot token
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telegram_token: Option<String>,
-    /// Telegram bot admin chat ID (set automatically on first /start)
+    /// Telegram bot admin chat ID (set via --admin-id or ADMIN_ID env var)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telegram_admin_chat_id: Option<i64>,
 }
