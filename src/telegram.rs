@@ -173,11 +173,15 @@ pub fn validate_user_name(name: &str) -> Option<String> {
 /// Build an inline keyboard listing users, with each button using the given callback prefix.
 ///
 /// Each button shows the user's name and has callback data `"{prefix}{name}"`.
-/// Users with empty names are skipped.
+/// Users with empty names or callback data exceeding Telegram's 64-byte limit are skipped.
 pub fn build_user_keyboard(users: &[XrayUser], callback_prefix: &str) -> InlineKeyboardMarkup {
+    /// Telegram's maximum callback_data size in bytes.
+    const MAX_CALLBACK_DATA_BYTES: usize = 64;
+
     let buttons: Vec<Vec<InlineKeyboardButton>> = users
         .iter()
         .filter(|u| !u.name.is_empty())
+        .filter(|u| callback_prefix.len() + u.name.len() <= MAX_CALLBACK_DATA_BYTES)
         .map(|u| {
             vec![InlineKeyboardButton::callback(
                 &u.name,
