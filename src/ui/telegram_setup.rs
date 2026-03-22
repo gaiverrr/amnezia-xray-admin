@@ -154,7 +154,7 @@ pub fn is_valid_token(token: &str) -> bool {
 }
 
 /// Generate a docker-compose.yml content for the Telegram bot
-pub fn generate_compose_yaml(token: &str, container: &str) -> String {
+pub fn generate_compose_yaml(token: &str, container: &str, admin_id: i64) -> String {
     format!(
         r#"services:
   axadmin-bot:
@@ -166,11 +166,12 @@ pub fn generate_compose_yaml(token: &str, container: &str) -> String {
       - axadmin-data:/root/.config/amnezia-xray-admin
     environment:
       - TELEGRAM_TOKEN={}
+      - ADMIN_ID={}
     command: --telegram-bot --local --container {}
 volumes:
   axadmin-data:
 "#,
-        token, container
+        token, admin_id, container
     )
 }
 
@@ -512,8 +513,9 @@ mod tests {
 
     #[test]
     fn test_generate_compose_yaml() {
-        let yaml = generate_compose_yaml("123:abc", "amnezia-xray");
+        let yaml = generate_compose_yaml("123:abc", "amnezia-xray", 987654321);
         assert!(yaml.contains("TELEGRAM_TOKEN=123:abc"));
+        assert!(yaml.contains("ADMIN_ID=987654321"));
         assert!(yaml.contains("--container amnezia-xray"));
         assert!(yaml.contains("docker.sock"));
     }

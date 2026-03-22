@@ -351,6 +351,10 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
     use crate::ui::telegram_setup::generate_compose_yaml;
     use base64::Engine;
 
+    let admin_id = config
+        .telegram_admin_chat_id
+        .ok_or_else(|| "admin_id is required for deploy".to_string())?;
+
     let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
 
     // Create directory
@@ -360,7 +364,7 @@ pub async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> 
         .map_err(|e| format!("Failed to create directory: {}", e))?;
 
     // Write docker-compose.yml
-    let compose = generate_compose_yaml(token, &config.container);
+    let compose = generate_compose_yaml(token, &config.container, admin_id);
     let compose_b64 = base64::engine::general_purpose::STANDARD.encode(compose.as_bytes());
     // Use subshell with umask to create the file with restricted permissions
     // from the start, avoiding a window where the token is world-readable.

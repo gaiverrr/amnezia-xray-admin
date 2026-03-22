@@ -1,7 +1,7 @@
 //! Telegram bot for managing Xray users via Telegram commands.
 //!
-//! Auto-admin: the first user to send `/start` becomes the admin.
-//! Their chat ID is persisted to config so subsequent starts skip setup.
+//! Admin is set at deploy time via `--admin-id`. Only the configured admin
+//! can interact with the bot; all other users get "Access denied".
 
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -33,7 +33,7 @@ const DELETE_CANCEL_PREFIX: &str = "delete_cancel:";
 #[derive(BotCommands, Clone, Debug)]
 #[command(rename_rule = "lowercase")]
 pub enum Command {
-    /// Register as admin (first user only) and show welcome
+    /// Show welcome message (admin only)
     Start,
     /// Show available commands
     Help,
@@ -55,19 +55,16 @@ pub enum Command {
     Qr(String),
 }
 
-/// Check if a chat ID is the admin. Returns true if no admin is set yet (first-time setup).
-fn is_admin_or_unset(config: &Config, chat_id: ChatId) -> bool {
-    match config.telegram_admin_chat_id {
-        None => true,
-        Some(admin_id) => chat_id.0 == admin_id,
-    }
+/// Check if a chat ID matches the configured admin.
+fn is_admin(config: &Config, chat_id: ChatId) -> bool {
+    config.telegram_admin_chat_id == Some(chat_id.0)
 }
 
 /// Format the /help response text.
 pub fn help_text() -> String {
     [
         "Available commands:",
-        "/start - Register as admin / show welcome",
+        "/start - Show welcome message",
         "/help - Show this help message",
         "/users - List users with stats",
         "/add <name> - Add a new user",
@@ -79,18 +76,14 @@ pub fn help_text() -> String {
     .join("\n")
 }
 
-/// Format the welcome message shown after /start.
-pub fn welcome_text(is_new_admin: bool) -> String {
-    if is_new_admin {
-        [
-            "Welcome! You are now the admin of this bot.",
-            "",
-            "Use /help to see available commands.",
-        ]
-        .join("\n")
-    } else {
-        ["Welcome back!", "", "Use /help to see available commands."].join("\n")
-    }
+/// Format the welcome message shown after /start for the admin.
+pub fn welcome_text() -> String {
+    ["Welcome, admin!", "", "Use /help to see available commands."].join("\n")
+}
+
+/// Format the access denied message for non-admin users.
+pub fn access_denied_text() -> String {
+    "Access denied. Contact the server administrator.".to_string()
 }
 
 /// Format the /users response: list users with traffic stats.
@@ -206,53 +199,21 @@ async fn handle_command(
 ) -> ResponseResult<()> {
     let chat_id = msg.chat.id;
 
-    // Check admin access (hold lock briefly)
+    // Check admin access
     {
-        let mut config = state.config.lock().await;
+        let config = state.config.lock().await;
 
-        // Handle /start which needs to write config (allowed before admin is set)
         if let Command::Start = &cmd {
-            let is_new = config.telegram_admin_chat_id.is_none();
-            if !is_new && !is_admin_or_unset(&config, chat_id) {
-                bot.send_message(chat_id, "Access denied. Only the admin can use this bot.")
-                    .await?;
-                return Ok(());
+            if is_admin(&config, chat_id) {
+                bot.send_message(chat_id, welcome_text()).await?;
+            } else {
+                bot.send_message(chat_id, access_denied_text()).await?;
             }
-            if is_new {
-                config.telegram_admin_chat_id = Some(chat_id.0);
-                match config.save() {
-                    Ok(()) => {
-                        log::info!("Admin registered: chat_id={}", chat_id.0);
-                    }
-                    Err(e) => {
-                        log::error!("Failed to save admin chat ID: {}", e);
-                        config.telegram_admin_chat_id = None;
-                        bot.send_message(
-                            chat_id,
-                            "Failed to save admin registration. Please try /start again.",
-                        )
-                        .await?;
-                        return Ok(());
-                    }
-                }
-            }
-            bot.send_message(chat_id, welcome_text(is_new)).await?;
             return Ok(());
         }
 
-        // All commands except /start require an admin to be registered
-        if config.telegram_admin_chat_id.is_none() {
-            bot.send_message(
-                chat_id,
-                "No admin registered yet. Send /start first to become the admin.",
-            )
-            .await?;
-            return Ok(());
-        }
-
-        if !is_admin_or_unset(&config, chat_id) {
-            bot.send_message(chat_id, "Access denied. Only the admin can use this bot.")
-                .await?;
+        if !is_admin(&config, chat_id) {
+            bot.send_message(chat_id, access_denied_text()).await?;
             return Ok(());
         }
     }
@@ -461,7 +422,7 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
     // Check admin access
     {
         let config = state.config.lock().await;
-        if !is_admin_or_unset(&config, chat_id) {
+        if !is_admin(&config, chat_id) {
             bot.answer_callback_query(q.id.clone())
                 .text("Access denied.")
                 .await?;
@@ -566,37 +527,37 @@ mod tests {
     }
 
     #[test]
-    fn test_welcome_text_new_admin() {
-        let text = welcome_text(true);
-        assert!(text.contains("You are now the admin"));
+    fn test_welcome_text() {
+        let text = welcome_text();
+        assert!(text.contains("Welcome, admin"));
         assert!(text.contains("/help"));
     }
 
     #[test]
-    fn test_welcome_text_returning_admin() {
-        let text = welcome_text(false);
-        assert!(text.contains("Welcome back"));
-        assert!(text.contains("/help"));
+    fn test_access_denied_text() {
+        let text = access_denied_text();
+        assert!(text.contains("Access denied"));
+        assert!(text.contains("administrator"));
     }
 
     #[test]
-    fn test_is_admin_or_unset_no_admin() {
+    fn test_is_admin_no_admin_configured() {
         let config = Config::default();
-        assert!(is_admin_or_unset(&config, ChatId(12345)));
+        assert!(!is_admin(&config, ChatId(12345)));
     }
 
     #[test]
-    fn test_is_admin_or_unset_matching_admin() {
+    fn test_is_admin_matching() {
         let mut config = Config::default();
         config.telegram_admin_chat_id = Some(12345);
-        assert!(is_admin_or_unset(&config, ChatId(12345)));
+        assert!(is_admin(&config, ChatId(12345)));
     }
 
     #[test]
-    fn test_is_admin_or_unset_wrong_user() {
+    fn test_is_admin_wrong_user() {
         let mut config = Config::default();
         config.telegram_admin_chat_id = Some(12345);
-        assert!(!is_admin_or_unset(&config, ChatId(99999)));
+        assert!(!is_admin(&config, ChatId(99999)));
     }
 
     #[test]
@@ -874,5 +835,38 @@ mod tests {
             .join(",");
         assert!(descriptions.contains("url"), "commands: {}", descriptions);
         assert!(descriptions.contains("qr"), "commands: {}", descriptions);
+    }
+
+    #[test]
+    fn test_is_admin_negative_id() {
+        // Telegram group chat IDs can be negative
+        let mut config = Config::default();
+        config.telegram_admin_chat_id = Some(-100123456);
+        assert!(is_admin(&config, ChatId(-100123456)));
+        assert!(!is_admin(&config, ChatId(100123456)));
+    }
+
+    #[test]
+    fn test_admin_id_from_cli() {
+        use clap::Parser;
+        let cli = crate::config::Cli::parse_from([
+            "app",
+            "--telegram-bot",
+            "--local",
+            "--admin-id",
+            "123456789",
+        ]);
+        assert_eq!(cli.admin_id, Some(123456789));
+    }
+
+    #[test]
+    fn test_admin_id_merged_into_config() {
+        let mut config = Config::default();
+        assert_eq!(config.telegram_admin_chat_id, None);
+
+        use clap::Parser;
+        let cli = crate::config::Cli::parse_from(["app", "--admin-id", "999"]);
+        config.merge_cli(&cli);
+        assert_eq!(config.telegram_admin_chat_id, Some(999));
     }
 }

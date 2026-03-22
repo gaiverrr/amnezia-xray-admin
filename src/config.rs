@@ -55,8 +55,8 @@ EXAMPLES:
     amnezia-xray-admin --restore 20260321-143000
 
   Telegram bot:
-    amnezia-xray-admin --deploy-bot --telegram-token <TOKEN>
-    amnezia-xray-admin --telegram-bot --local --container amnezia-xray")]
+    amnezia-xray-admin --deploy-bot --telegram-token <TOKEN> --admin-id <ID>
+    amnezia-xray-admin --telegram-bot --local --admin-id <ID> --container amnezia-xray")]
 #[command(version)]
 pub struct Cli {
     /// SSH host (IP or hostname) to connect to
@@ -122,6 +122,10 @@ pub struct Cli {
     /// Deploy Telegram bot to VPS via SSH and exit
     #[arg(long = "deploy-bot")]
     pub deploy_bot: bool,
+
+    /// Telegram admin chat ID (your Telegram user ID; send /start to @userinfobot to find it)
+    #[arg(long = "admin-id", env = "ADMIN_ID")]
+    pub admin_id: Option<i64>,
 
     /// Create a timestamped backup of server.json and clientsTable
     #[arg(long = "backup")]
@@ -274,6 +278,9 @@ impl Config {
         }
         if let Some(ref ssh_host) = cli.ssh_host {
             self.ssh_host = Some(ssh_host.clone());
+        }
+        if let Some(admin_id) = cli.admin_id {
+            self.telegram_admin_chat_id = Some(admin_id);
         }
         if let Some(ref container) = cli.container {
             if is_valid_container_name(container) {
@@ -431,6 +438,7 @@ host = "10.0.0.1"
             telegram_bot: false,
             telegram_token: None,
             deploy_bot: false,
+            admin_id: None,
             backup: false,
             restore: None,
             add_user: None,
@@ -477,6 +485,7 @@ host = "10.0.0.1"
             telegram_bot: false,
             telegram_token: None,
             deploy_bot: false,
+            admin_id: None,
             backup: false,
             restore: None,
             add_user: None,
@@ -514,6 +523,7 @@ host = "10.0.0.1"
             telegram_bot: false,
             telegram_token: None,
             deploy_bot: false,
+            admin_id: None,
             backup: false,
             restore: None,
             add_user: None,

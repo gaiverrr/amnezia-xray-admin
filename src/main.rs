@@ -107,6 +107,11 @@ fn main() {
                 std::process::exit(1);
             }
         };
+        if config.telegram_admin_chat_id.is_none() {
+            eprintln!("Error: Admin ID required. Use --admin-id <your_telegram_id> or set ADMIN_ID env var.");
+            eprintln!("To find your Telegram ID, send /start to @userinfobot.");
+            std::process::exit(1);
+        }
         if let Err(e) = runtime.block_on(cli_telegram_bot(&config, &token, local)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
@@ -126,6 +131,11 @@ fn main() {
                 std::process::exit(1);
             }
         };
+        if config.telegram_admin_chat_id.is_none() {
+            eprintln!("Error: --admin-id is required for --deploy-bot.");
+            eprintln!("To find your Telegram ID, send /start to @userinfobot.");
+            std::process::exit(1);
+        }
         if let Err(e) = runtime.block_on(cli_deploy_bot(&config, &token)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
