@@ -4,8 +4,6 @@ A hacker-aesthetic TUI dashboard for managing [Amnezia VPN](https://amnezia.org/
 
 Connects to your VPS via SSH, talks to the Xray gRPC API for live user management and traffic stats. No container restarts needed.
 
-<!-- TODO: add screenshot -->
-
 ## Features
 
 - **User management** - Add and remove users live via Xray gRPC API (no restart required)

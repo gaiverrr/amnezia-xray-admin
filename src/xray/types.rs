@@ -87,9 +87,10 @@ impl ServerConfig {
         Ok(Self { raw })
     }
 
-    /// Serialize back to pretty JSON
+    /// Serialize back to pretty JSON.
+    /// Safe: serde_json::Value from JSON deserialization always serializes successfully.
     pub fn to_json(&self) -> String {
-        serde_json::to_string_pretty(&self.raw).expect("valid JSON")
+        serde_json::to_string_pretty(&self.raw).expect("BUG: Value with non-string key")
     }
 
     /// Find the main VLESS inbound and return its clients
@@ -262,9 +263,10 @@ impl ClientsTable {
         Ok(Self { entries })
     }
 
-    /// Serialize back to JSON string
+    /// Serialize back to JSON string.
+    /// Safe: Vec<ClientEntry> with Serialize always succeeds.
     pub fn to_json(&self) -> String {
-        serde_json::to_string_pretty(&self.entries).expect("valid JSON")
+        serde_json::to_string_pretty(&self.entries).expect("BUG: ClientEntry serialization failed")
     }
 
     /// Check if a client with the given name exists
