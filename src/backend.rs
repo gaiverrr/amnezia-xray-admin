@@ -50,6 +50,8 @@ pub enum BackendMsg {
 pub struct DashboardData {
     pub users: Vec<XrayUser>,
     pub server_info: ServerInfo,
+    pub container_uptime: String,
+    pub latest_version: Option<String>,
 }
 
 /// Result of adding a user
@@ -198,9 +200,32 @@ async fn fetch_dashboard_data(
         }
     }
 
+    // Get container uptime
+    let container_uptime = backend
+        .exec_on_host(&format!(
+            "docker ps --filter name={} --format '{{{{.Status}}}}'",
+            backend.container_name()
+        ))
+        .await
+        .map(|o| o.stdout.trim().to_string())
+        .unwrap_or_default();
+
+    // Check latest Xray version (best-effort, don't block on failure)
+    let latest_version = backend
+        .exec_on_host("curl -sf --max-time 3 https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep tag_name | cut -d'\"' -f4 | tr -d 'v'")
+        .await
+        .ok()
+        .map(|o| o.stdout.trim().to_string())
+        .filter(|v| !v.is_empty());
+
     let _ = backend.close().await;
 
-    Ok(DashboardData { users, server_info })
+    Ok(DashboardData {
+        users,
+        server_info,
+        container_uptime,
+        latest_version,
+    })
 }
 
 /// Spawn: test SSH connection and return xray version.

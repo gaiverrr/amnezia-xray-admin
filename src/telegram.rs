@@ -325,11 +325,25 @@ pub fn format_status_message(
     server_info: &ServerInfo,
     user_count: usize,
     online_count: usize,
+    uptime: &str,
+    latest_version: Option<&str>,
 ) -> String {
     let mut lines = Vec::new();
     lines.push("📊 Server Status:".to_string());
     lines.push(String::new());
-    lines.push(format!("Xray version: v{}", server_info.version));
+
+    let version_line = match latest_version {
+        Some(latest) if latest != server_info.version => {
+            format!("Xray: v{} (⬆️ v{} available)", server_info.version, latest)
+        }
+        Some(_) => format!("Xray: v{} ✅", server_info.version),
+        None => format!("Xray: v{}", server_info.version),
+    };
+    lines.push(version_line);
+
+    if !uptime.is_empty() {
+        lines.push(format!("Uptime: {}", uptime));
+    }
     lines.push(format!("Users: {} ({} online)", user_count, online_count));
     lines.push(format!("Upload: {}", format_bytes(server_info.uplink)));
     lines.push(format!("Download: {}", format_bytes(server_info.downlink)));
@@ -734,10 +748,31 @@ async fn cmd_status(state: &BotState) -> std::result::Result<String, crate::erro
         online_total += count as usize;
     }
 
+    let container = state.backend.container_name();
+    let uptime = state
+        .backend
+        .exec_on_host(&format!(
+            "docker ps --filter name={} --format '{{{{.Status}}}}'",
+            container
+        ))
+        .await
+        .map(|o| o.stdout.trim().to_string())
+        .unwrap_or_default();
+
+    let latest_version = state
+        .backend
+        .exec_on_host("curl -sf --max-time 3 https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep tag_name | cut -d'\"' -f4 | tr -d 'v'")
+        .await
+        .ok()
+        .map(|o| o.stdout.trim().to_string())
+        .filter(|v| !v.is_empty());
+
     Ok(format_status_message(
         &server_info,
         users.len(),
         online_total,
+        &uptime,
+        latest_version.as_deref(),
     ))
 }
 
@@ -941,12 +976,25 @@ mod tests {
             uplink: 1024 * 1024 * 500,
             downlink: 1024 * 1024 * 1024 * 10,
         };
-        let text = format_status_message(&info, 5, 2);
+        let text = format_status_message(&info, 5, 2, "Up 2 hours", Some("1.8.4"));
         assert!(text.contains("v1.8.4"), "text: {}", text);
+        assert!(text.contains("✅"), "text: {}", text);
+        assert!(text.contains("Up 2 hours"), "text: {}", text);
         assert!(text.contains("5"), "text: {}", text);
         assert!(text.contains("2 online"), "text: {}", text);
         assert!(text.contains("500.0 MB"), "text: {}", text);
         assert!(text.contains("10.0 GB"), "text: {}", text);
+    }
+
+    #[test]
+    fn test_format_status_message_update_available() {
+        let info = ServerInfo {
+            version: "1.8.0".to_string(),
+            uplink: 0,
+            downlink: 0,
+        };
+        let text = format_status_message(&info, 3, 0, "Up 5 minutes", Some("1.9.0"));
+        assert!(text.contains("⬆️ v1.9.0"), "text: {}", text);
     }
 
     #[test]
@@ -956,7 +1004,7 @@ mod tests {
             uplink: 0,
             downlink: 0,
         };
-        let text = format_status_message(&info, 3, 0);
+        let text = format_status_message(&info, 3, 0, "", None);
         assert!(text.contains("0 online"), "text: {}", text);
         assert!(text.contains("3"), "text: {}", text);
     }
