@@ -641,6 +641,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // Takes ~60s waiting for SSH timeout on non-routable IP. Run with: cargo test -- --ignored
     async fn test_deploy_bot_with_admin_id_attempts_connection() {
         let config = Config {
             host: Some("192.0.2.1".to_string()), // non-routable IP
