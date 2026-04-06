@@ -151,6 +151,22 @@ pub struct Cli {
     /// Skip interactive confirmation (for --delete-user)
     #[arg(long = "yes")]
     pub yes: bool,
+
+    /// Full snapshot: backup all config, keys, and xray binary to host
+    #[arg(long = "snapshot")]
+    pub snapshot: bool,
+
+    /// Restore from a snapshot. Optionally specify a tag; defaults to latest.
+    #[arg(long = "snapshot-restore", num_args = 0..=1, default_missing_value = "")]
+    pub snapshot_restore: Option<String>,
+
+    /// List available snapshots
+    #[arg(long = "snapshot-list")]
+    pub snapshot_list: bool,
+
+    /// Upgrade Xray binary to latest release (creates snapshot first)
+    #[arg(long = "upgrade-xray")]
+    pub upgrade_xray: bool,
 }
 
 /// Application configuration
@@ -455,6 +471,10 @@ host = "10.0.0.1"
             rename_user: None,
             delete_user: None,
             yes: false,
+            snapshot: false,
+            snapshot_restore: None,
+            snapshot_list: false,
+            upgrade_xray: false,
         };
         config.merge_cli(&cli);
 
@@ -503,6 +523,10 @@ host = "10.0.0.1"
             rename_user: None,
             delete_user: None,
             yes: false,
+            snapshot: false,
+            snapshot_restore: None,
+            snapshot_list: false,
+            upgrade_xray: false,
         };
         config.merge_cli(&cli);
 
@@ -541,6 +565,10 @@ host = "10.0.0.1"
             rename_user: None,
             delete_user: None,
             yes: false,
+            snapshot: false,
+            snapshot_restore: None,
+            snapshot_list: false,
+            upgrade_xray: false,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());

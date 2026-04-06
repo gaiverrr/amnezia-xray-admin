@@ -188,6 +188,39 @@ fn main() {
         return;
     }
 
+    if cli.snapshot {
+        if let Err(e) = runtime.block_on(cli_snapshot(&config, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if cli.snapshot_list {
+        if let Err(e) = runtime.block_on(cli_snapshot_list(&config, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if let Some(ref tag) = cli.snapshot_restore {
+        let tag = if tag.is_empty() { None } else { Some(tag.as_str()) };
+        if let Err(e) = runtime.block_on(cli_snapshot_restore(&config, tag, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if cli.upgrade_xray {
+        if let Err(e) = runtime.block_on(cli_upgrade_xray(&config, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // Initialize terminal
     let mut terminal = match app::init_terminal() {
         Ok(t) => t,
@@ -751,4 +784,261 @@ async fn cli_deploy_bot(config: &Config, token: &str) -> error::Result<()> {
         }
         Err(e) => Err(error::AppError::Xray(e)),
     }
+}
+
+// ── Snapshot & Upgrade commands ──
+
+const SNAPSHOT_DIR: &str = "/opt/amnezia/snapshots";
+const XRAY_CONFIG_DIR: &str = "/opt/amnezia/xray";
+
+async fn cli_snapshot(config: &Config, local: bool) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    let tag = create_snapshot(backend.as_ref()).await?;
+    println!("Snapshot created: {}", tag);
+    Ok(())
+}
+
+async fn create_snapshot(backend: &dyn backend_trait::XrayBackend) -> error::Result<String> {
+    // Generate tag from current timestamp
+    let tag_cmd = "sh -c 'date +%Y%m%d-%H%M%S'";
+    let tag_result = backend.exec_in_container(tag_cmd).await?;
+    let tag = tag_result.stdout.trim().to_string();
+
+    eprintln!("Creating snapshot [{}]...", tag);
+
+    let snapshot_path = format!("{}/{}", SNAPSHOT_DIR, tag);
+    let cmd = format!(
+        "sh -c 'mkdir -p {path} && \
+         cp {src}/server.json {path}/server.json && \
+         cp {src}/clientsTable {path}/clientsTable 2>/dev/null; \
+         cp {src}/xray_private.key {path}/xray_private.key 2>/dev/null; \
+         cp {src}/xray_public.key {path}/xray_public.key 2>/dev/null; \
+         cp {src}/xray_short_id.key {path}/xray_short_id.key 2>/dev/null; \
+         cp {src}/xray_uuid.key {path}/xray_uuid.key 2>/dev/null; \
+         cp /usr/bin/xray {path}/xray && \
+         echo OK'",
+        path = snapshot_path,
+        src = XRAY_CONFIG_DIR,
+    );
+
+    let result = backend.exec_in_container(&cmd).await?;
+    if !result.stdout.contains("OK") {
+        return Err(error::AppError::Xray(format!(
+            "snapshot failed: {}",
+            result.stderr.trim()
+        )));
+    }
+
+    // Save xray version in snapshot
+    let ver_cmd = format!(
+        "sh -c 'xray version 2>/dev/null | head -1 > {}/xray_version.txt'",
+        snapshot_path
+    );
+    let _ = backend.exec_in_container(&ver_cmd).await;
+
+    eprintln!("  server.json, clientsTable, keys, xray binary saved");
+    Ok(tag)
+}
+
+async fn cli_snapshot_list(config: &Config, local: bool) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    let snapshots = list_snapshots(backend.as_ref()).await?;
+
+    if snapshots.is_empty() {
+        println!("No snapshots found.");
+        return Ok(());
+    }
+
+    println!("{:<20} {:<20} {:<10}", "TAG", "XRAY VERSION", "SIZE");
+    println!("{}", "-".repeat(50));
+    for (tag, version, size) in &snapshots {
+        println!("{:<20} {:<20} {:<10}", tag, version, size);
+    }
+
+    Ok(())
+}
+
+async fn list_snapshots(
+    backend: &dyn backend_trait::XrayBackend,
+) -> error::Result<Vec<(String, String, String)>> {
+    let cmd = format!(
+        "sh -c 'ls -1d {}/*/  2>/dev/null | while read d; do \
+           tag=$(basename \"$d\"); \
+           ver=$(cat \"$d/xray_version.txt\" 2>/dev/null | head -1 || echo unknown); \
+           size=$(du -sh \"$d\" 2>/dev/null | cut -f1 || echo \"?\"); \
+           echo \"$tag|$ver|$size\"; \
+         done'",
+        SNAPSHOT_DIR
+    );
+    let result = backend.exec_in_container(&cmd).await?;
+    let snapshots: Vec<(String, String, String)> = result
+        .stdout
+        .lines()
+        .filter(|l| l.contains('|'))
+        .map(|l| {
+            let parts: Vec<&str> = l.splitn(3, '|').collect();
+            (
+                parts.first().unwrap_or(&"").trim().to_string(),
+                parts.get(1).unwrap_or(&"unknown").trim().to_string(),
+                parts.get(2).unwrap_or(&"?").trim().to_string(),
+            )
+        })
+        .collect();
+    Ok(snapshots)
+}
+
+async fn cli_snapshot_restore(
+    config: &Config,
+    tag: Option<&str>,
+    local: bool,
+) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+
+    let snapshots = list_snapshots(backend.as_ref()).await?;
+    if snapshots.is_empty() {
+        return Err(error::AppError::Xray("no snapshots found".to_string()));
+    }
+
+    let restore_tag = match tag {
+        Some(t) => {
+            if !snapshots.iter().any(|(s, _, _)| s == t) {
+                return Err(error::AppError::Xray(format!(
+                    "snapshot '{}' not found. Available: {}",
+                    t,
+                    snapshots
+                        .iter()
+                        .map(|(s, _, _)| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
+            t.to_string()
+        }
+        None => snapshots.last().map(|(s, _, _)| s.clone()).unwrap(),
+    };
+
+    eprintln!("Restoring from snapshot [{}]...", restore_tag);
+
+    let snapshot_path = format!("{}/{}", SNAPSHOT_DIR, restore_tag);
+    let cmd = format!(
+        "sh -c 'cp {path}/server.json {src}/server.json && \
+         cp {path}/clientsTable {src}/clientsTable 2>/dev/null; \
+         cp {path}/xray_private.key {src}/xray_private.key 2>/dev/null; \
+         cp {path}/xray_public.key {src}/xray_public.key 2>/dev/null; \
+         cp {path}/xray_short_id.key {src}/xray_short_id.key 2>/dev/null; \
+         cp {path}/xray_uuid.key {src}/xray_uuid.key 2>/dev/null; \
+         cp {path}/xray /usr/bin/xray && \
+         chmod +x /usr/bin/xray && \
+         echo OK'",
+        path = snapshot_path,
+        src = XRAY_CONFIG_DIR,
+    );
+    let result = backend.exec_in_container(&cmd).await?;
+    if !result.stdout.contains("OK") {
+        return Err(error::AppError::Xray(format!(
+            "restore failed: {}",
+            result.stderr.trim()
+        )));
+    }
+
+    // Restart container
+    let container = &config.container;
+    backend
+        .exec_on_host(&format!("docker restart {} 2>&1", container))
+        .await?;
+
+    println!("Restored from snapshot [{}]. Container restarted.", restore_tag);
+    Ok(())
+}
+
+async fn cli_upgrade_xray(config: &Config, local: bool) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+
+    // Get current version
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
+    let server_info = client.get_server_info().await?;
+    eprintln!("Current version: v{}", server_info.version);
+
+    // Get latest version
+    let latest_result = backend
+        .exec_on_host("curl -sf --max-time 10 https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep tag_name | cut -d'\"' -f4 | tr -d 'v'")
+        .await
+        .map_err(|e| error::AppError::Xray(format!("failed to check latest version: {}", e)))?;
+    let latest = latest_result.stdout.trim().to_string();
+
+    if latest.is_empty() {
+        return Err(error::AppError::Xray(
+            "failed to fetch latest version from GitHub".to_string(),
+        ));
+    }
+
+    if latest == server_info.version {
+        println!("Already on latest version v{}. Nothing to do.", latest);
+        return Ok(());
+    }
+
+    eprintln!("Latest version:  v{}", latest);
+    eprintln!();
+
+    // Create snapshot before upgrade
+    eprintln!("Step 1/4: Creating snapshot...");
+    let tag = create_snapshot(backend.as_ref()).await?;
+
+    // Download new binary
+    eprintln!("Step 2/4: Downloading Xray v{}...", latest);
+    let download_cmd = format!(
+        "curl -sL https://github.com/XTLS/Xray-core/releases/download/v{}/Xray-linux-64.zip > /tmp/xray-upgrade.zip && \
+         python3 -c \"import zipfile; z=zipfile.ZipFile('/tmp/xray-upgrade.zip'); z.extract('xray','/tmp'); z.close()\" && \
+         chmod +x /tmp/xray && \
+         echo OK",
+        latest
+    );
+    let result = backend.exec_on_host(&download_cmd).await?;
+    if !result.stdout.contains("OK") {
+        return Err(error::AppError::Xray(format!(
+            "download failed: {}",
+            result.combined_output()
+        )));
+    }
+
+    // Replace binary
+    eprintln!("Step 3/4: Replacing binary...");
+    let container = &config.container;
+    let replace_cmd = format!(
+        "docker cp /tmp/xray {}:/usr/bin/xray && \
+         docker exec {} chmod +x /usr/bin/xray && \
+         echo OK",
+        container, container
+    );
+    let result = backend.exec_on_host(&replace_cmd).await?;
+    if !result.stdout.contains("OK") {
+        return Err(error::AppError::Xray(format!(
+            "binary replacement failed: {}",
+            result.combined_output()
+        )));
+    }
+
+    // Restart and verify
+    eprintln!("Step 4/4: Restarting...");
+    backend
+        .exec_on_host(&format!("docker restart {} 2>&1", container))
+        .await?;
+
+    // Wait a moment for container to start
+    backend.exec_on_host("sleep 2").await?;
+
+    // Verify
+    let new_version = backend
+        .exec_in_container("xray version 2>&1 | head -1")
+        .await
+        .map(|r| r.stdout.trim().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    println!();
+    println!("Upgrade complete!");
+    println!("  Before:   v{}", server_info.version);
+    println!("  After:    {}", new_version);
+    println!("  Snapshot: {} (use --snapshot-restore {} to rollback)", tag, tag);
+
+    Ok(())
 }
