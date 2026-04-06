@@ -16,6 +16,8 @@ pub struct DashboardState {
     pub table_state: TableState,
     pub server_version: String,
     pub server_host: String,
+    pub container_uptime: String,
+    pub latest_version: Option<String>,
     pub total_upload: u64,
     pub total_download: u64,
     pub loading: bool,
@@ -29,6 +31,8 @@ impl Default for DashboardState {
             table_state: TableState::default(),
             server_version: String::new(),
             server_host: String::new(),
+            container_uptime: String::new(),
+            latest_version: None,
             total_upload: 0,
             total_download: 0,
             loading: true,
@@ -167,7 +171,19 @@ fn draw_server_info(state: &DashboardState, frame: &mut ratatui::Frame, area: Re
     let version_display = if state.server_version.is_empty() {
         "-".to_string()
     } else {
-        state.server_version.clone()
+        match &state.latest_version {
+            Some(latest) if latest != &state.server_version => {
+                format!("v{} (update: v{})", state.server_version, latest)
+            }
+            Some(_) => format!("v{} ✓", state.server_version),
+            None => format!("v{}", state.server_version),
+        }
+    };
+
+    let uptime_display = if state.container_uptime.is_empty() {
+        "-".to_string()
+    } else {
+        state.container_uptime.clone()
     };
 
     let info_line = Line::from(vec![
@@ -175,6 +191,8 @@ fn draw_server_info(state: &DashboardState, frame: &mut ratatui::Frame, area: Re
         Span::styled(&host_display, theme::text_style()),
         Span::styled("  |  Xray: ", theme::muted_style()),
         Span::styled(&version_display, theme::text_style()),
+        Span::styled("  |  Uptime: ", theme::muted_style()),
+        Span::styled(&uptime_display, theme::text_style()),
         Span::styled("  |  ", theme::muted_style()),
         Span::styled(
             format!(
