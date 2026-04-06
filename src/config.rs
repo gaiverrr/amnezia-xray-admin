@@ -10,6 +10,7 @@ const DEFAULT_SSH_PORT: u16 = 22;
 const DEFAULT_SSH_USER: &str = "root";
 /// Default container name
 const DEFAULT_CONTAINER: &str = "amnezia-xray";
+const DEFAULT_BOT_IMAGE: &str = "ghcr.io/gaiverrr/amnezia-xray-admin:latest";
 
 /// Validate that a container name contains only safe characters.
 /// Docker container names allow `[a-zA-Z0-9][a-zA-Z0-9_.-]`.
@@ -176,6 +177,13 @@ pub struct Config {
     /// Telegram bot admin chat ID (set via --admin-id or ADMIN_ID env var)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telegram_admin_chat_id: Option<i64>,
+    /// Docker image for --deploy-bot (default: ghcr.io/gaiverrr/amnezia-xray-admin:latest)
+    #[serde(default = "default_bot_image")]
+    pub bot_image: String,
+}
+
+fn default_bot_image() -> String {
+    DEFAULT_BOT_IMAGE.to_string()
 }
 
 fn default_port() -> u16 {
@@ -201,6 +209,7 @@ impl Default for Config {
             container: DEFAULT_CONTAINER.to_string(),
             telegram_token: None,
             telegram_admin_chat_id: None,
+            bot_image: DEFAULT_BOT_IMAGE.to_string(),
         }
     }
 }
@@ -385,6 +394,7 @@ host = "10.0.0.1"
             container: "xray-test".to_string(),
             telegram_token: None,
             telegram_admin_chat_id: None,
+            bot_image: Default::default(),
         };
         config.save_to(&path).unwrap();
 
@@ -467,6 +477,7 @@ host = "10.0.0.1"
             container: "original-ctr".to_string(),
             telegram_token: None,
             telegram_admin_chat_id: None,
+            bot_image: Default::default(),
         };
         let cli = Cli {
             host: None,
@@ -570,6 +581,7 @@ host = "10.0.0.1"
             container: "amnezia-xray".to_string(),
             telegram_token: None,
             telegram_admin_chat_id: None,
+            bot_image: Default::default(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();
@@ -612,6 +624,7 @@ host = "10.0.0.1"
             container: "amnezia-xray".to_string(),
             telegram_token: Some("123:abc".to_string()),
             telegram_admin_chat_id: Some(987654321),
+            bot_image: Default::default(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();

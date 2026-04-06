@@ -154,6 +154,7 @@ impl SetupState {
             },
             telegram_token: None,
             telegram_admin_chat_id: None,
+            bot_image: Default::default(),
         }
     }
 
@@ -501,6 +502,7 @@ mod tests {
             container: "my-xray".to_string(),
             telegram_token: None,
             telegram_admin_chat_id: None,
+            bot_image: Default::default(),
         };
         let state = SetupState::from_config(&config);
         assert_eq!(state.ssh_host, "vps-vpn");
@@ -577,6 +579,7 @@ mod tests {
             container: "amnezia-xray".to_string(),
             telegram_token: None,
             telegram_admin_chat_id: None,
+            bot_image: Default::default(),
         };
         let state = SetupState::from_config(&config);
         let result = state.to_config();
