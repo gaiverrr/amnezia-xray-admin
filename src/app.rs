@@ -495,6 +495,8 @@ impl App {
                         Ok(data) => {
                             self.dashboard_state.set_users(data.users);
                             self.dashboard_state.server_version = data.server_info.version;
+                            self.dashboard_state.container_uptime = data.container_uptime;
+                            self.dashboard_state.latest_version = data.latest_version;
                             self.dashboard_state.total_upload = data.server_info.uplink;
                             self.dashboard_state.total_download = data.server_info.downlink;
                             self.dashboard_state.loading = false;
@@ -1127,6 +1129,7 @@ mod tests {
             container: "amnezia-xray".to_string(),
             telegram_token: None,
             telegram_admin_chat_id: None,
+            bot_image: Default::default(),
         };
         let app = App::with_config(config, test_runtime());
         assert_eq!(app.screen, Screen::Dashboard);
@@ -1144,6 +1147,7 @@ mod tests {
             container: "amnezia-xray".to_string(),
             telegram_token: None,
             telegram_admin_chat_id: None,
+            bot_image: Default::default(),
         };
         let app = App::with_config(config, test_runtime());
         assert_eq!(app.dashboard_state.server_host, "vps-vpn");
@@ -1184,6 +1188,8 @@ mod tests {
                     uplink: 1000,
                     downlink: 2000,
                 },
+                container_uptime: "Up 2 hours".to_string(),
+                latest_version: Some("25.8.3".to_string()),
             },
         )));
 

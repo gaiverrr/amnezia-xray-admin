@@ -451,11 +451,39 @@ async fn cli_server_info(config: &Config, local: bool) -> error::Result<()> {
         "unknown"
     };
 
-    println!("Xray version:  v{}", server_info.version);
-    println!("API status:    {}", api_status);
-    println!("Users:         {}", users.len());
+    // Get container uptime
+    let container = &config.container;
+    let uptime = backend
+        .exec_on_host(&format!(
+            "docker ps --filter name={} --format '{{{{.Status}}}}'",
+            container
+        ))
+        .await
+        .map(|o| o.stdout.trim().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    // Check for updates
+    let latest_version = backend
+        .exec_on_host("curl -sf --max-time 5 https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep tag_name | cut -d'\"' -f4 | tr -d 'v'")
+        .await
+        .ok()
+        .map(|o| o.stdout.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let version_display = match &latest_version {
+        Some(latest) if latest != &server_info.version => {
+            format!("v{} (update available: v{})", server_info.version, latest)
+        }
+        Some(_) => format!("v{} (latest)", server_info.version),
+        None => format!("v{}", server_info.version),
+    };
+
+    println!("Xray:           {}", version_display);
+    println!("API status:     {}", api_status);
+    println!("Uptime:         {}", uptime);
+    println!("Users:          {}", users.len());
     println!(
-        "Total upload:  {}",
+        "Total upload:   {}",
         ui::dashboard::format_bytes(server_info.uplink)
     );
     println!(
