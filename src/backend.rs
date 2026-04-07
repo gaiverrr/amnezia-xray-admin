@@ -50,6 +50,8 @@ pub enum BackendMsg {
 pub struct DashboardData {
     pub users: Vec<XrayUser>,
     pub server_info: ServerInfo,
+    pub container_uptime: String,
+    pub latest_version: Option<String>,
 }
 
 /// Result of adding a user
@@ -198,9 +200,32 @@ async fn fetch_dashboard_data(
         }
     }
 
+    // Get container uptime
+    let container_uptime = backend
+        .exec_on_host(&format!(
+            "docker ps --filter name={} --format '{{{{.Status}}}}'",
+            backend.container_name()
+        ))
+        .await
+        .map(|o| o.stdout.trim().to_string())
+        .unwrap_or_default();
+
+    // Check latest Xray version (best-effort, don't block on failure)
+    let latest_version = backend
+        .exec_on_host("curl -sf --max-time 3 https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep tag_name | cut -d'\"' -f4 | tr -d 'v'")
+        .await
+        .ok()
+        .map(|o| o.stdout.trim().to_string())
+        .filter(|v| !v.is_empty());
+
     let _ = backend.close().await;
 
-    Ok(DashboardData { users, server_info })
+    Ok(DashboardData {
+        users,
+        server_info,
+        container_uptime,
+        latest_version,
+    })
 }
 
 /// Spawn: test SSH connection and return xray version.
@@ -411,8 +436,9 @@ async fn deploy_bot_inner(
         let _ = tx.send(BackendMsg::DeployProgress(DeployStatus::BuildingImage));
     }
 
+    let image = &config.bot_image;
     let result = backend
-        .exec_on_host("docker pull ghcr.io/gaiverrr/amnezia-xray-admin:latest 2>&1")
+        .exec_on_host(&format!("docker pull {} 2>&1", image))
         .await
         .map_err(|e| format!("Docker pull failed: {}", e))?;
     if !result.success() {
@@ -437,9 +463,9 @@ async fn deploy_bot_inner(
          -e TELEGRAM_TOKEN='{}' \
          -e ADMIN_ID='{}' \
          -e XRAY_CONTAINER='{}' \
-         ghcr.io/gaiverrr/amnezia-xray-admin:latest \
+         {} \
          --telegram-bot --local --container '{}' --admin-id {} --host '{}' 2>&1",
-        token, admin_id, config.container, config.container, admin_id, vps_ip
+        token, admin_id, config.container, image, config.container, admin_id, vps_ip
     );
     let result = backend
         .exec_on_host(&run_cmd)
@@ -501,6 +527,7 @@ mod tests {
             container: "amnezia-xray".to_string(),
             telegram_token: None,
             telegram_admin_chat_id: None,
+            bot_image: Default::default(),
         };
         let (host, port, user, key) = resolve_connection_info(&config).unwrap();
         assert_eq!(host, "1.2.3.4");
@@ -527,6 +554,7 @@ mod tests {
             container: "amnezia-xray".to_string(),
             telegram_token: None,
             telegram_admin_chat_id: None,
+            bot_image: Default::default(),
         };
         // Falls back to treating alias as hostname
         let (host, port, user, _key) = resolve_connection_info(&config).unwrap();
@@ -546,6 +574,7 @@ mod tests {
             container: "amnezia-xray".to_string(),
             telegram_token: None,
             telegram_admin_chat_id: None,
+            bot_image: Default::default(),
         };
         let (_host, _port, _user, key) = resolve_connection_info(&config).unwrap();
         let key_path = key.expect("key_path should be Some");
@@ -573,6 +602,7 @@ mod tests {
             container: "amnezia-xray".to_string(),
             telegram_token: None,
             telegram_admin_chat_id: None,
+            bot_image: Default::default(),
         };
         let (_host, _port, _user, key) = resolve_connection_info(&config).unwrap();
         let key_path = key.expect("key_path should be Some");
@@ -602,7 +632,8 @@ mod tests {
             ssh_host: None,
             container: "amnezia-xray".to_string(),
             telegram_token: None,
-            telegram_admin_chat_id: None, // no admin_id
+            telegram_admin_chat_id: None,
+            bot_image: Default::default(), // no admin_id
         };
         let result = deploy_bot(&config, "123:abc").await;
         assert!(result.is_err());
@@ -620,6 +651,7 @@ mod tests {
             container: "amnezia-xray".to_string(),
             telegram_token: None,
             telegram_admin_chat_id: Some(123456789),
+            bot_image: Default::default(),
         };
         // With admin_id set, it should pass the admin_id check and fail at SSH connection
         let result = deploy_bot(&config, "123:abc").await;

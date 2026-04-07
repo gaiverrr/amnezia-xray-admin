@@ -188,6 +188,39 @@ fn main() {
         return;
     }
 
+    if cli.snapshot {
+        if let Err(e) = runtime.block_on(cli_snapshot(&config, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if cli.snapshot_list {
+        if let Err(e) = runtime.block_on(cli_snapshot_list(&config, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if let Some(ref tag) = cli.snapshot_restore {
+        let tag = if tag.is_empty() { None } else { Some(tag.as_str()) };
+        if let Err(e) = runtime.block_on(cli_snapshot_restore(&config, tag, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if cli.upgrade_xray {
+        if let Err(e) = runtime.block_on(cli_upgrade_xray(&config, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // Initialize terminal
     let mut terminal = match app::init_terminal() {
         Ok(t) => t,
@@ -451,11 +484,39 @@ async fn cli_server_info(config: &Config, local: bool) -> error::Result<()> {
         "unknown"
     };
 
-    println!("Xray version:  v{}", server_info.version);
-    println!("API status:    {}", api_status);
-    println!("Users:         {}", users.len());
+    // Get container uptime
+    let container = &config.container;
+    let uptime = backend
+        .exec_on_host(&format!(
+            "docker ps --filter name={} --format '{{{{.Status}}}}'",
+            container
+        ))
+        .await
+        .map(|o| o.stdout.trim().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    // Check for updates
+    let latest_version = backend
+        .exec_on_host("curl -sf --max-time 5 https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep tag_name | cut -d'\"' -f4 | tr -d 'v'")
+        .await
+        .ok()
+        .map(|o| o.stdout.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let version_display = match &latest_version {
+        Some(latest) if latest != &server_info.version => {
+            format!("v{} (update available: v{})", server_info.version, latest)
+        }
+        Some(_) => format!("v{} (latest)", server_info.version),
+        None => format!("v{}", server_info.version),
+    };
+
+    println!("Xray:           {}", version_display);
+    println!("API status:     {}", api_status);
+    println!("Uptime:         {}", uptime);
+    println!("Users:          {}", users.len());
     println!(
-        "Total upload:  {}",
+        "Total upload:   {}",
         ui::dashboard::format_bytes(server_info.uplink)
     );
     println!(
@@ -723,4 +784,112 @@ async fn cli_deploy_bot(config: &Config, token: &str) -> error::Result<()> {
         }
         Err(e) => Err(error::AppError::Xray(e)),
     }
+}
+
+// ── Snapshot & Upgrade commands (delegating to xray::snapshot module) ──
+
+async fn cli_snapshot(config: &Config, local: bool) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    eprintln!("Creating snapshot...");
+    let info = xray::snapshot::create_snapshot(backend.as_ref()).await?;
+    println!(
+        "Snapshot created: {} (v{}, {} users)",
+        info.tag, info.version, info.users_count
+    );
+    Ok(())
+}
+
+async fn cli_snapshot_list(config: &Config, local: bool) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    let snapshots = xray::snapshot::list_snapshots(backend.as_ref()).await?;
+
+    if snapshots.is_empty() {
+        println!("No snapshots found.");
+        return Ok(());
+    }
+
+    println!("{:<20} {:<20} {:<10}", "TAG", "XRAY VERSION", "USERS");
+    println!("{}", "-".repeat(50));
+    for s in &snapshots {
+        println!("{:<20} {:<20} {:<10}", s.tag, s.version, s.users_count);
+    }
+
+    Ok(())
+}
+
+async fn cli_snapshot_restore(
+    config: &Config,
+    tag: Option<&str>,
+    local: bool,
+) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+
+    let snapshots = xray::snapshot::list_snapshots(backend.as_ref()).await?;
+    if snapshots.is_empty() {
+        return Err(error::AppError::Xray("no snapshots found".to_string()));
+    }
+
+    eprintln!("Available snapshots:");
+    for s in &snapshots {
+        eprintln!("  {} (v{}, {} users)", s.tag, s.version, s.users_count);
+    }
+
+    let restore_tag = match tag {
+        Some(t) => {
+            if !snapshots.iter().any(|s| s.tag == t) {
+                return Err(error::AppError::Xray(format!(
+                    "snapshot '{}' not found. Available: {}",
+                    t,
+                    snapshots
+                        .iter()
+                        .map(|s| s.tag.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
+            t.to_string()
+        }
+        None => snapshots.last().map(|s| s.tag.clone()).unwrap(),
+    };
+
+    eprintln!("Restoring from snapshot [{}]...", restore_tag);
+    xray::snapshot::restore_snapshot(backend.as_ref(), &restore_tag).await?;
+
+    println!(
+        "Restored from snapshot [{}]. Container restarted.",
+        restore_tag
+    );
+    Ok(())
+}
+
+async fn cli_upgrade_xray(config: &Config, local: bool) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+
+    // Get current version for display
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
+    let server_info = client.get_server_info().await?;
+    eprintln!("Current version: v{}", server_info.version);
+
+    // Check latest
+    let latest = xray::snapshot::get_latest_xray_version(backend.as_ref()).await?;
+    if latest == server_info.version {
+        println!("Already on latest version v{}. Nothing to do.", latest);
+        return Ok(());
+    }
+    eprintln!("Latest version:  v{}", latest);
+    eprintln!();
+
+    eprintln!("Upgrading...");
+    let result = xray::snapshot::upgrade_xray(backend.as_ref()).await?;
+
+    println!();
+    println!("Upgrade complete!");
+    println!("  Before:   v{}", result.old_version);
+    println!("  After:    v{}", result.new_version);
+    println!(
+        "  Snapshot: {} (use --snapshot-restore {} to rollback)",
+        result.snapshot_tag, result.snapshot_tag
+    );
+
+    Ok(())
 }

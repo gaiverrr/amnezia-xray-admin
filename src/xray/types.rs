@@ -248,6 +248,91 @@ impl ServerConfig {
                 })
             })
     }
+
+    /// List user routing rules.
+    ///
+    /// Returns (user_email, outbound_tag) pairs for routing rules that have
+    /// a `user` field (custom per-user routes, not system routes like api).
+    pub fn list_user_routes(&self) -> Vec<(String, String)> {
+        let mut routes = Vec::new();
+        if let Some(routing) = self.raw.get("routing") {
+            if let Some(rules) = routing.get("rules").and_then(|r| r.as_array()) {
+                for rule in rules {
+                    if let (Some(users), Some(outbound)) = (
+                        rule.get("user").and_then(|u| u.as_array()),
+                        rule.get("outboundTag").and_then(|t| t.as_str()),
+                    ) {
+                        for user in users {
+                            if let Some(email) = user.as_str() {
+                                routes.push((email.to_string(), outbound.to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        routes
+    }
+
+    /// Add a per-user routing rule.
+    ///
+    /// Creates a routing rule that matches the user's email and directs
+    /// traffic to the specified outbound tag.
+    pub fn add_user_route(&mut self, user: &str, outbound: &str) {
+        let email = if user.contains('@') {
+            user.to_string()
+        } else {
+            XrayUser::email_from_name(user)
+        };
+
+        let rule = serde_json::json!({
+            "type": "field",
+            "user": [email],
+            "outboundTag": outbound
+        });
+
+        let routing = self
+            .raw
+            .as_object_mut()
+            .unwrap()
+            .entry("routing")
+            .or_insert_with(|| serde_json::json!({"rules": []}));
+        let rules = routing
+            .as_object_mut()
+            .unwrap()
+            .entry("rules")
+            .or_insert_with(|| serde_json::json!([]));
+        if let Some(arr) = rules.as_array_mut() {
+            arr.push(rule);
+        }
+    }
+
+    /// Remove a per-user routing rule.
+    ///
+    /// Returns true if a rule was found and removed.
+    pub fn remove_user_route(&mut self, user: &str) -> bool {
+        let email = if user.contains('@') {
+            user.to_string()
+        } else {
+            XrayUser::email_from_name(user)
+        };
+
+        if let Some(routing) = self.raw.get_mut("routing") {
+            if let Some(rules) = routing.get_mut("rules").and_then(|r| r.as_array_mut()) {
+                let before = rules.len();
+                rules.retain(|rule| {
+                    if let Some(users) = rule.get("user").and_then(|u| u.as_array()) {
+                        // Remove rules where the user list contains this email
+                        !users.iter().any(|u| u.as_str() == Some(&email))
+                    } else {
+                        true // keep non-user rules
+                    }
+                });
+                return rules.len() < before;
+            }
+        }
+        false
+    }
 }
 
 /// Parsed clientsTable — a simple JSON array of ClientEntry
