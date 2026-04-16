@@ -42,46 +42,35 @@ const RESTORE_PREFIX: &str = "restore:";
 #[derive(BotCommands, Clone, Debug)]
 #[command(rename_rule = "lowercase")]
 pub enum Command {
-    /// Show welcome message (admin only)
+    #[command(description = "Welcome message")]
     Start,
-    /// Show available commands
+    #[command(description = "Show help")]
     Help,
-    /// List users with traffic stats
+    #[command(description = "List users with stats")]
     Users,
-    /// Server info and online users
+    #[command(description = "Server info + online users")]
     Status,
-    /// Add a new user
-    #[command(description = "Add a new user")]
+    #[command(description = "Add a new user: /add <name>")]
     Add(String),
-    /// Delete a user
-    #[command(description = "Delete a user")]
+    #[command(description = "Delete a user: /delete <name>")]
     Delete(String),
-    /// Get vless:// URL for a user
-    #[command(description = "Get vless:// URL")]
+    #[command(description = "Get vless:// URL: /url <name>")]
     Url(String),
-    /// Get QR code image for a user
-    #[command(description = "Get QR code image")]
+    #[command(description = "Get QR code: /qr <name>")]
     Qr(String),
-    /// Create server snapshot
     #[command(description = "Create server snapshot")]
     Snapshot,
-    /// List snapshots
     #[command(description = "List snapshots")]
     Snapshots,
-    /// Restore from snapshot
     #[command(description = "Restore from snapshot")]
     Restore(String),
-    /// Upgrade Xray to latest
     #[command(description = "Upgrade Xray to latest")]
     Upgrade,
-    /// Show routing rules
     #[command(description = "Show routing rules")]
     Routes,
-    /// Add route: /route user outbound
-    #[command(description = "Add route: /route user outbound")]
+    #[command(description = "Add route: /route <user> <outbound>")]
     Route(String),
-    /// Remove route
-    #[command(description = "Remove route")]
+    #[command(description = "Remove route: /unroute <name>")]
     Unroute(String),
 }
 
@@ -1117,6 +1106,10 @@ pub async fn run_bot(token: &str, backend: Box<dyn XrayBackend>, config: Config)
     log::info!("Starting Telegram bot...");
 
     let bot = Bot::new(token);
+
+    if let Err(e) = bot.set_my_commands(Command::bot_commands()).await {
+        log::warn!("Failed to register bot commands with Telegram: {}", e);
+    }
 
     let state = Arc::new(BotState {
         backend,
