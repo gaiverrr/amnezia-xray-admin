@@ -6,86 +6,69 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 1
 
 jobs:
-  # Run tests before building release binaries
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test
-      - run: cargo clippy -- -D warnings
-      - run: cargo fmt --check
+      - name: Test + Lint
+        run: |
+          source ~/.cargo/env
+          cargo test --release
+          cargo clippy --release -- -D warnings
+          cargo fmt --check
 
-  build:
+  build-linux:
     needs: test
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, macOS]
     steps:
       - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Build
+        run: source ~/.cargo/env && cargo zigbuild --release --target x86_64-unknown-linux-musl
+      - name: Package
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-
-      - name: Install musl tools
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-
-      - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Package binary
-        shell: bash
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../amnezia-xray-admin-${{ matrix.target }}.tar.gz amnezia-xray-admin
+          cd target/x86_64-unknown-linux-musl/release
+          tar czf ../../../amnezia-xray-admin-x86_64-unknown-linux-musl.tar.gz amnezia-xray-admin
           cd ../../..
-          if command -v sha256sum > /dev/null 2>&1; then
-            sha256sum amnezia-xray-admin-${{ matrix.target }}.tar.gz > amnezia-xray-admin-${{ matrix.target }}.tar.gz.sha256
-          else
-            shasum -a 256 amnezia-xray-admin-${{ matrix.target }}.tar.gz > amnezia-xray-admin-${{ matrix.target }}.tar.gz.sha256
-          fi
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+          shasum -a 256 amnezia-xray-admin-x86_64-unknown-linux-musl.tar.gz > amnezia-xray-admin-x86_64-unknown-linux-musl.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
         with:
-          name: amnezia-xray-admin-${{ matrix.target }}
+          name: amnezia-xray-admin-x86_64-unknown-linux-musl
           path: |
-            amnezia-xray-admin-${{ matrix.target }}.tar.gz
-            amnezia-xray-admin-${{ matrix.target }}.tar.gz.sha256
+            amnezia-xray-admin-x86_64-unknown-linux-musl.tar.gz
+            amnezia-xray-admin-x86_64-unknown-linux-musl.tar.gz.sha256
 
-  release:
-    needs: build
-    runs-on: ubuntu-latest
+  build-macos:
+    needs: test
+    runs-on: [self-hosted, macOS]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: source ~/.cargo/env && cargo build --release --target aarch64-apple-darwin
+      - name: Package
+        run: |
+          cd target/aarch64-apple-darwin/release
+          tar czf ../../../amnezia-xray-admin-aarch64-apple-darwin.tar.gz amnezia-xray-admin
+          cd ../../..
+          shasum -a 256 amnezia-xray-admin-aarch64-apple-darwin.tar.gz > amnezia-xray-admin-aarch64-apple-darwin.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: amnezia-xray-admin-aarch64-apple-darwin
+          path: |
+            amnezia-xray-admin-aarch64-apple-darwin.tar.gz
+            amnezia-xray-admin-aarch64-apple-darwin.tar.gz.sha256
+
+  publish:
+    needs: [build-linux, build-macos]
+    runs-on: [self-hosted, macOS]
     permissions:
       contents: write
+      packages: write
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -99,23 +82,7 @@ jobs:
             amnezia-xray-admin-*.tar.gz
             amnezia-xray-admin-*.tar.gz.sha256
 
-  # Build and push Docker image to GitHub Container Registry
-  # Used by --deploy-bot to pull pre-built image on VPS
-  docker:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Linux musl binary (static, no glibc dependency)
-        uses: actions/download-artifact@v4
-        with:
-          name: amnezia-xray-admin-x86_64-unknown-linux-musl
-
-      - name: Extract binary for Docker
+      - name: Extract Linux binary for Docker
         run: |
           tar xzf amnezia-xray-admin-x86_64-unknown-linux-musl.tar.gz
           chmod +x amnezia-xray-admin
@@ -128,10 +95,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+        run: |
+          docker build --platform linux/amd64 -t ghcr.io/${{ github.repository }}:latest -t ghcr.io/${{ github.repository }}:${{ github.ref_name }} .
+          docker push ghcr.io/${{ github.repository }}:latest
+          docker push ghcr.io/${{ github.repository }}:${{ github.ref_name }}
