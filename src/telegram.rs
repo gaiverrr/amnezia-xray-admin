@@ -37,6 +37,10 @@ const DELETE_CONFIRM_PREFIX: &str = "delete_confirm:";
 const DELETE_CANCEL_PREFIX: &str = "delete_cancel:";
 /// Callback query prefix for restore snapshot buttons.
 const RESTORE_PREFIX: &str = "restore:";
+/// Callback query prefix for upgrade confirmation buttons.
+const UPGRADE_CONFIRM_PREFIX: &str = "upgrade_confirm";
+/// Callback query prefix for upgrade cancel buttons.
+const UPGRADE_CANCEL_PREFIX: &str = "upgrade_cancel";
 
 /// Commands recognized by the bot.
 #[derive(BotCommands, Clone, Debug)]
@@ -596,7 +600,7 @@ async fn handle_command(
             }
         }
         Command::Upgrade => {
-            match cmd_upgrade(&bot, chat_id, &state).await {
+            match cmd_upgrade_check(&bot, chat_id, &state).await {
                 Ok(()) => {} // messages already sent inside
                 Err(e) => {
                     bot.send_message(chat_id, format!("Error: {}", e)).await?;
@@ -751,8 +755,9 @@ async fn cmd_snapshot(
         .await
         .ok();
 
-    let info = snapshot::create_snapshot(state.backend.as_ref()).await?;
-    let zip_bytes = snapshot::pack_snapshot_zip(state.backend.as_ref(), &info.tag).await?;
+    let snapshot_dir = state.config.lock().await.snapshot_dir().to_string();
+    let info = snapshot::create_snapshot(state.backend.as_ref(), &snapshot_dir).await?;
+    let zip_bytes = snapshot::pack_snapshot_zip(state.backend.as_ref(), &info.tag, &snapshot_dir).await?;
 
     let file_name = format!("snapshot-{}.tar.gz", info.tag);
     let caption = format!(
@@ -772,7 +777,8 @@ async fn cmd_snapshot(
 async fn cmd_snapshots(
     state: &BotState,
 ) -> std::result::Result<String, crate::error::AppError> {
-    let snapshots = snapshot::list_snapshots(state.backend.as_ref()).await?;
+    let snapshot_dir = state.config.lock().await.snapshot_dir().to_string();
+    let snapshots = snapshot::list_snapshots(state.backend.as_ref(), &snapshot_dir).await?;
 
     if snapshots.is_empty() {
         return Ok("No snapshots found.".to_string());
@@ -794,7 +800,8 @@ async fn cmd_snapshots(
 async fn cmd_restore_keyboard(
     state: &BotState,
 ) -> std::result::Result<Option<(String, InlineKeyboardMarkup)>, crate::error::AppError> {
-    let snapshots = snapshot::list_snapshots(state.backend.as_ref()).await?;
+    let snapshot_dir = state.config.lock().await.snapshot_dir().to_string();
+    let snapshots = snapshot::list_snapshots(state.backend.as_ref(), &snapshot_dir).await?;
 
     if snapshots.is_empty() {
         return Ok(None);
@@ -821,20 +828,20 @@ async fn cmd_restore(
     state: &BotState,
     tag: &str,
 ) -> std::result::Result<String, crate::error::AppError> {
-    snapshot::restore_snapshot(state.backend.as_ref(), tag).await?;
+    let snapshot_dir = state.config.lock().await.snapshot_dir().to_string();
+    snapshot::restore_snapshot(state.backend.as_ref(), tag, &snapshot_dir).await?;
     Ok(format!(
         "\u{2705} Restored from snapshot [{}]. Container restarted.",
         tag
     ))
 }
 
-/// Execute /upgrade command: upgrade Xray with progress messages.
-async fn cmd_upgrade(
+/// Execute /upgrade command: show confirmation before proceeding.
+async fn cmd_upgrade_check(
     bot: &Bot,
     chat_id: ChatId,
     state: &BotState,
 ) -> std::result::Result<(), crate::error::AppError> {
-    // Check current version
     let client = XrayApiClient::new(state.backend.as_ref());
     let server_info = client.get_server_info().await?;
     let latest = snapshot::get_latest_xray_version(state.backend.as_ref()).await?;
@@ -852,26 +859,41 @@ async fn cmd_upgrade(
         return Ok(());
     }
 
-    bot.send_message(
-        chat_id,
-        format!(
-            "\u{23f3} Upgrading Xray v{} \u{2192} v{}...",
-            server_info.version, latest
-        ),
-    )
-    .await
-    .ok();
+    let text = format!(
+        "\u{26a0}\u{fe0f} Upgrade Xray v{} \u{2192} v{}?\n\n\
+         This will restart the container and briefly drop all VPN connections.\n\
+         A snapshot will be created automatically before upgrading.",
+        server_info.version, latest
+    );
+    let confirm = InlineKeyboardButton::callback("Yes, upgrade", UPGRADE_CONFIRM_PREFIX);
+    let cancel = InlineKeyboardButton::callback("Cancel", UPGRADE_CANCEL_PREFIX);
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![confirm, cancel]]);
+    bot.send_message(chat_id, text)
+        .reply_markup(keyboard)
+        .await
+        .ok();
 
-    let result = snapshot::upgrade_xray(state.backend.as_ref()).await?;
+    Ok(())
+}
+
+/// Execute the actual upgrade after confirmation.
+async fn cmd_upgrade_execute(
+    bot: &Bot,
+    chat_id: ChatId,
+    state: &BotState,
+) -> std::result::Result<(), crate::error::AppError> {
+    bot.send_message(chat_id, "\u{23f3} Upgrading...").await.ok();
+
+    let snapshot_dir = state.config.lock().await.snapshot_dir().to_string();
+    let result = snapshot::upgrade_xray(state.backend.as_ref(), &snapshot_dir).await?;
 
     // Send pre-upgrade backup as document
-    match snapshot::pack_snapshot_zip(state.backend.as_ref(), &result.snapshot_tag).await {
+    match snapshot::pack_snapshot_zip(state.backend.as_ref(), &result.snapshot_tag, &snapshot_dir)
+        .await
+    {
         Ok(zip_bytes) => {
             let file_name = format!("pre-upgrade-{}.tar.gz", result.snapshot_tag);
-            let caption = format!(
-                "\u{1f4e6} Pre-upgrade backup (v{})",
-                result.old_version
-            );
+            let caption = format!("\u{1f4e6} Pre-upgrade backup (v{})", result.old_version);
             let input = InputFile::memory(zip_bytes).file_name(file_name);
             bot.send_document(chat_id, input)
                 .caption(caption)
@@ -1067,6 +1089,24 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
             Err(e) => format!("Error: {}", e),
         };
         bot.send_message(chat_id, text).await?;
+    } else if data == UPGRADE_CONFIRM_PREFIX {
+        bot.answer_callback_query(q.id.clone()).await?;
+        if let Some(ref msg) = q.message {
+            bot.edit_message_text(chat_id, msg.id(), "\u{23f3} Upgrading...")
+                .await?;
+        }
+        match cmd_upgrade_execute(&bot, chat_id, &state).await {
+            Ok(()) => {} // messages already sent inside
+            Err(e) => {
+                bot.send_message(chat_id, format!("Error: {}", e)).await?;
+            }
+        }
+    } else if data == UPGRADE_CANCEL_PREFIX {
+        bot.answer_callback_query(q.id.clone()).await?;
+        if let Some(ref msg) = q.message {
+            bot.edit_message_text(chat_id, msg.id(), "Upgrade cancelled.")
+                .await?;
+        }
     }
 
     Ok(())
