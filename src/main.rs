@@ -451,24 +451,15 @@ async fn cli_server_info(config: &Config, local: bool) -> error::Result<()> {
         "unknown"
     };
 
-    // Get container uptime
-    let container = &config.container;
-    let uptime = backend
-        .exec_on_host(&format!(
-            "docker ps --filter name={} --format '{{{{.Status}}}}'",
-            container
-        ))
-        .await
-        .map(|o| o.stdout.trim().to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
-
-    // Check for updates
-    let latest_version = backend
-        .exec_on_host("curl -sf --max-time 5 https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep tag_name | cut -d'\"' -f4 | tr -d 'v'")
-        .await
-        .ok()
-        .map(|o| o.stdout.trim().to_string())
-        .filter(|v| !v.is_empty());
+    // Get container uptime and check for newer Xray via shared helpers
+    // (keeps the 3 s GitHub timeout and anchored docker filter consistent with the TUI/Telegram).
+    let uptime_raw = backend::fetch_container_uptime(backend.as_ref()).await;
+    let uptime = if uptime_raw.is_empty() {
+        "unknown".to_string()
+    } else {
+        uptime_raw
+    };
+    let latest_version = backend::fetch_latest_xray_version(backend.as_ref()).await;
 
     let version_display = match &latest_version {
         Some(latest) if latest != &server_info.version => {

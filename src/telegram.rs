@@ -748,24 +748,8 @@ async fn cmd_status(state: &BotState) -> std::result::Result<String, crate::erro
         online_total += count as usize;
     }
 
-    let container = state.backend.container_name();
-    let uptime = state
-        .backend
-        .exec_on_host(&format!(
-            "docker ps --filter name={} --format '{{{{.Status}}}}'",
-            container
-        ))
-        .await
-        .map(|o| o.stdout.trim().to_string())
-        .unwrap_or_default();
-
-    let latest_version = state
-        .backend
-        .exec_on_host("curl -sf --max-time 3 https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep tag_name | cut -d'\"' -f4 | tr -d 'v'")
-        .await
-        .ok()
-        .map(|o| o.stdout.trim().to_string())
-        .filter(|v| !v.is_empty());
+    let uptime = crate::backend::fetch_container_uptime(state.backend.as_ref()).await;
+    let latest_version = crate::backend::fetch_latest_xray_version(state.backend.as_ref()).await;
 
     Ok(format_status_message(
         &server_info,

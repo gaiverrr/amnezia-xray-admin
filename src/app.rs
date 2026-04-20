@@ -58,6 +58,9 @@ pub struct App {
     initial_load_done: bool,
     /// Whether ensure_api_enabled has already succeeded (skip on subsequent refreshes)
     api_check_done: bool,
+    /// Whether we've already fetched the latest Xray release from GitHub this session.
+    /// Prevents hammering the unauthenticated GitHub API (60 req/h limit) on every 5 s refresh.
+    version_check_done: bool,
     /// Whether a mutation completed and we need to refresh once the current fetch finishes
     refresh_after_mutation: bool,
     /// Name of the user being added (prevents duplicate submissions and stale error routing)
@@ -109,6 +112,7 @@ impl App {
             pending_refresh: false,
             initial_load_done: false,
             api_check_done: false,
+            version_check_done: false,
             refresh_after_mutation: false,
             pending_add_name: None,
             pending_delete_uuid: None,
@@ -475,6 +479,7 @@ impl App {
             self.config.clone(),
             self.backend_tx.clone(),
             self.api_check_done,
+            !self.version_check_done,
         );
     }
 
@@ -496,7 +501,10 @@ impl App {
                             self.dashboard_state.set_users(data.users);
                             self.dashboard_state.server_version = data.server_info.version;
                             self.dashboard_state.container_uptime = data.container_uptime;
-                            self.dashboard_state.latest_version = data.latest_version;
+                            if data.version_was_fetched {
+                                self.dashboard_state.latest_version = data.latest_version;
+                                self.version_check_done = true;
+                            }
                             self.dashboard_state.total_upload = data.server_info.uplink;
                             self.dashboard_state.total_download = data.server_info.downlink;
                             self.dashboard_state.loading = false;
@@ -946,6 +954,7 @@ impl App {
             pending_refresh: false,
             initial_load_done: false,
             api_check_done: false,
+            version_check_done: false,
             refresh_after_mutation: false,
             pending_add_name: None,
             pending_delete_uuid: None,
@@ -1190,6 +1199,7 @@ mod tests {
                 },
                 container_uptime: "Up 2 hours".to_string(),
                 latest_version: Some("25.8.3".to_string()),
+                version_was_fetched: true,
             },
         )));
 
