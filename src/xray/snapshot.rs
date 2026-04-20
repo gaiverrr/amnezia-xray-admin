@@ -369,17 +369,21 @@ pub async fn upgrade_xray(backend: &dyn XrayBackend, snapshot_dir: &str) -> Resu
             )));
         }
 
-        // Download .dgst file and verify SHA256
+        // Download .dgst file and verify SHA256.
+        // `-L` is required because GitHub Releases assets return a 302 redirect
+        // to a CDN URL; without `-L`, curl emits an empty body and verification fails.
         let dgst_cmd = format!(
-            "curl -sf --max-time 30 \
+            "curl -sfL --max-time 30 \
              https://github.com/XTLS/Xray-core/releases/download/v{}/{}.dgst",
             latest, asset
         );
         let dgst_result = backend.exec_on_host(&dgst_cmd).await?;
+        // XTLS .dgst files use the OpenSSL dgst format: `SHA2-256= <hex>`.
+        // Accept both `SHA2-256` (actual) and `SHA256` (legacy/defensive) prefixes.
         let expected_hash = dgst_result
             .stdout
             .lines()
-            .find(|l| l.starts_with("SHA256"))
+            .find(|l| l.starts_with("SHA2-256") || l.starts_with("SHA256"))
             .and_then(|l| l.split_once('='))
             .map(|(_, h)| h.trim().to_lowercase())
             .ok_or_else(|| AppError::Xray("SHA256 hash not found in .dgst file".to_string()))?;
