@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `--upgrade-xray` now follows redirects when fetching `.dgst` checksums (GitHub Releases returns a 302 to the CDN; without `-L` the body was empty and SHA256 verification always failed)
+- `--upgrade-xray` now accepts `SHA2-256=` in `.dgst` files — the OpenSSL format XTLS actually ships, not `SHA256=`
+
 ## [0.2.0] - 2026-04-20
 
 ### Added
