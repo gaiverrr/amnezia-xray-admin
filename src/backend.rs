@@ -52,6 +52,64 @@ pub struct DashboardData {
     pub server_info: ServerInfo,
     pub container_uptime: String,
     pub latest_version: Option<String>,
+    /// Whether `latest_version` reflects a fetch this cycle (false = skipped, keep prior cache).
+    pub version_was_fetched: bool,
+}
+
+/// GitHub API endpoint for the latest Xray-core release.
+const XRAY_LATEST_RELEASE_URL: &str = "https://api.github.com/repos/XTLS/Xray-core/releases/latest";
+/// Timeout for best-effort network calls (uptime probe, version check).
+const NETWORK_PROBE_TIMEOUT_SECS: u32 = 3;
+
+/// Fetch `docker ps` status for the backend's container. Empty string on failure or no match.
+///
+/// Uses an anchored regex filter so that `amnezia-xray-test` does not match `amnezia-xray`.
+/// Container names are validated (`is_valid_container_name`) to safe characters so direct
+/// interpolation is fine.
+pub async fn fetch_container_uptime(backend: &dyn XrayBackend) -> String {
+    backend
+        .exec_on_host(&format!(
+            "docker ps --filter 'name=^/{}$' --format '{{{{.Status}}}}'",
+            backend.container_name()
+        ))
+        .await
+        .map(|o| o.stdout.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Fetch the latest Xray-core release tag from GitHub. `None` on network failure or
+/// unparseable response. Returned string is the version without a leading `v` (e.g. `25.8.3`).
+///
+/// Parsing is done in Rust via `serde_json` rather than a remote `grep|cut|tr` pipeline,
+/// which was fragile to JSON field reordering or error bodies. The result is also validated
+/// to match `[0-9.]+` before being returned, so a malformed payload cannot render garbage
+/// in the UI.
+pub async fn fetch_latest_xray_version(backend: &dyn XrayBackend) -> Option<String> {
+    let out = backend
+        .exec_on_host(&format!(
+            "curl -sfL --max-time {} -H 'Accept: application/vnd.github+json' {}",
+            NETWORK_PROBE_TIMEOUT_SECS, XRAY_LATEST_RELEASE_URL
+        ))
+        .await
+        .ok()?;
+    if !out.success() {
+        return None;
+    }
+    parse_xray_version_from_json(&out.stdout)
+}
+
+/// Extract and validate the Xray version from a GitHub releases/latest JSON payload.
+fn parse_xray_version_from_json(body: &str) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_str(body).ok()?;
+    let tag = json.get("tag_name")?.as_str()?;
+    let version = tag.strip_prefix('v').unwrap_or(tag);
+    if version.is_empty()
+        || !version.chars().all(|c| c.is_ascii_digit() || c == '.')
+        || !version.chars().any(|c| c.is_ascii_digit())
+    {
+        return None;
+    }
+    Some(version.to_string())
 }
 
 /// Result of adding a user
@@ -159,14 +217,19 @@ pub async fn build_vless_url(
 }
 
 /// Spawn: fetch dashboard data (user list + server info + per-user stats).
+///
+/// `fetch_version`: when true, hits the GitHub API to check for a newer Xray release.
+/// This should only be `true` once per session — the dashboard auto-refreshes every 5 s,
+/// and unauthenticated GitHub API is rate-limited to 60 req/h per IP.
 pub fn spawn_fetch_dashboard(
     runtime: &tokio::runtime::Handle,
     config: Config,
     tx: mpsc::Sender<BackendMsg>,
     api_check_done: bool,
+    fetch_version: bool,
 ) {
     runtime.spawn(async move {
-        let result = fetch_dashboard_data(&config, api_check_done).await;
+        let result = fetch_dashboard_data(&config, api_check_done, fetch_version).await;
         let _ = tx.send(BackendMsg::DashboardData(result));
     });
 }
@@ -174,6 +237,7 @@ pub fn spawn_fetch_dashboard(
 async fn fetch_dashboard_data(
     config: &Config,
     api_check_done: bool,
+    fetch_version: bool,
 ) -> Result<DashboardData, String> {
     let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
 
@@ -200,23 +264,13 @@ async fn fetch_dashboard_data(
         }
     }
 
-    // Get container uptime
-    let container_uptime = backend
-        .exec_on_host(&format!(
-            "docker ps --filter name={} --format '{{{{.Status}}}}'",
-            backend.container_name()
-        ))
-        .await
-        .map(|o| o.stdout.trim().to_string())
-        .unwrap_or_default();
+    let container_uptime = fetch_container_uptime(&backend).await;
 
-    // Check latest Xray version (best-effort, don't block on failure)
-    let latest_version = backend
-        .exec_on_host("curl -sf --max-time 3 https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep tag_name | cut -d'\"' -f4 | tr -d 'v'")
-        .await
-        .ok()
-        .map(|o| o.stdout.trim().to_string())
-        .filter(|v| !v.is_empty());
+    let latest_version = if fetch_version {
+        fetch_latest_xray_version(&backend).await
+    } else {
+        None
+    };
 
     let _ = backend.close().await;
 
@@ -225,6 +279,7 @@ async fn fetch_dashboard_data(
         server_info,
         container_uptime,
         latest_version,
+        version_was_fetched: fetch_version,
     })
 }
 
@@ -620,6 +675,43 @@ mod tests {
         // read_public_key() must use exec_in_container(), not exec_command().
         assert_eq!(PUBLIC_KEY_PATH, "/opt/amnezia/xray/xray_public.key");
         assert!(PUBLIC_KEY_PATH.starts_with("/opt/amnezia/"));
+    }
+
+    #[test]
+    fn test_parse_xray_version_valid() {
+        let body = r#"{"tag_name":"v25.8.3","name":"v25.8.3"}"#;
+        assert_eq!(parse_xray_version_from_json(body), Some("25.8.3".into()));
+    }
+
+    #[test]
+    fn test_parse_xray_version_no_v_prefix() {
+        let body = r#"{"tag_name":"25.8.3"}"#;
+        assert_eq!(parse_xray_version_from_json(body), Some("25.8.3".into()));
+    }
+
+    #[test]
+    fn test_parse_xray_version_missing_field() {
+        let body = r#"{"name":"v25.8.3"}"#;
+        assert_eq!(parse_xray_version_from_json(body), None);
+    }
+
+    #[test]
+    fn test_parse_xray_version_malformed_json() {
+        assert_eq!(parse_xray_version_from_json("not json"), None);
+        assert_eq!(parse_xray_version_from_json(""), None);
+    }
+
+    #[test]
+    fn test_parse_xray_version_rejects_non_semver() {
+        // Rate-limit or error bodies, prerelease tags, etc. must not render as versions.
+        let body = r#"{"tag_name":"rate limit exceeded"}"#;
+        assert_eq!(parse_xray_version_from_json(body), None);
+        let body = r#"{"tag_name":"v1.0-beta"}"#;
+        assert_eq!(parse_xray_version_from_json(body), None);
+        let body = r#"{"tag_name":"v"}"#;
+        assert_eq!(parse_xray_version_from_json(body), None);
+        let body = r#"{"tag_name":""}"#;
+        assert_eq!(parse_xray_version_from_json(body), None);
     }
 
     #[tokio::test]
