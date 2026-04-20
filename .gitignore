@@ -1,4 +1,12 @@
 /target
 
+# macOS
+.DS_Store
+
 # ralphex progress logs
 .ralphex/progress/
+
+# Claude Code per-project state
+.claude/settings.local.json
+.claude/settings.json
+.claude/scheduled_tasks.lock
