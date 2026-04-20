@@ -1,6 +1,6 @@
 [package]
 name = "amnezia-xray-admin"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray server"
 license = "MIT"
