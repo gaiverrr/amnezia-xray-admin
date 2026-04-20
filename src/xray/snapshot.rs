@@ -37,10 +37,13 @@ pub struct UpgradeResult {
 /// `date +%Y%m%d-%H%M%S` in `create_snapshot`.
 pub fn validate_tag(tag: &str) -> Result<()> {
     let valid = tag.len() == 15
-        && tag
-            .bytes()
-            .enumerate()
-            .all(|(i, b)| if i == 8 { b == b'-' } else { b.is_ascii_digit() });
+        && tag.bytes().enumerate().all(|(i, b)| {
+            if i == 8 {
+                b == b'-'
+            } else {
+                b.is_ascii_digit()
+            }
+        });
     if !valid {
         return Err(AppError::Xray(format!(
             "invalid snapshot tag '{}': expected YYYYMMDD-HHMMSS format",
@@ -57,9 +60,7 @@ pub fn validate_tag(tag: &str) -> Result<()> {
 pub fn validate_version(version: &str) -> Result<()> {
     let valid = !version.is_empty()
         && version.len() <= 20
-        && version
-            .bytes()
-            .all(|b| b.is_ascii_digit() || b == b'.');
+        && version.bytes().all(|b| b.is_ascii_digit() || b == b'.');
     if !valid {
         return Err(AppError::Xray(format!(
             "invalid version string '{}'",
@@ -101,7 +102,9 @@ pub async fn create_snapshot(
     let tag_result = backend.exec_on_host("date +%Y%m%d-%H%M%S").await?;
     let tag = tag_result.stdout.trim().to_string();
     if tag.is_empty() {
-        return Err(AppError::Xray("failed to generate snapshot tag".to_string()));
+        return Err(AppError::Xray(
+            "failed to generate snapshot tag".to_string(),
+        ));
     }
 
     let snapshot_path = format!("{}/{}", snapshot_dir, tag);
@@ -324,10 +327,7 @@ fn xray_asset_name(arch: &str) -> Result<&'static str> {
 /// 6. Auto-rollback on failure
 ///
 /// Returns an `UpgradeResult` with old/new versions and the snapshot tag.
-pub async fn upgrade_xray(
-    backend: &dyn XrayBackend,
-    snapshot_dir: &str,
-) -> Result<UpgradeResult> {
+pub async fn upgrade_xray(backend: &dyn XrayBackend, snapshot_dir: &str) -> Result<UpgradeResult> {
     let container = backend.container_name();
 
     // Get current version
@@ -382,9 +382,7 @@ pub async fn upgrade_xray(
             .find(|l| l.starts_with("SHA256"))
             .and_then(|l| l.split_once('='))
             .map(|(_, h)| h.trim().to_lowercase())
-            .ok_or_else(|| {
-                AppError::Xray("SHA256 hash not found in .dgst file".to_string())
-            })?;
+            .ok_or_else(|| AppError::Xray("SHA256 hash not found in .dgst file".to_string()))?;
 
         let actual_hash = backend
             .exec_on_host("sha256sum /tmp/xray-upgrade.zip | cut -d' ' -f1")
@@ -526,7 +524,11 @@ pub async fn pack_snapshot_zip(
     }
 
     // Decode base64 to bytes
-    let b64_clean: String = result.stdout.chars().filter(|c| !c.is_whitespace()).collect();
+    let b64_clean: String = result
+        .stdout
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&b64_clean)
         .map_err(|e| AppError::Xray(format!("failed to decode snapshot archive: {}", e)))?;
@@ -581,10 +583,7 @@ mod tests {
         assert_eq!(extract_version("unknown"), "unknown");
         assert_eq!(extract_version(""), "unknown");
         // Reject non-version tokens
-        assert_eq!(
-            extract_version("Xray $(malicious) something"),
-            "unknown"
-        );
+        assert_eq!(extract_version("Xray $(malicious) something"), "unknown");
     }
 
     #[test]

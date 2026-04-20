@@ -751,13 +751,12 @@ async fn cmd_snapshot(
     chat_id: ChatId,
     state: &BotState,
 ) -> std::result::Result<(), crate::error::AppError> {
-    bot.send_message(chat_id, "Creating snapshot...")
-        .await
-        .ok();
+    bot.send_message(chat_id, "Creating snapshot...").await.ok();
 
     let snapshot_dir = state.config.lock().await.snapshot_dir().to_string();
     let info = snapshot::create_snapshot(state.backend.as_ref(), &snapshot_dir).await?;
-    let zip_bytes = snapshot::pack_snapshot_zip(state.backend.as_ref(), &info.tag, &snapshot_dir).await?;
+    let zip_bytes =
+        snapshot::pack_snapshot_zip(state.backend.as_ref(), &info.tag, &snapshot_dir).await?;
 
     let file_name = format!("snapshot-{}.tar.gz", info.tag);
     let caption = format!(
@@ -774,9 +773,7 @@ async fn cmd_snapshot(
 }
 
 /// Execute /snapshots command: list available snapshots.
-async fn cmd_snapshots(
-    state: &BotState,
-) -> std::result::Result<String, crate::error::AppError> {
+async fn cmd_snapshots(state: &BotState) -> std::result::Result<String, crate::error::AppError> {
     let snapshot_dir = state.config.lock().await.snapshot_dir().to_string();
     let snapshots = snapshot::list_snapshots(state.backend.as_ref(), &snapshot_dir).await?;
 
@@ -820,7 +817,10 @@ async fn cmd_restore_keyboard(
         .collect();
 
     let keyboard = InlineKeyboardMarkup::new(buttons);
-    Ok(Some(("Select a snapshot to restore:".to_string(), keyboard)))
+    Ok(Some((
+        "Select a snapshot to restore:".to_string(),
+        keyboard,
+    )))
 }
 
 /// Execute restore from a specific snapshot tag.
@@ -882,7 +882,9 @@ async fn cmd_upgrade_execute(
     chat_id: ChatId,
     state: &BotState,
 ) -> std::result::Result<(), crate::error::AppError> {
-    bot.send_message(chat_id, "\u{23f3} Upgrading...").await.ok();
+    bot.send_message(chat_id, "\u{23f3} Upgrading...")
+        .await
+        .ok();
 
     let snapshot_dir = state.config.lock().await.snapshot_dir().to_string();
     let result = snapshot::upgrade_xray(state.backend.as_ref(), &snapshot_dir).await?;
@@ -901,12 +903,9 @@ async fn cmd_upgrade_execute(
                 .ok();
         }
         Err(e) => {
-            bot.send_message(
-                chat_id,
-                format!("Warning: could not pack backup: {}", e),
-            )
-            .await
-            .ok();
+            bot.send_message(chat_id, format!("Warning: could not pack backup: {}", e))
+                .await
+                .ok();
         }
     }
 
@@ -924,9 +923,7 @@ async fn cmd_upgrade_execute(
 }
 
 /// Execute /routes command: show routing rules from server config.
-async fn cmd_routes(
-    state: &BotState,
-) -> std::result::Result<String, crate::error::AppError> {
+async fn cmd_routes(state: &BotState) -> std::result::Result<String, crate::error::AppError> {
     let config = crate::xray::config::read_server_config(state.backend.as_ref()).await?;
     let routes = config.list_user_routes();
 
