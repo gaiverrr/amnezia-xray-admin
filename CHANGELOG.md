@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-20
+
 ### Added
 
 - `--snapshot` / `--snapshot-list` / `--snapshot-restore [tag]` CLI commands for point-in-time backups of server config + Xray binary (stored on host FS via `docker cp`)
@@ -94,6 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Telegram bot mode with commands: /start, /help, /users, /status, /add, /delete, /url, /qr
 - Bot deployment command (`--deploy-bot`) to set up the Telegram bot on VPS via SSH
 
-[Unreleased]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.1.7...v0.2.0
 [0.1.7]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.1.0...v0.1.7
 [0.1.0]: https://github.com/gaiverrr/amnezia-xray-admin/releases/tag/v0.1.0
