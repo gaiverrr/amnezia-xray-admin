@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--snapshot` / `--snapshot-list` / `--snapshot-restore [tag]` CLI commands for point-in-time backups of server config + Xray binary (stored on host FS via `docker cp`)
+- `--upgrade-xray` CLI command: safe binary upgrade with SHA256 verification, host arch auto-detection (x86_64 / aarch64 / armv7), pre-upgrade snapshot, and auto-rollback on failure
+- Telegram bot: `/snapshot`, `/snapshots`, `/restore`, `/upgrade` admin commands (with inline-keyboard confirmation for destructive actions)
+- Telegram bot: `/route`, `/unroute`, `/routes` commands for managing direct-access routing rules
+- Telegram bot: commands are now scoped — non-admin users only see `/start` and `/help` in the `/` menu (`BotCommandScopeChat`)
+- Container uptime + latest Xray version indicator in dashboard status bar, `--server-info`, and Telegram `/status`
+- Configurable `bot_image` in `config.toml` for `--deploy-bot`
+- Configurable `snapshot_dir` in `config.toml` / `--snapshot-dir` flag
+
+### Changed
+
+- Dashboard caches latest Xray version once per session (no longer hits GitHub API on every 5 s refresh)
+- Version-check response parsed via `serde_json` and validated against `[0-9.]+` before display (no longer trusts remote shell pipeline output)
+- Centralized `fetch_container_uptime` / `fetch_latest_xray_version` helpers — single implementation shared by TUI, CLI, and Telegram bot
+- `docker ps --filter name=X` is now anchored (`name=^/X$`) to prevent substring matches
+
+### Fixed
+
+- Clippy `collapsible_match` warning under Rust 1.95 (`src/ssh.rs`)
+
+### Security
+
+- SHA256 checksum verification of downloaded Xray binary before replacing inside container
+- Snapshot tags validated as `YYYYMMDD-HHMMSS` to block path traversal via `/restore <tag>`
+- `xray version` output is base64-encoded before interpolation into shell commands (defense against quote-breakout)
+
 ## [0.1.7] - 2026-03-22
 
 ### Fixed
