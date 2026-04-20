@@ -205,7 +205,11 @@ fn main() {
     }
 
     if let Some(ref tag) = cli.snapshot_restore {
-        let tag = if tag.is_empty() { None } else { Some(tag.as_str()) };
+        let tag = if tag.is_empty() {
+            None
+        } else {
+            Some(tag.as_str())
+        };
         if let Err(e) = runtime.block_on(cli_snapshot_restore(&config, tag, local)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
