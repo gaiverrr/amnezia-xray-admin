@@ -155,6 +155,7 @@ impl SetupState {
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: Default::default(),
+            snapshot_dir: None,
         }
     }
 
@@ -503,6 +504,7 @@ mod tests {
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: Default::default(),
+            snapshot_dir: None,
         };
         let state = SetupState::from_config(&config);
         assert_eq!(state.ssh_host, "vps-vpn");
@@ -580,6 +582,7 @@ mod tests {
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: Default::default(),
+            snapshot_dir: None,
         };
         let state = SetupState::from_config(&config);
         let result = state.to_config();

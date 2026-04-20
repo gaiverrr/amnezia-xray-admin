@@ -1139,6 +1139,7 @@ mod tests {
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: Default::default(),
+            snapshot_dir: None,
         };
         let app = App::with_config(config, test_runtime());
         assert_eq!(app.screen, Screen::Dashboard);
@@ -1157,6 +1158,7 @@ mod tests {
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: Default::default(),
+            snapshot_dir: None,
         };
         let app = App::with_config(config, test_runtime());
         assert_eq!(app.dashboard_state.server_host, "vps-vpn");

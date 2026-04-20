@@ -583,6 +583,7 @@ mod tests {
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: Default::default(),
+            snapshot_dir: None,
         };
         let (host, port, user, key) = resolve_connection_info(&config).unwrap();
         assert_eq!(host, "1.2.3.4");
@@ -610,6 +611,7 @@ mod tests {
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: Default::default(),
+            snapshot_dir: None,
         };
         // Falls back to treating alias as hostname
         let (host, port, user, _key) = resolve_connection_info(&config).unwrap();
@@ -630,6 +632,7 @@ mod tests {
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: Default::default(),
+            snapshot_dir: None,
         };
         let (_host, _port, _user, key) = resolve_connection_info(&config).unwrap();
         let key_path = key.expect("key_path should be Some");
@@ -658,6 +661,7 @@ mod tests {
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: Default::default(),
+            snapshot_dir: None,
         };
         let (_host, _port, _user, key) = resolve_connection_info(&config).unwrap();
         let key_path = key.expect("key_path should be Some");
@@ -726,6 +730,7 @@ mod tests {
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: Default::default(), // no admin_id
+            snapshot_dir: None,
         };
         let result = deploy_bot(&config, "123:abc").await;
         assert!(result.is_err());
@@ -744,6 +749,7 @@ mod tests {
             telegram_token: None,
             telegram_admin_chat_id: Some(123456789),
             bot_image: Default::default(),
+            snapshot_dir: None,
         };
         // With admin_id set, it should pass the admin_id check and fail at SSH connection
         let result = deploy_bot(&config, "123:abc").await;

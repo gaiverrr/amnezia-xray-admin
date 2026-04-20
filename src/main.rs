@@ -782,7 +782,7 @@ async fn cli_deploy_bot(config: &Config, token: &str) -> error::Result<()> {
 async fn cli_snapshot(config: &Config, local: bool) -> error::Result<()> {
     let backend = connect_cli_backend(config, local).await?;
     eprintln!("Creating snapshot...");
-    let info = xray::snapshot::create_snapshot(backend.as_ref()).await?;
+    let info = xray::snapshot::create_snapshot(backend.as_ref(), config.snapshot_dir()).await?;
     println!(
         "Snapshot created: {} (v{}, {} users)",
         info.tag, info.version, info.users_count
@@ -792,7 +792,7 @@ async fn cli_snapshot(config: &Config, local: bool) -> error::Result<()> {
 
 async fn cli_snapshot_list(config: &Config, local: bool) -> error::Result<()> {
     let backend = connect_cli_backend(config, local).await?;
-    let snapshots = xray::snapshot::list_snapshots(backend.as_ref()).await?;
+    let snapshots = xray::snapshot::list_snapshots(backend.as_ref(), config.snapshot_dir()).await?;
 
     if snapshots.is_empty() {
         println!("No snapshots found.");
@@ -815,7 +815,7 @@ async fn cli_snapshot_restore(
 ) -> error::Result<()> {
     let backend = connect_cli_backend(config, local).await?;
 
-    let snapshots = xray::snapshot::list_snapshots(backend.as_ref()).await?;
+    let snapshots = xray::snapshot::list_snapshots(backend.as_ref(), config.snapshot_dir()).await?;
     if snapshots.is_empty() {
         return Err(error::AppError::Xray("no snapshots found".to_string()));
     }
@@ -844,7 +844,7 @@ async fn cli_snapshot_restore(
     };
 
     eprintln!("Restoring from snapshot [{}]...", restore_tag);
-    xray::snapshot::restore_snapshot(backend.as_ref(), &restore_tag).await?;
+    xray::snapshot::restore_snapshot(backend.as_ref(), &restore_tag, config.snapshot_dir()).await?;
 
     println!(
         "Restored from snapshot [{}]. Container restarted.",
@@ -871,7 +871,7 @@ async fn cli_upgrade_xray(config: &Config, local: bool) -> error::Result<()> {
     eprintln!();
 
     eprintln!("Upgrading...");
-    let result = xray::snapshot::upgrade_xray(backend.as_ref()).await?;
+    let result = xray::snapshot::upgrade_xray(backend.as_ref(), config.snapshot_dir()).await?;
 
     println!();
     println!("Upgrade complete!");

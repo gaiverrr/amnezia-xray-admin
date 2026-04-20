@@ -167,6 +167,10 @@ pub struct Cli {
     /// Upgrade Xray binary to latest release (creates snapshot first)
     #[arg(long = "upgrade-xray")]
     pub upgrade_xray: bool,
+
+    /// Host directory for storing snapshots (default: /data/projects/xray-backup)
+    #[arg(long = "snapshot-dir")]
+    pub snapshot_dir: Option<String>,
 }
 
 /// Application configuration
@@ -196,6 +200,9 @@ pub struct Config {
     /// Docker image for --deploy-bot (default: ghcr.io/gaiverrr/amnezia-xray-admin:latest)
     #[serde(default = "default_bot_image")]
     pub bot_image: String,
+    /// Host directory for snapshots (default: /data/projects/xray-backup)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_dir: Option<String>,
 }
 
 fn default_bot_image() -> String {
@@ -226,11 +233,19 @@ impl Default for Config {
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: DEFAULT_BOT_IMAGE.to_string(),
+            snapshot_dir: None,
         }
     }
 }
 
 impl Config {
+    /// Returns the snapshot directory, using the configured value or the default.
+    pub fn snapshot_dir(&self) -> &str {
+        self.snapshot_dir
+            .as_deref()
+            .unwrap_or(crate::xray::snapshot::DEFAULT_SNAPSHOT_HOST_DIR)
+    }
+
     /// Returns the config file path: ~/.config/amnezia-xray-admin/config.toml
     pub fn config_path() -> Result<PathBuf> {
         let config_dir = dirs::config_dir()
@@ -306,6 +321,9 @@ impl Config {
         }
         if let Some(admin_id) = cli.admin_id {
             self.telegram_admin_chat_id = Some(admin_id);
+        }
+        if let Some(ref dir) = cli.snapshot_dir {
+            self.snapshot_dir = Some(dir.clone());
         }
         if let Some(ref container) = cli.container {
             if is_valid_container_name(container) {
@@ -411,6 +429,7 @@ host = "10.0.0.1"
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: Default::default(),
+            snapshot_dir: None,
         };
         config.save_to(&path).unwrap();
 
@@ -475,6 +494,7 @@ host = "10.0.0.1"
             snapshot_restore: None,
             snapshot_list: false,
             upgrade_xray: false,
+            snapshot_dir: None,
         };
         config.merge_cli(&cli);
 
@@ -498,6 +518,7 @@ host = "10.0.0.1"
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: Default::default(),
+            snapshot_dir: None,
         };
         let cli = Cli {
             host: None,
@@ -527,6 +548,7 @@ host = "10.0.0.1"
             snapshot_restore: None,
             snapshot_list: false,
             upgrade_xray: false,
+            snapshot_dir: None,
         };
         config.merge_cli(&cli);
 
@@ -569,6 +591,7 @@ host = "10.0.0.1"
             snapshot_restore: None,
             snapshot_list: false,
             upgrade_xray: false,
+            snapshot_dir: None,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());
@@ -610,6 +633,7 @@ host = "10.0.0.1"
             telegram_token: None,
             telegram_admin_chat_id: None,
             bot_image: Default::default(),
+            snapshot_dir: None,
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();
@@ -653,6 +677,7 @@ host = "10.0.0.1"
             telegram_token: Some("123:abc".to_string()),
             telegram_admin_chat_id: Some(987654321),
             bot_image: Default::default(),
+            snapshot_dir: None,
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();
