@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::error::AppError;
 use crate::ssh::{expand_tilde, resolve_ssh_host, SshSession};
 use crate::ui::telegram_setup::DeployStatus;
-use crate::xray::client::{generate_vless_url, ServerInfo, XrayApiClient};
+use crate::xray::client::{generate_amnezia_url, generate_vless_url, ServerInfo, XrayApiClient};
 use crate::xray::config::{ensure_api_enabled, read_server_config};
 use crate::xray::types::{VlessUrlParams, XrayUser};
 
@@ -191,12 +191,12 @@ async fn read_public_key(backend: &dyn XrayBackend) -> Result<String, AppError> 
     }
 }
 
-/// Build a vless:// URL for a user, using live server config for reality params.
-pub async fn build_vless_url(
+/// Build VlessUrlParams from live server config. Reused by vless:// and vpn:// generators.
+pub async fn build_vless_params(
     backend: &dyn XrayBackend,
     uuid: &str,
     name: &str,
-) -> Result<String, AppError> {
+) -> Result<VlessUrlParams, AppError> {
     let server_config = read_server_config(backend).await?;
     let reality = server_config
         .reality_settings()
@@ -204,7 +204,7 @@ pub async fn build_vless_url(
     let port = server_config.vless_port().unwrap_or(443);
     let public_key = read_public_key(backend).await?;
 
-    let params = VlessUrlParams {
+    Ok(VlessUrlParams {
         uuid: uuid.to_string(),
         host: backend.hostname().to_string(),
         port,
@@ -212,8 +212,27 @@ pub async fn build_vless_url(
         public_key,
         short_id: reality.short_id,
         name: name.to_string(),
-    };
+    })
+}
+
+/// Build a vless:// URL for a user, using live server config for reality params.
+pub async fn build_vless_url(
+    backend: &dyn XrayBackend,
+    uuid: &str,
+    name: &str,
+) -> Result<String, AppError> {
+    let params = build_vless_params(backend, uuid, name).await?;
     Ok(generate_vless_url(&params))
+}
+
+/// Build an AmneziaVPN vpn:// connection string for a user.
+pub async fn build_amnezia_url(
+    backend: &dyn XrayBackend,
+    uuid: &str,
+    name: &str,
+) -> Result<String, AppError> {
+    let params = build_vless_params(backend, uuid, name).await?;
+    Ok(generate_amnezia_url(&params))
 }
 
 /// Spawn: fetch dashboard data (user list + server info + per-user stats).

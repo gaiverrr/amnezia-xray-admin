@@ -623,6 +623,84 @@ pub fn generate_vless_url(params: &VlessUrlParams) -> String {
     )
 }
 
+/// Generate an AmneziaVPN `vpn://` connection string.
+///
+/// The Amnezia format wraps a full Xray client JSON config inside a container
+/// descriptor, then compresses with zlib and base64url-encodes it.
+pub fn generate_amnezia_url(params: &VlessUrlParams) -> String {
+    use base64::Engine;
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    let xray_client_config = serde_json::json!({
+        "log": { "loglevel": "error" },
+        "inbounds": [{
+            "listen": "127.0.0.1",
+            "port": 10808,
+            "protocol": "socks",
+            "settings": { "udp": true }
+        }],
+        "outbounds": [{
+            "protocol": "vless",
+            "settings": {
+                "vnext": [{
+                    "address": params.host,
+                    "port": params.port,
+                    "users": [{
+                        "id": params.uuid,
+                        "flow": "xtls-rprx-vision",
+                        "encryption": "none"
+                    }]
+                }]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "fingerprint": "chrome",
+                    "serverName": params.sni,
+                    "publicKey": params.public_key,
+                    "shortId": params.short_id,
+                    "spiderX": ""
+                }
+            }
+        }]
+    });
+
+    let amnezia_config = serde_json::json!({
+        "containers": [{
+            "container": "amnezia-xray",
+            "xray": {
+                "last_config": serde_json::to_string_pretty(&xray_client_config).unwrap() + "\n",
+                "port": params.port.to_string(),
+                "transport_proto": "tcp"
+            }
+        }],
+        "defaultContainer": "amnezia-xray",
+        "description": params.name,
+        "dns1": "1.1.1.1",
+        "dns2": "1.0.0.1",
+        "hostName": params.host
+    });
+
+    let data = serde_json::to_string(&amnezia_config).unwrap();
+    let data_bytes = data.as_bytes();
+
+    // 4-byte big-endian length header + zlib-compressed JSON
+    let len_header = (data_bytes.len() as u32).to_be_bytes();
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(data_bytes).unwrap();
+    let compressed = encoder.finish().unwrap();
+
+    let mut payload = Vec::with_capacity(4 + compressed.len());
+    payload.extend_from_slice(&len_header);
+    payload.extend_from_slice(&compressed);
+
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&payload);
+    format!("vpn://{}", encoded)
+}
+
 /// Percent-encode a fragment string for use in a URL.
 /// Only encodes characters that are not allowed in URL fragments.
 fn urlencode_fragment(s: &str) -> String {

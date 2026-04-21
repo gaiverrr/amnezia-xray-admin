@@ -100,6 +100,10 @@ pub struct Cli {
     #[arg(long = "user-qr")]
     pub user_qr: Option<String>,
 
+    /// Get AmneziaVPN vpn:// connection string for a user by name and exit
+    #[arg(long = "user-vpn")]
+    pub user_vpn: Option<String>,
+
     /// Show online status for all users and exit
     #[arg(long = "online-status")]
     pub online_status: bool,
@@ -477,6 +481,7 @@ host = "10.0.0.1"
             check_server: false,
             user_url: None,
             user_qr: None,
+            user_vpn: None,
             online_status: false,
             server_info: false,
             local: false,
@@ -531,6 +536,7 @@ host = "10.0.0.1"
             check_server: false,
             user_url: None,
             user_qr: None,
+            user_vpn: None,
             online_status: false,
             server_info: false,
             local: false,
@@ -574,6 +580,7 @@ host = "10.0.0.1"
             check_server: false,
             user_url: None,
             user_qr: None,
+            user_vpn: None,
             online_status: false,
             server_info: false,
             local: false,

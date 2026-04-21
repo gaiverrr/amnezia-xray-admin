@@ -39,6 +39,8 @@ const DELETE_CONFIRM_PREFIX: &str = "delete_confirm:";
 const DELETE_CANCEL_PREFIX: &str = "delete_cancel:";
 /// Callback query prefix for restore snapshot buttons.
 const RESTORE_PREFIX: &str = "restore:";
+/// Callback query prefix for VPN (Amnezia) inline buttons.
+const VPN_PREFIX: &str = "vpn:";
 /// Callback query prefix for upgrade confirmation buttons.
 const UPGRADE_CONFIRM_PREFIX: &str = "upgrade_confirm";
 /// Callback query prefix for upgrade cancel buttons.
@@ -64,6 +66,8 @@ pub enum Command {
     Url(String),
     #[command(description = "Get QR code: /qr <name>")]
     Qr(String),
+    #[command(description = "AmneziaVPN key: /vpn <name>")]
+    Vpn(String),
     /// Create server snapshot
     #[command(description = "Create server snapshot")]
     Snapshot,
@@ -103,6 +107,7 @@ pub fn help_text() -> String {
         "/delete <name> - Delete a user",
         "/url <name> - Get vless:// URL",
         "/qr <name> - Get QR code image",
+        "/vpn <name> - AmneziaVPN connection key",
         "/status - Server info + online users",
         "/snapshot - Create server snapshot",
         "/snapshots - List snapshots",
@@ -164,12 +169,14 @@ pub fn format_users_message(users: &[(XrayUser, TrafficStats, u32)]) -> String {
 }
 
 /// Format the /add success response.
-pub fn format_add_message(name: &str, uuid: &str, vless_url: &str) -> String {
+pub fn format_add_message(name: &str, uuid: &str, vless_url: &str, vpn_url: &str) -> String {
     [
         format!("✅ User '{}' added.", name),
         String::new(),
         format!("UUID: {}", uuid),
-        format!("URL: {}", vless_url),
+        format!("vless:// URL:\n`{}`", vless_url),
+        String::new(),
+        format!("AmneziaVPN key:\n`{}`", vpn_url),
     ]
     .join("\n")
 }
@@ -548,14 +555,51 @@ async fn handle_command(
                 }
             } else {
                 match cmd_qr(&state, &name).await {
-                    Ok((png_bytes, caption)) => {
-                        let input = InputFile::memory(png_bytes).file_name("qr.png");
-                        bot.send_photo(chat_id, input).caption(caption).await?;
+                    Ok(qr_images) => {
+                        for (png_bytes, caption) in qr_images {
+                            let input = InputFile::memory(png_bytes).file_name("qr.png");
+                            bot.send_photo(chat_id, input).caption(caption).await?;
+                        }
                     }
                     Err(e) => {
                         bot.send_message(chat_id, format!("Error: {}", e)).await?;
                     }
                 }
+            }
+        }
+        Command::Vpn(name) => {
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                match cmd_user_keyboard(&state, VPN_PREFIX).await {
+                    Ok(result) => {
+                        if result.keyboard.inline_keyboard.is_empty() {
+                            let msg = format_empty_keyboard_message(
+                                "/vpn <name>",
+                                &result.skipped_names,
+                                result.unnamed_count,
+                            );
+                            bot.send_message(chat_id, msg).await?;
+                        } else {
+                            let msg = format_selection_message(
+                                "Select a user:",
+                                &result.skipped_names,
+                                result.unnamed_count,
+                            );
+                            bot.send_message(chat_id, msg)
+                                .reply_markup(result.keyboard)
+                                .await?;
+                        }
+                    }
+                    Err(e) => {
+                        bot.send_message(chat_id, format!("Error: {}", e)).await?;
+                    }
+                }
+            } else {
+                let text = match cmd_vpn(&state, &name).await {
+                    Ok(t) => t,
+                    Err(e) => format!("Error: {}", e),
+                };
+                bot.send_message(chat_id, text).await?;
             }
         }
         Command::Snapshot => {
@@ -653,8 +697,10 @@ async fn cmd_add(
 ) -> std::result::Result<String, crate::error::AppError> {
     let client = XrayApiClient::new(state.backend.as_ref());
     let uuid = client.add_user(name).await?;
-    let vless_url = backend::build_vless_url(state.backend.as_ref(), &uuid, name).await?;
-    Ok(format_add_message(name, &uuid, &vless_url))
+    let params = backend::build_vless_params(state.backend.as_ref(), &uuid, name).await?;
+    let vless_url = crate::xray::client::generate_vless_url(&params);
+    let vpn_url = crate::xray::client::generate_amnezia_url(&params);
+    Ok(format_add_message(name, &uuid, &vless_url, &vpn_url))
 }
 
 /// Execute /delete prompt: find user and return confirmation message with inline keyboard.
@@ -721,11 +767,11 @@ async fn cmd_url(
     Ok(format_url_message(name, &vless_url))
 }
 
-/// Execute /qr command: generate QR code PNG for a user's vless URL.
-async fn cmd_qr(
+/// Execute /vpn command: get AmneziaVPN vpn:// connection string for a user.
+async fn cmd_vpn(
     state: &BotState,
     name: &str,
-) -> std::result::Result<(Vec<u8>, String), crate::error::AppError> {
+) -> std::result::Result<String, crate::error::AppError> {
     let client = XrayApiClient::new(state.backend.as_ref());
     let users = client.list_users().await?;
 
@@ -734,13 +780,47 @@ async fn cmd_qr(
         .find(|u| u.name == name)
         .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
 
-    let vless_url = backend::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
+    let vpn_url = backend::build_amnezia_url(state.backend.as_ref(), &user.uuid, name).await?;
+    Ok(format!(
+        "\u{1f511} AmneziaVPN key for {}:\n\n`{}`",
+        name, vpn_url
+    ))
+}
 
-    let png_bytes = render_qr_to_png(&vless_url, 8)
+/// Execute /qr command: generate QR code PNGs for both vless:// and vpn:// URLs.
+async fn cmd_qr(
+    state: &BotState,
+    name: &str,
+) -> std::result::Result<Vec<(Vec<u8>, String)>, crate::error::AppError> {
+    let client = XrayApiClient::new(state.backend.as_ref());
+    let users = client.list_users().await?;
+
+    let user = users
+        .iter()
+        .find(|u| u.name == name)
+        .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
+
+    let params = backend::build_vless_params(state.backend.as_ref(), &user.uuid, name).await?;
+    let vless_url = crate::xray::client::generate_vless_url(&params);
+    let vpn_url = crate::xray::client::generate_amnezia_url(&params);
+
+    let mut results = Vec::new();
+
+    let vless_png = render_qr_to_png(&vless_url, 8)
         .map_err(|e| crate::error::AppError::Xray(format!("QR generation failed: {}", e)))?;
+    results.push((
+        vless_png,
+        format!("\u{1f4f1} sing-box / v2rayN — {}", name),
+    ));
 
-    let caption = format!("🔗 {}\n\n{}", name, vless_url);
-    Ok((png_bytes, caption))
+    let vpn_png = render_qr_to_png(&vpn_url, 6)
+        .map_err(|e| crate::error::AppError::Xray(format!("QR generation failed: {}", e)))?;
+    results.push((
+        vpn_png,
+        format!("\u{1f511} AmneziaVPN — {}", name),
+    ));
+
+    Ok(results)
 }
 
 /// Execute /snapshot command: create snapshot and send archive as document.
@@ -1011,7 +1091,16 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
         }
     }
 
-    if let Some(user_name) = data.strip_prefix(URL_PREFIX) {
+    if let Some(user_name) = data.strip_prefix(VPN_PREFIX) {
+        let text = match cmd_vpn(&state, user_name).await {
+            Ok(t) => t,
+            Err(e) => format!("Error: {}", e),
+        };
+        bot.answer_callback_query(q.id.clone()).await?;
+        if let Some(ref msg) = q.message {
+            bot.edit_message_text(chat_id, msg.id(), &text).await?;
+        }
+    } else if let Some(user_name) = data.strip_prefix(URL_PREFIX) {
         let text = match cmd_url(&state, user_name).await {
             Ok(t) => t,
             Err(e) => format!("Error: {}", e),
@@ -1023,9 +1112,11 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
     } else if let Some(user_name) = data.strip_prefix(QR_PREFIX) {
         bot.answer_callback_query(q.id.clone()).await?;
         match cmd_qr(&state, user_name).await {
-            Ok((png_bytes, caption)) => {
-                let input = InputFile::memory(png_bytes).file_name("qr.png");
-                bot.send_photo(chat_id, input).caption(caption).await?;
+            Ok(qr_images) => {
+                for (png_bytes, caption) in qr_images {
+                    let input = InputFile::memory(png_bytes).file_name("qr.png");
+                    bot.send_photo(chat_id, input).caption(caption).await?;
+                }
                 // Remove the inline keyboard from the original message
                 if let Some(ref msg) = q.message {
                     bot.edit_message_text(chat_id, msg.id(), format!("QR for {}", user_name))
@@ -1409,16 +1500,22 @@ mod tests {
 
     #[test]
     fn test_format_add_message() {
-        let text = format_add_message("Alice", "uuid-123", "vless://uuid-123@1.2.3.4:443?...");
+        let text = format_add_message(
+            "Alice",
+            "uuid-123",
+            "vless://uuid-123@1.2.3.4:443?...",
+            "vpn://ABC",
+        );
         assert!(text.contains("Alice"), "text: {}", text);
         assert!(text.contains("uuid-123"), "text: {}", text);
         assert!(text.contains("vless://"), "text: {}", text);
+        assert!(text.contains("vpn://"), "text: {}", text);
         assert!(text.contains("✅"), "text: {}", text);
     }
 
     #[test]
     fn test_format_add_message_special_name() {
-        let text = format_add_message("Bob's Phone [iOS]", "uuid-456", "vless://...");
+        let text = format_add_message("Bob's Phone [iOS]", "uuid-456", "vless://...", "vpn://...");
         assert!(text.contains("Bob's Phone [iOS]"), "text: {}", text);
     }
 

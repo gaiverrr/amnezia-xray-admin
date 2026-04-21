@@ -70,6 +70,14 @@ fn main() {
         return;
     }
 
+    if let Some(ref name) = cli.user_vpn {
+        if let Err(e) = runtime.block_on(cli_user_vpn(&config, name, local)) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if cli.online_status {
         if let Err(e) = runtime.block_on(cli_online_status(&config, local)) {
             eprintln!("Error: {}", e);
@@ -421,6 +429,24 @@ async fn cli_user_qr(config: &Config, name: &str, local: bool) -> error::Result<
     Ok(())
 }
 
+async fn cli_user_vpn(config: &Config, name: &str, local: bool) -> error::Result<()> {
+    let backend = connect_cli_backend(config, local).await?;
+    let client = xray::client::XrayApiClient::new(backend.as_ref());
+    let users = client.list_users().await?;
+
+    let user = users.iter().find(|u| u.name == name);
+    let user = match user {
+        Some(u) => u,
+        None => {
+            return Err(error::AppError::Xray(format!("user '{}' not found", name)));
+        }
+    };
+
+    let vpn_url = backend::build_amnezia_url(backend.as_ref(), &user.uuid, &user.name).await?;
+    println!("{}", vpn_url);
+    Ok(())
+}
+
 async fn cli_online_status(config: &Config, local: bool) -> error::Result<()> {
     let backend = connect_cli_backend(config, local).await?;
     let client = xray::client::XrayApiClient::new(backend.as_ref());
@@ -695,8 +721,11 @@ async fn cli_add_user(config: &Config, name: &str, local: bool) -> error::Result
     println!("UUID:  {}", uuid);
 
     // URL generation is best-effort: if it fails, the user was still added successfully.
-    match backend::build_vless_url(backend.as_ref(), &uuid, name).await {
-        Ok(vless_url) => println!("URL:   {}", vless_url),
+    match backend::build_vless_params(backend.as_ref(), &uuid, name).await {
+        Ok(params) => {
+            println!("URL:   {}", xray::client::generate_vless_url(&params));
+            println!("VPN:   {}", xray::client::generate_amnezia_url(&params));
+        }
         Err(e) => eprintln!(
             "Warning: URL generation failed: {}. Use --user-url to retry.",
             e
