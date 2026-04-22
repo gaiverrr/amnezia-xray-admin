@@ -608,7 +608,7 @@ pub fn build_online_ip_list_cmd(email: &str) -> Result<String> {
 
 /// Generate a vless:// URL for client import.
 ///
-/// Format: `vless://<uuid>@<host>:<port>?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=<sni>&fp=chrome&pbk=<pubkey>&sid=<shortid>#<name>`
+/// Format: `vless://<uuid>@<host>:<port>?encryption=none&type=grpc&serviceName=grpc&security=reality&sni=<sni>&fp=chrome&pbk=<pubkey>&sid=<shortid>#LT-Xray`
 pub fn generate_vless_url(params: &VlessUrlParams) -> String {
     let fragment = urlencode_fragment("LT-Xray");
     // Wrap IPv6 addresses in brackets per RFC 2732
@@ -618,7 +618,7 @@ pub fn generate_vless_url(params: &VlessUrlParams) -> String {
         params.host.clone()
     };
     format!(
-        "vless://{}@{}:{}?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni={}&fp=chrome&pbk={}&sid={}#{}",
+        "vless://{}@{}:{}?encryption=none&type=grpc&serviceName=grpc&security=reality&sni={}&fp=chrome&pbk={}&sid={}#{}",
         params.uuid, host, params.port, params.sni, params.public_key, params.short_id, fragment
     )
 }
@@ -661,21 +661,23 @@ pub fn generate_amnezia_url(params: &VlessUrlParams) -> String {
                         "port": params.port,
                         "users": [{
                             "id": params.uuid,
-                            "flow": "xtls-rprx-vision",
                             "encryption": "none"
                         }]
                     }]
                 },
                 "streamSettings": {
-                    "network": "tcp",
+                    "network": "grpc",
                     "security": "reality",
+                    "grpcSettings": {
+                        "serviceName": "grpc"
+                    },
                     "realitySettings": {
                         "fingerprint": "chrome",
                         "serverName": params.sni,
                         "publicKey": params.public_key,
                         "shortId": params.short_id,
                         "spiderX": ""
-                    },
+                    }
                 },
                 "tag": "proxy"
             },
@@ -1398,8 +1400,8 @@ stat: {
 
         assert!(url.starts_with("vless://550e8400-e29b-41d4-a716-446655440000@1.2.3.4:443?"));
         assert!(url.contains("encryption=none"));
-        assert!(url.contains("flow=xtls-rprx-vision"));
-        assert!(url.contains("type=tcp"));
+        
+        assert!(url.contains("type=grpc"));
         assert!(url.contains("security=reality"));
         assert!(url.contains("sni=www.googletagmanager.com"));
         assert!(url.contains("fp=chrome"));
@@ -1418,7 +1420,7 @@ stat: {
             public_key: "pk123".to_string(),
             short_id: "sid1".to_string(),
         };
-        let expected = "vless://uuid-123@10.0.0.1:8443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=example.com&fp=chrome&pbk=pk123&sid=sid1#LT-Xray";
+        let expected = "vless://uuid-123@10.0.0.1:8443?encryption=none&type=grpc&serviceName=grpc&security=reality&sni=example.com&fp=chrome&pbk=pk123&sid=sid1#LT-Xray";
         assert_eq!(generate_vless_url(&params), expected);
     }
 
