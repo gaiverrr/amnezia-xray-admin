@@ -6,7 +6,8 @@
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{
-    BotCommandScope, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Recipient,
+    BotCommandScope, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ParseMode,
+    Recipient,
 };
 use teloxide::utils::command::BotCommands;
 use tokio::sync::Mutex;
@@ -170,15 +171,10 @@ pub fn format_users_message(users: &[(XrayUser, TrafficStats, u32)]) -> String {
 
 /// Format the /add success response.
 pub fn format_add_message(name: &str, uuid: &str, vless_url: &str, vpn_url: &str) -> String {
-    [
-        format!("✅ User '{}' added.", name),
-        String::new(),
-        format!("UUID: {}", uuid),
-        format!("vless:// URL:\n`{}`", vless_url),
-        String::new(),
-        format!("AmneziaVPN key:\n`{}`", vpn_url),
-    ]
-    .join("\n")
+    format!(
+        "✅ User '{}' added.\n\nUUID: {}\n\n📱 vless:// (sing-box, v2rayN):\n<pre>{}</pre>\n🔑 AmneziaVPN:\n<pre>{}</pre>",
+        name, uuid, vless_url, vpn_url
+    )
 }
 
 /// Format the /delete confirmation prompt.
@@ -448,7 +444,9 @@ async fn handle_command(
                     Ok(t) => t,
                     Err(e) => format!("Error: {}", e),
                 };
-                bot.send_message(chat_id, text).await?;
+                bot.send_message(chat_id, text)
+                    .parse_mode(ParseMode::Html)
+                    .await?;
             }
         }
         Command::Delete(name) => {
@@ -523,7 +521,9 @@ async fn handle_command(
                     Ok(t) => t,
                     Err(e) => format!("Error: {}", e),
                 };
-                bot.send_message(chat_id, text).await?;
+                bot.send_message(chat_id, text)
+                    .parse_mode(ParseMode::Html)
+                    .await?;
             }
         }
         Command::Qr(name) => {
@@ -599,7 +599,9 @@ async fn handle_command(
                     Ok(t) => t,
                     Err(e) => format!("Error: {}", e),
                 };
-                bot.send_message(chat_id, text).await?;
+                bot.send_message(chat_id, text)
+                    .parse_mode(ParseMode::Html)
+                    .await?;
             }
         }
         Command::Snapshot => {
@@ -782,7 +784,7 @@ async fn cmd_vpn(
 
     let vpn_url = backend::build_amnezia_url(state.backend.as_ref(), &user.uuid, name).await?;
     Ok(format!(
-        "\u{1f511} AmneziaVPN key for {}:\n\n`{}`",
+        "\u{1f511} AmneziaVPN key for {}:\n\n<pre>{}</pre>",
         name, vpn_url
     ))
 }
@@ -813,7 +815,10 @@ async fn cmd_qr(
         format!("\u{1f4f1} sing-box / v2rayN — {}", name),
     ));
 
-    let vpn_png = render_qr_to_png(&vpn_url, 6)
+    // AmneziaVPN QR contains raw base64url payload (without vpn:// prefix).
+    // The scanner base64-decodes, zlib-decompresses, and parses JSON directly.
+    let vpn_qr_data = vpn_url.strip_prefix("vpn://").unwrap_or(&vpn_url);
+    let vpn_png = render_qr_to_png(vpn_qr_data, 6)
         .map_err(|e| crate::error::AppError::Xray(format!("QR generation failed: {}", e)))?;
     results.push((
         vpn_png,
@@ -1062,7 +1067,7 @@ async fn cmd_unroute(
 
 /// Format the /url response: vless:// URL as a copyable message.
 pub fn format_url_message(name: &str, vless_url: &str) -> String {
-    format!("🔗 {} URL:\n\n{}", name, vless_url)
+    format!("🔗 {} URL:\n\n<pre>{}</pre>", name, vless_url)
 }
 
 /// Handle callback queries from inline keyboard buttons (e.g., delete confirmation).
@@ -1098,7 +1103,9 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
         };
         bot.answer_callback_query(q.id.clone()).await?;
         if let Some(ref msg) = q.message {
-            bot.edit_message_text(chat_id, msg.id(), &text).await?;
+            bot.edit_message_text(chat_id, msg.id(), &text)
+                .parse_mode(ParseMode::Html)
+                .await?;
         }
     } else if let Some(user_name) = data.strip_prefix(URL_PREFIX) {
         let text = match cmd_url(&state, user_name).await {
@@ -1107,7 +1114,9 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
         };
         bot.answer_callback_query(q.id.clone()).await?;
         if let Some(ref msg) = q.message {
-            bot.edit_message_text(chat_id, msg.id(), &text).await?;
+            bot.edit_message_text(chat_id, msg.id(), &text)
+                .parse_mode(ParseMode::Html)
+                .await?;
         }
     } else if let Some(user_name) = data.strip_prefix(QR_PREFIX) {
         bot.answer_callback_query(q.id.clone()).await?;

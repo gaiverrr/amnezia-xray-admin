@@ -610,7 +610,7 @@ pub fn build_online_ip_list_cmd(email: &str) -> Result<String> {
 ///
 /// Format: `vless://<uuid>@<host>:<port>?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=<sni>&fp=chrome&pbk=<pubkey>&sid=<shortid>#<name>`
 pub fn generate_vless_url(params: &VlessUrlParams) -> String {
-    let fragment = urlencode_fragment(&params.name);
+    let fragment = urlencode_fragment("LT-Xray");
     // Wrap IPv6 addresses in brackets per RFC 2732
     let host = if params.host.contains(':') {
         format!("[{}]", params.host)
@@ -635,37 +635,62 @@ pub fn generate_amnezia_url(params: &VlessUrlParams) -> String {
 
     let xray_client_config = serde_json::json!({
         "log": { "loglevel": "error" },
+        "dns": {
+            "servers": [
+                { "address": "https+local://1.1.1.1/dns-query", "skipFallback": true },
+                { "address": "https+local://8.8.8.8/dns-query", "skipFallback": true },
+                "localhost"
+            ]
+        },
         "inbounds": [{
             "listen": "127.0.0.1",
             "port": 10808,
             "protocol": "socks",
-            "settings": { "udp": true }
-        }],
-        "outbounds": [{
-            "protocol": "vless",
-            "settings": {
-                "vnext": [{
-                    "address": params.host,
-                    "port": params.port,
-                    "users": [{
-                        "id": params.uuid,
-                        "flow": "xtls-rprx-vision",
-                        "encryption": "none"
-                    }]
-                }]
-            },
-            "streamSettings": {
-                "network": "tcp",
-                "security": "reality",
-                "realitySettings": {
-                    "fingerprint": "chrome",
-                    "serverName": params.sni,
-                    "publicKey": params.public_key,
-                    "shortId": params.short_id,
-                    "spiderX": ""
-                }
+            "settings": { "udp": true },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": ["http", "tls", "quic"]
             }
-        }]
+        }],
+        "outbounds": [
+            {
+                "protocol": "vless",
+                "settings": {
+                    "vnext": [{
+                        "address": params.host,
+                        "port": params.port,
+                        "users": [{
+                            "id": params.uuid,
+                            "flow": "xtls-rprx-vision",
+                            "encryption": "none"
+                        }]
+                    }]
+                },
+                "streamSettings": {
+                    "network": "tcp",
+                    "security": "reality",
+                    "realitySettings": {
+                        "fingerprint": "chrome",
+                        "serverName": params.sni,
+                        "publicKey": params.public_key,
+                        "shortId": params.short_id,
+                        "spiderX": ""
+                    },
+                },
+                "tag": "proxy"
+            },
+            {
+                "protocol": "freedom",
+                "tag": "direct"
+            }
+        ],
+        "routing": {
+            "domainStrategy": "IPIfNonMatch",
+            "rules": [
+                { "type": "field", "outboundTag": "direct", "domain": ["geosite:private"] },
+                { "type": "field", "outboundTag": "proxy", "network": "tcp,udp" }
+            ]
+        }
     });
 
     let amnezia_config = serde_json::json!({
@@ -678,7 +703,7 @@ pub fn generate_amnezia_url(params: &VlessUrlParams) -> String {
             }
         }],
         "defaultContainer": "amnezia-xray",
-        "description": params.name,
+        "description": "LT-Xray",
         "dns1": "1.1.1.1",
         "dns2": "1.0.0.1",
         "hostName": params.host
