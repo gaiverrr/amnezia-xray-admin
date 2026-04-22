@@ -388,7 +388,7 @@ async fn cli_user_url(config: &Config, name: &str, local: bool) -> error::Result
         }
     };
 
-    let vless_url = backend::build_vless_url(backend.as_ref(), &user.uuid, &user.name).await?;
+    let vless_url = backend::build_vless_url(backend.as_ref(), &user.uuid).await?;
 
     println!("{}", vless_url);
     Ok(())
@@ -407,7 +407,7 @@ async fn cli_user_qr(config: &Config, name: &str, local: bool) -> error::Result<
         }
     };
 
-    let vless_url = backend::build_vless_url(backend.as_ref(), &user.uuid, &user.name).await?;
+    let vless_url = backend::build_vless_url(backend.as_ref(), &user.uuid).await?;
 
     match ui::qr::render_qr_to_lines(&vless_url) {
         Ok(lines) => {
@@ -442,7 +442,7 @@ async fn cli_user_vpn(config: &Config, name: &str, local: bool) -> error::Result
         }
     };
 
-    let vpn_url = backend::build_amnezia_url(backend.as_ref(), &user.uuid, &user.name).await?;
+    let vpn_url = backend::build_amnezia_url(backend.as_ref(), &user.uuid).await?;
     println!("{}", vpn_url);
     Ok(())
 }
@@ -721,7 +721,7 @@ async fn cli_add_user(config: &Config, name: &str, local: bool) -> error::Result
     println!("UUID:  {}", uuid);
 
     // URL generation is best-effort: if it fails, the user was still added successfully.
-    match backend::build_vless_params(backend.as_ref(), &uuid, name).await {
+    match backend::build_vless_params(backend.as_ref(), &uuid).await {
         Ok(params) => {
             println!("URL:   {}", xray::client::generate_vless_url(&params));
             println!("VPN:   {}", xray::client::generate_amnezia_url(&params));

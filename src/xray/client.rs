@@ -1393,7 +1393,6 @@ stat: {
             sni: "www.googletagmanager.com".to_string(),
             public_key: "testpublickey123".to_string(),
             short_id: "abcd1234".to_string(),
-            name: "TestUser".to_string(),
         };
         let url = generate_vless_url(&params);
 
@@ -1406,7 +1405,7 @@ stat: {
         assert!(url.contains("fp=chrome"));
         assert!(url.contains("pbk=testpublickey123"));
         assert!(url.contains("sid=abcd1234"));
-        assert!(url.ends_with("#TestUser"));
+        assert!(url.ends_with("#LT-Xray"));
     }
 
     #[test]
@@ -1418,9 +1417,8 @@ stat: {
             sni: "example.com".to_string(),
             public_key: "pk123".to_string(),
             short_id: "sid1".to_string(),
-            name: "alice".to_string(),
         };
-        let expected = "vless://uuid-123@10.0.0.1:8443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=example.com&fp=chrome&pbk=pk123&sid=sid1#alice";
+        let expected = "vless://uuid-123@10.0.0.1:8443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=example.com&fp=chrome&pbk=pk123&sid=sid1#LT-Xray";
         assert_eq!(generate_vless_url(&params), expected);
     }
 
@@ -1433,10 +1431,9 @@ stat: {
             sni: "example.com".to_string(),
             public_key: "pk".to_string(),
             short_id: "sid".to_string(),
-            name: "My Phone".to_string(),
         };
         let url = generate_vless_url(&params);
-        assert!(url.ends_with("#My%20Phone"));
+        assert!(url.ends_with("#LT-Xray"));
     }
 
     #[test]
@@ -1448,11 +1445,10 @@ stat: {
             sni: "example.com".to_string(),
             public_key: "pk".to_string(),
             short_id: "sid".to_string(),
-            name: "bob's-phone".to_string(),
         };
         let url = generate_vless_url(&params);
         // Apostrophe is allowed in fragments
-        assert!(url.ends_with("#bob's-phone"));
+        assert!(url.ends_with("#LT-Xray"));
     }
 
     #[test]
@@ -1464,7 +1460,6 @@ stat: {
             sni: "example.com".to_string(),
             public_key: "pk".to_string(),
             short_id: "sid".to_string(),
-            name: "test".to_string(),
         };
         let url = generate_vless_url(&params);
         assert!(url.contains("@[2001:db8::1]:443"));

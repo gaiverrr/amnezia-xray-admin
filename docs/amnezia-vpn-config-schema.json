@@ -1,0 +1,18 @@
+{
+    "_comment": "Complete AmneziaVPN vpn:// config for Xray VLESS+Reality (derived from amnezia-client source code)",
+
+    "dns1": "1.1.1.1",
+    "dns2": "1.0.0.1",
+    "hostName": "45.12.129.137",
+    "description": "My VPN Server",
+    "defaultContainer": "amnezia-xray",
+    "containers": [
+        {
+            "container": "amnezia-xray",
+            "xray": {
+                "last_config": "{\"log\":{\"loglevel\":\"error\"},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"port\":10808,\"protocol\":\"socks\",\"settings\":{\"udp\":true}}],\"outbounds\":[{\"protocol\":\"vless\",\"settings\":{\"vnext\":[{\"address\":\"45.12.129.137\",\"port\":443,\"users\":[{\"id\":\"YOUR-UUID-HERE\",\"flow\":\"xtls-rprx-vision\",\"encryption\":\"none\"}]}]},\"streamSettings\":{\"network\":\"tcp\",\"security\":\"reality\",\"realitySettings\":{\"fingerprint\":\"chrome\",\"serverName\":\"www.googletagmanager.com\",\"publicKey\":\"YOUR-REALITY-PUBLIC-KEY\",\"shortId\":\"YOUR-SHORT-ID\",\"spiderX\":\"\"}}}]}",
+                "isThirdPartyConfig": true
+            }
+        }
+    ]
+}

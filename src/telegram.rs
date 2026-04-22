@@ -67,7 +67,7 @@ pub enum Command {
     Url(String),
     #[command(description = "Get QR code: /qr <name>")]
     Qr(String),
-    #[command(description = "AmneziaVPN key: /vpn <name>")]
+    #[command(description = "Full VPN config: /vpn <name>")]
     Vpn(String),
     /// Create server snapshot
     #[command(description = "Create server snapshot")]
@@ -108,7 +108,7 @@ pub fn help_text() -> String {
         "/delete <name> - Delete a user",
         "/url <name> - Get vless:// URL",
         "/qr <name> - Get QR code image",
-        "/vpn <name> - AmneziaVPN connection key",
+        "/vpn <name> - Full VPN config",
         "/status - Server info + online users",
         "/snapshot - Create server snapshot",
         "/snapshots - List snapshots",
@@ -170,10 +170,10 @@ pub fn format_users_message(users: &[(XrayUser, TrafficStats, u32)]) -> String {
 }
 
 /// Format the /add success response.
-pub fn format_add_message(name: &str, uuid: &str, vless_url: &str, vpn_url: &str) -> String {
+pub fn format_add_message(name: &str, uuid: &str, vless_url: &str) -> String {
     format!(
-        "✅ User '{}' added.\n\nUUID: {}\n\n📱 vless:// (sing-box, v2rayN):\n<pre>{}</pre>\n🔑 AmneziaVPN:\n<pre>{}</pre>",
-        name, uuid, vless_url, vpn_url
+        "✅ User '{}' added.\n\nUUID: {}\n\n📱 vless:// (sing-box, v2rayN):\n<pre>{}</pre>",
+        name, uuid, vless_url
     )
 }
 
@@ -699,10 +699,8 @@ async fn cmd_add(
 ) -> std::result::Result<String, crate::error::AppError> {
     let client = XrayApiClient::new(state.backend.as_ref());
     let uuid = client.add_user(name).await?;
-    let params = backend::build_vless_params(state.backend.as_ref(), &uuid, name).await?;
-    let vless_url = crate::xray::client::generate_vless_url(&params);
-    let vpn_url = crate::xray::client::generate_amnezia_url(&params);
-    Ok(format_add_message(name, &uuid, &vless_url, &vpn_url))
+    let vless_url = backend::build_vless_url(state.backend.as_ref(), &uuid).await?;
+    Ok(format_add_message(name, &uuid, &vless_url))
 }
 
 /// Execute /delete prompt: find user and return confirmation message with inline keyboard.
@@ -765,7 +763,7 @@ async fn cmd_url(
         .find(|u| u.name == name)
         .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
 
-    let vless_url = backend::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
+    let vless_url = backend::build_vless_url(state.backend.as_ref(), &user.uuid).await?;
     Ok(format_url_message(name, &vless_url))
 }
 
@@ -782,9 +780,9 @@ async fn cmd_vpn(
         .find(|u| u.name == name)
         .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
 
-    let vpn_url = backend::build_amnezia_url(state.backend.as_ref(), &user.uuid, name).await?;
+    let vpn_url = backend::build_amnezia_url(state.backend.as_ref(), &user.uuid).await?;
     Ok(format!(
-        "\u{1f511} AmneziaVPN key for {}:\n\n<pre>{}</pre>",
+        "\u{1f511} VPN config for {}:\n\n<pre>{}</pre>",
         name, vpn_url
     ))
 }
@@ -802,7 +800,7 @@ async fn cmd_qr(
         .find(|u| u.name == name)
         .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
 
-    let params = backend::build_vless_params(state.backend.as_ref(), &user.uuid, name).await?;
+    let params = backend::build_vless_params(state.backend.as_ref(), &user.uuid).await?;
     let vless_url = crate::xray::client::generate_vless_url(&params);
     let vpn_url = crate::xray::client::generate_amnezia_url(&params);
 
@@ -822,7 +820,7 @@ async fn cmd_qr(
         .map_err(|e| crate::error::AppError::Xray(format!("QR generation failed: {}", e)))?;
     results.push((
         vpn_png,
-        format!("\u{1f511} AmneziaVPN — {}", name),
+        format!("\u{1f511} VPN config — {}", name),
     ));
 
     Ok(results)
@@ -1513,18 +1511,16 @@ mod tests {
             "Alice",
             "uuid-123",
             "vless://uuid-123@1.2.3.4:443?...",
-            "vpn://ABC",
         );
         assert!(text.contains("Alice"), "text: {}", text);
         assert!(text.contains("uuid-123"), "text: {}", text);
         assert!(text.contains("vless://"), "text: {}", text);
-        assert!(text.contains("vpn://"), "text: {}", text);
         assert!(text.contains("✅"), "text: {}", text);
     }
 
     #[test]
     fn test_format_add_message_special_name() {
-        let text = format_add_message("Bob's Phone [iOS]", "uuid-456", "vless://...", "vpn://...");
+        let text = format_add_message("Bob's Phone [iOS]", "uuid-456", "vless://...");
         assert!(text.contains("Bob's Phone [iOS]"), "text: {}", text);
     }
 

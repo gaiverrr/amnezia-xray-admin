@@ -195,7 +195,6 @@ async fn read_public_key(backend: &dyn XrayBackend) -> Result<String, AppError> 
 pub async fn build_vless_params(
     backend: &dyn XrayBackend,
     uuid: &str,
-    name: &str,
 ) -> Result<VlessUrlParams, AppError> {
     let server_config = read_server_config(backend).await?;
     let reality = server_config
@@ -211,7 +210,6 @@ pub async fn build_vless_params(
         sni: reality.sni,
         public_key,
         short_id: reality.short_id,
-        name: name.to_string(),
     })
 }
 
@@ -219,19 +217,17 @@ pub async fn build_vless_params(
 pub async fn build_vless_url(
     backend: &dyn XrayBackend,
     uuid: &str,
-    name: &str,
 ) -> Result<String, AppError> {
-    let params = build_vless_params(backend, uuid, name).await?;
+    let params = build_vless_params(backend, uuid).await?;
     Ok(generate_vless_url(&params))
 }
 
-/// Build an AmneziaVPN vpn:// connection string for a user.
+/// Build a vpn:// connection string for a user (compressed Xray config).
 pub async fn build_amnezia_url(
     backend: &dyn XrayBackend,
     uuid: &str,
-    name: &str,
 ) -> Result<String, AppError> {
-    let params = build_vless_params(backend, uuid, name).await?;
+    let params = build_vless_params(backend, uuid).await?;
     Ok(generate_amnezia_url(&params))
 }
 
@@ -350,7 +346,7 @@ async fn add_user(config: &Config, name: &str) -> Result<AddedUser, String> {
 
     // URL generation is best-effort: if it fails, the user was still added successfully.
     // The URL can be regenerated later via [c] or [q] in the detail view.
-    let vless_url = match build_vless_url(&backend, &uuid, name).await {
+    let vless_url = match build_vless_url(&backend, &uuid).await {
         Ok(url) => url,
         Err(e) => {
             eprintln!("warning: user added but URL generation failed: {}", e);
@@ -574,7 +570,7 @@ async fn deploy_bot_inner(
 
 async fn generate_url(config: &Config, uuid: &str, name: &str) -> Result<AddedUser, String> {
     let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
-    let vless_url = build_vless_url(&backend, uuid, name)
+    let vless_url = build_vless_url(&backend, uuid)
         .await
         .map_err(|e| e.to_string())?;
     let _ = backend.close().await;

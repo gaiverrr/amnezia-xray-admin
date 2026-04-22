@@ -70,7 +70,6 @@ pub struct VlessUrlParams {
     pub sni: String,
     pub public_key: String,
     pub short_id: String,
-    pub name: String,
 }
 
 /// Parsed representation of server.json — we keep it as serde_json::Value
