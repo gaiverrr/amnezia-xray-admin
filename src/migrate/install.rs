@@ -2,6 +2,36 @@
 
 use crate::backend_trait::XrayBackend;
 use crate::error::{AppError, Result};
+use base64::prelude::*;
+
+pub const NATIVE_CONFIG_PATH: &str = "/usr/local/etc/xray/config.json";
+
+pub async fn write_xray_config(backend: &dyn XrayBackend, content: &str) -> Result<()> {
+    let encoded = BASE64_STANDARD.encode(content);
+    let cmd = format!(
+        "echo '{encoded}' | base64 -d | sudo tee {NATIVE_CONFIG_PATH} > /dev/null && sudo chmod 644 {NATIVE_CONFIG_PATH}"
+    );
+    let out = backend.exec_on_host(&cmd).await?;
+    if !out.success() {
+        return Err(AppError::Config(format!("write config failed: {}", out.stderr)));
+    }
+    Ok(())
+}
+
+pub async fn restart_xray(backend: &dyn XrayBackend) -> Result<()> {
+    let out = backend.exec_on_host("sudo systemctl restart xray").await?;
+    if !out.success() {
+        return Err(AppError::Config(format!("systemctl restart xray: {}", out.stderr)));
+    }
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    let status = backend.exec_on_host("sudo systemctl is-active xray").await?;
+    if !status.stdout.trim().eq("active") {
+        return Err(AppError::Config(format!(
+            "xray not active after restart: {}", status.stdout
+        )));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone)]
 pub struct Secrets {
@@ -229,6 +259,20 @@ mod tests {
         };
         let err = preflight(&backend, &[443]).await.unwrap_err();
         assert!(err.to_string().contains("443"));
+    }
+
+    #[tokio::test]
+    async fn write_xray_config_uses_base64() {
+        let backend = MockBackend {
+            calls: Mutex::new(vec![]),
+            responses: Mutex::new(vec![
+                CommandOutput { stdout: "".into(), stderr: "".into(), exit_code: 0 },
+            ]),
+        };
+        write_xray_config(&backend, "{\"a\":1}").await.unwrap();
+        let calls = backend.calls.lock().unwrap();
+        assert!(calls[0].contains("base64 -d"));
+        assert!(calls[0].contains("/usr/local/etc/xray/config.json"));
     }
 
     #[tokio::test]
