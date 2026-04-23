@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-23
+
 ### Removed (breaking)
 - **TUI** — entire `src/ui/` directory, `src/app.rs`, `src/backend.rs` async task spawners. `amnezia-xray-admin` without CLI flags now prints help and exits. Use the CLI flags directly or the Telegram bot.
 - **Amnezia-Docker support** — `XrayApiClient`, `ensure_api_enabled`, `docker exec` wrapping in `LocalBackend` / `SshBackend`, `src/xray/snapshot.rs` backup/restore, `src/xray/config.rs`. The tool now only talks to native-systemd xray on the bridge.
@@ -146,7 +148,8 @@ This release clarifies tool positioning as a personal-use admin for a double-hop
 - Telegram bot mode with commands: /start, /help, /users, /status, /add, /delete, /url, /qr
 - Bot deployment command (`--deploy-bot`) to set up the Telegram bot on VPS via SSH
 
-[Unreleased]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.1.7...v0.2.0
