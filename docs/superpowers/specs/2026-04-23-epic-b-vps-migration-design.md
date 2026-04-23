@@ -1,8 +1,8 @@
-# Epic B: VPS migration (bridge / egress swap)
+# Epic B + C: VPS migration & Telegram bot upgrade
 
 - **Status**: design approved, ready for implementation plan
 - **Date**: 2026-04-23
-- **Beads**: `amnezia-xray-admin-b9t`
+- **Beads**: `amnezia-xray-admin-b9t` (migration) + `amnezia-xray-admin-02t` (bot — merged)
 - **Depends on**: Epic A (architecture snapshot) — for current-state reference
 
 ## Summary
@@ -12,6 +12,14 @@ SSH install a full stack on a freshly-provisioned VPS, generate fresh
 keys/UUIDs, read the live user list from the old host, and atomically cut
 over. No persistent state outside the live VPSes themselves — if both old and
 new are dead at once, we rebuild from operator memory.
+
+The existing Telegram bot (`--telegram-bot` mode) is upgraded in the same
+codebase to drive the new bridge architecture: same command surface as today
+(`/users`, `/status`, `/add`, `/delete`, `/url`, `/qr`), but the backend is
+bridge's native xray (not Amnezia Docker). `migrate-bridge` re-provisions the
+bot on the new bridge as part of the same flow — one command, both jobs.
+On user creation (`/add` or CLI `--add-user`) the response includes **both**
+the vless URL string and an inline QR code by default.
 
 ## Motivation
 
@@ -30,7 +38,11 @@ keys and editing configs. Target: <15 min with one command, no errors.
 | 3 | Regenerate all keys every migration | No long-lived secrets to store; minimizes metadata footprint (we bypass blocks — less is better) |
 | 4 | Bridge = runtime source of truth for user list | Single source, no file can drift; accepted risk: lose bridge = lose user list |
 | 5 | Hard cutover (not parallel / not time-bounded) | Simplest, ≤10 min user outage, no dual-run bookkeeping |
-| 6 | Extend existing Rust tool, not bash | Reuse SSH/config code; consistent with Epic C (bot upgrade in same tool); better for TDD |
+| 6 | Extend existing Rust tool, not bash | Reuse SSH/config code; consistent with bot upgrade in same tool; better for TDD |
+| 7 | Bot co-located with bridge host | Bridge holds the only source of truth (clients[]); co-located bot avoids cross-host RPC for every command |
+| 8 | Bot re-provisioned by `migrate-bridge` | Bridge migration already installs xray; installing bot (native Rust binary) is one extra step with the same cross-compiled artefact |
+| 9 | Native binary deploy, no Docker-in-Docker | Old `--deploy-bot` wrapped in Debian+docker image because Amnezia was Docker; new bridge runs native xray, so no wrapper needed |
+| 10 | `/add` and `--add-user` return URL + QR by default | User ask; removes the extra `/qr` round-trip for new users |
 
 ## Non-goals (YAGNI)
 
@@ -41,19 +53,27 @@ keys and editing configs. Target: <15 min with one command, no errors.
 - No `--keep-old` flag — operator answers `N` to the cutover prompt if they want to skip.
 - No separate modules for DuckDNS / URL / config-template — inline in bridge.rs/egress.rs.
 - No integration tests against real VPS in CI — covered by live dry-runs during acceptance.
+- No new bot commands beyond the existing ones. Just rewire the backend.
+- No bot on egress. Co-location on bridge is the simplest model.
+- No separate bot-only migration command. `migrate-bridge` handles it end-to-end.
 
 ## Architecture
 
 Two new subcommands dispatched from `src/main.rs`:
 
 ```
-amnezia-xray-admin migrate-bridge --new-ssh <alias> --old-ssh <alias> [--yes] [--dry-run]
+amnezia-xray-admin migrate-bridge --new-ssh <alias> --old-ssh <alias>
+                                  [--telegram-token <TOKEN> --admin-id <ID>]
+                                  [--yes] [--dry-run]
 amnezia-xray-admin migrate-egress --new-ssh <alias> --old-ssh <alias> --bridge-ssh <alias>
                                   [--duckdns-token <TOKEN>] [--yes] [--dry-run] [--skip-old]
 ```
 
-Both share `src/migrate/install.rs` (apt + xray/nginx/certbot installers) and
-are otherwise independent.
+Bot re-provisioning on `migrate-bridge` is opt-in via `--telegram-token` +
+`--admin-id`. If omitted, migration still runs; no bot on new bridge.
+
+Both share `src/migrate/install.rs` (apt + xray/nginx/certbot/bot installers)
+and are otherwise independent.
 
 ### Source layout
 
@@ -70,6 +90,15 @@ Reused from existing code:
 - `src/xray/client.rs::user_url()` for URL generation.
 - `src/xray/config.rs` for reading/parsing server.json.
 - `src/error.rs::AppError` — no new variants needed.
+- `src/telegram.rs` — existing bot module; updated to drive bridge-xray
+  backend (see "Bot changes" below) rather than Amnezia-Docker `LocalBackend`.
+
+**Bot changes (inside existing `src/telegram.rs`):**
+- Switch backend from current `LocalBackend` (which does `docker exec amnezia-xray xray api ...`) to a new thin wrapper that runs `xray api ...` against the local socket on bridge (no Docker).
+- `/add`: after user creation, reply with the vless URL string **and** an
+  inline image message with the QR code. Same behaviour in CLI `--add-user`.
+- Same command surface: `/users`, `/status`, `/add`, `/delete`, `/url`, `/qr`, inline keyboards — preserved.
+- Config file remains the one at `/usr/local/etc/xray/config.json` on the bridge host (no Amnezia clientsTable, no base64 dance — just `xray api` + direct edits).
 
 ## Flow: migrate-bridge
 
@@ -99,8 +128,17 @@ Phase 3 — URL generation (local machine, not on server)
 
 Phase 4 — cutover (point of no return)
   • Prompt: "URLs ready. Stop old bridge? [y/N]"  (skip if --yes)
-  • SSH old: systemctl stop xray + systemctl disable xray
+  • SSH old: systemctl stop xray + systemctl disable xray (and stop bot if it was there)
   • Print "Done. VPS can be destroyed in provider UI."
+
+Phase 5 — bot deploy on new bridge (only if --telegram-token + --admin-id)
+  • cross-compile amnezia-xray-admin linux target (reuse existing cross setup)
+  • scp binary to new bridge (/usr/local/bin/amnezia-xray-admin)
+  • install systemd unit /etc/systemd/system/amnezia-xray-bot.service
+    • ExecStart=amnezia-xray-admin --telegram-bot --local --admin-id <ID>
+    • Environment=TELOXIDE_TOKEN=<TOKEN>
+  • systemctl daemon-reload + enable + start
+  • Smoke test: journalctl -u amnezia-xray-bot shows "Bot registered commands"
 ```
 
 **Rollback**: in Phases 1–3 nothing on old is touched; abort is free. After
@@ -162,7 +200,9 @@ through the new egress within a second.
 - `bridge::render_config()` snapshot test against fixture.
 - `egress::render_config()` snapshot test against fixture.
 - `url::generate()` — part-by-part formatting from (UUID, IP, pbk, sid, path, sni).
+- `url::qr()` — QR image bytes for a given URL deterministic length (PNG header check).
 - Parse fixture `tests/fixtures/bridge-config.json` → extract clients[] + outbound.
+- Bot: `/add` command handler returns both URL string and QR image (mock teloxide bot).
 
 **Integration** (mock SSH backend, using existing `XrayBackend` trait):
 - `install::check_preflight()` — correct command sequence; abort on failure.
@@ -181,16 +221,19 @@ live acceptance runs below.
 5. Live egress migration to a fresh Hetzner/Contabo VPS: DuckDNS flip,
    certbot succeeds, bridge outbound updated, client traffic egresses from
    new IP.
-6. `CHANGELOG.md` entry; `CLAUDE.md` documents the new subcommands.
+6. After live bridge migration with `--telegram-token/--admin-id`, the bot
+   is running on the new bridge; `/users`, `/status`, `/add`, `/delete`,
+   `/url`, `/qr` all functional; `/add` replies with URL + QR image.
+7. CLI `--add-user` prints URL and renders ASCII QR in the terminal.
+8. `CHANGELOG.md` entry; `CLAUDE.md` documents the new subcommands.
 
-## Coordination with Epic C (Telegram bot)
+## URL delivery after migration
 
-URL delivery to end users after bridge migration is out of scope for Epic B.
-`migrate-bridge` writes `./urls-<timestamp>.txt` and prints to stdout; the
-operator sends them manually for now. Epic C will upgrade the bot to consume
-this file (or hook into the same in-process code path) and push URLs to users
-over Telegram at migration time. Epic B must not block on Epic C — the text
-file is the stable interface.
+`migrate-bridge` produces `./urls-<timestamp>.txt` locally and prints URLs
+to stdout. Operator delivers them manually to users. Auto-push to users
+via the bot at migration time is **out of scope for this spec** — it adds
+a dependency on Telegram-chat-id-per-user mapping that we don't have.
+That feature can be layered later on top of the text-file interface.
 
 ## Open questions
 
