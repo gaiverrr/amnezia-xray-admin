@@ -1,4 +1,3 @@
-mod backend;
 mod backend_trait;
 mod config;
 mod error;
@@ -8,10 +7,272 @@ mod ssh;
 mod telegram;
 mod xray;
 
-use backend_trait::{LocalBackend, XrayBackend};
+use backend_trait::{LocalBackend, SshBackend, XrayBackend};
 use clap::{CommandFactory, Parser};
 use config::{Cli, Config};
+use error::AppError;
+use ssh::{expand_tilde, resolve_ssh_host, SshSession};
 use std::io::IsTerminal;
+use xray::client::generate_vless_url;
+use xray::config::read_server_config;
+use xray::types::VlessUrlParams;
+
+// ── Helpers inlined from the deleted src/backend.rs (Epic D Task 1.2) ──
+//
+// Previously these lived alongside TUI task spawners; the TUI is gone,
+// but a handful of helpers are still called from CLI paths in this file
+// and from `src/telegram.rs`. They're kept `pub(crate)` so `telegram.rs`
+// can continue to reference them until Phase 4/Task 5.1 rewires bot code
+// to the new bridge XrayClient.
+
+/// Path to the Xray public key file on the server (used for vless:// URLs).
+const PUBLIC_KEY_PATH: &str = "/opt/amnezia/xray/xray_public.key";
+
+/// GitHub API endpoint for the latest Xray-core release.
+const XRAY_LATEST_RELEASE_URL: &str = "https://api.github.com/repos/XTLS/Xray-core/releases/latest";
+/// Timeout for best-effort network calls (uptime probe, version check).
+const NETWORK_PROBE_TIMEOUT_SECS: u32 = 3;
+
+/// Expand tilde in a PathBuf (e.g. `~/.ssh/id_ed25519` -> `/home/user/.ssh/id_ed25519`).
+fn expand_key_path(path: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
+    path.map(|p| {
+        let s = p.to_string_lossy();
+        if s.starts_with("~/") {
+            std::path::PathBuf::from(expand_tilde(&s))
+        } else {
+            p
+        }
+    })
+}
+
+/// Resolve SSH connection parameters from the app config.
+fn resolve_connection_info(
+    config: &Config,
+) -> Result<(String, u16, String, Option<std::path::PathBuf>), AppError> {
+    if let Some(ref alias) = config.ssh_host {
+        match resolve_ssh_host(alias) {
+            Some(sc) => {
+                let host = sc.hostname.unwrap_or_else(|| alias.clone());
+                let port = sc.port.unwrap_or(config.port);
+                let user = sc.user.unwrap_or_else(|| config.user.clone());
+                let key = expand_key_path(sc.identity_file.or_else(|| config.key_path.clone()));
+                Ok((host, port, user, key))
+            }
+            None => {
+                // Alias not found in ssh config, treat as hostname
+                Ok((
+                    alias.clone(),
+                    config.port,
+                    config.user.clone(),
+                    expand_key_path(config.key_path.clone()),
+                ))
+            }
+        }
+    } else if let Some(ref host) = config.host {
+        Ok((
+            host.clone(),
+            config.port,
+            config.user.clone(),
+            expand_key_path(config.key_path.clone()),
+        ))
+    } else {
+        Err(AppError::Config("no host configured".to_string()))
+    }
+}
+
+/// Connect and return an `SshBackend` (trait-based abstraction).
+async fn connect_backend(config: &Config) -> Result<SshBackend, AppError> {
+    let (hostname, port, user, key_path) = resolve_connection_info(config)?;
+    let addr = if hostname.contains(':') {
+        format!("[{}]:{}", hostname, port)
+    } else {
+        format!("{}:{}", hostname, port)
+    };
+    let session = SshSession::connect(&addr, &user, key_path.as_deref(), &config.container).await?;
+    Ok(SshBackend::new(session, hostname))
+}
+
+/// Fetch `docker ps` status for the backend's container. Empty string on failure or no match.
+///
+/// Uses an anchored regex filter so that `amnezia-xray-test` does not match `amnezia-xray`.
+/// Container names are validated (`is_valid_container_name`) to safe characters so direct
+/// interpolation is fine.
+pub(crate) async fn fetch_container_uptime(backend: &dyn XrayBackend) -> String {
+    backend
+        .exec_on_host(&format!(
+            "docker ps --filter 'name=^/{}$' --format '{{{{.Status}}}}'",
+            backend.container_name()
+        ))
+        .await
+        .map(|o| o.stdout.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Fetch the latest Xray-core release tag from GitHub. `None` on network failure or
+/// unparseable response. Returned string is the version without a leading `v` (e.g. `25.8.3`).
+pub(crate) async fn fetch_latest_xray_version(backend: &dyn XrayBackend) -> Option<String> {
+    let out = backend
+        .exec_on_host(&format!(
+            "curl -sfL --max-time {} -H 'Accept: application/vnd.github+json' {}",
+            NETWORK_PROBE_TIMEOUT_SECS, XRAY_LATEST_RELEASE_URL
+        ))
+        .await
+        .ok()?;
+    if !out.success() {
+        return None;
+    }
+    parse_xray_version_from_json(&out.stdout)
+}
+
+/// Extract and validate the Xray version from a GitHub releases/latest JSON payload.
+fn parse_xray_version_from_json(body: &str) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_str(body).ok()?;
+    let tag = json.get("tag_name")?.as_str()?;
+    let version = tag.strip_prefix('v').unwrap_or(tag);
+    if version.is_empty()
+        || !version.chars().all(|c| c.is_ascii_digit() || c == '.')
+        || !version.chars().any(|c| c.is_ascii_digit())
+    {
+        return None;
+    }
+    Some(version.to_string())
+}
+
+/// Read the Xray public key from the server (needed for vless:// URL generation).
+async fn read_public_key(backend: &dyn XrayBackend) -> Result<String, AppError> {
+    let result = backend
+        .exec_in_container(&format!("cat {}", PUBLIC_KEY_PATH))
+        .await?;
+    if result.success() {
+        Ok(result.stdout.trim().to_string())
+    } else {
+        let msg = format!("failed to read public key: {}", result.stderr.trim());
+        Err(AppError::Xray(crate::error::add_hint(&msg)))
+    }
+}
+
+/// Build a vless:// URL for a user, using live server config for reality params.
+///
+/// Kept `pub(crate)` for `src/telegram.rs`; main.rs CLI call-sites were deleted
+/// in Task 1.2 and will be rewired to the bridge XrayClient in Phase 4.
+pub(crate) async fn build_vless_url(
+    backend: &dyn XrayBackend,
+    uuid: &str,
+    name: &str,
+) -> Result<String, AppError> {
+    let server_config = read_server_config(backend).await?;
+    let reality = server_config
+        .reality_settings()
+        .ok_or_else(|| AppError::Xray("no Reality settings in server config".to_string()))?;
+    let port = server_config.vless_port().unwrap_or(443);
+    let public_key = read_public_key(backend).await?;
+
+    let params = VlessUrlParams {
+        uuid: uuid.to_string(),
+        host: backend.hostname().to_string(),
+        port,
+        sni: reality.sni,
+        public_key,
+        short_id: reality.short_id,
+        name: name.to_string(),
+    };
+    Ok(generate_vless_url(&params))
+}
+
+/// Get VPS public IP. Tries curl on the host first, falls back to SSH config host.
+async fn get_vps_public_ip(backend: &SshBackend, config: &Config) -> String {
+    // Try external service via SSH on the host
+    for url in &[
+        "https://ifconfig.me",
+        "https://icanhazip.com",
+        "https://api.ipify.org",
+    ] {
+        if let Ok(result) = backend
+            .exec_on_host(&format!("curl -sf --max-time 5 {}", url))
+            .await
+        {
+            if result.success() {
+                let ip = result.stdout.trim().to_string();
+                if !ip.is_empty() && ip.parse::<std::net::IpAddr>().is_ok() {
+                    return ip;
+                }
+            }
+        }
+    }
+    // Fallback: resolve from SSH config (host or ssh_host alias)
+    if let Ok((hostname, ..)) = resolve_connection_info(config) {
+        return hostname;
+    }
+    config
+        .host
+        .clone()
+        .or_else(|| config.ssh_host.clone())
+        .unwrap_or_else(|| "UNKNOWN_IP".to_string())
+}
+
+/// Deploy the Telegram bot to the VPS via SSH.
+async fn deploy_bot(config: &Config, token: &str) -> Result<String, String> {
+    let admin_id = config
+        .telegram_admin_chat_id
+        .ok_or_else(|| "admin_id is required for deploy".to_string())?;
+
+    let backend = connect_backend(config).await.map_err(|e| e.to_string())?;
+
+    // Pull pre-built Docker image from GitHub Container Registry
+    let image = &config.bot_image;
+    let result = backend
+        .exec_on_host(&format!("docker pull {} 2>&1", image))
+        .await
+        .map_err(|e| format!("Docker pull failed: {}", e))?;
+    if !result.success() {
+        return Err(format!("Docker pull failed: {}", result.combined_output()));
+    }
+
+    // Stop existing container if running
+    let _ = backend
+        .exec_on_host("docker stop axadmin 2>/dev/null; docker rm axadmin 2>/dev/null")
+        .await;
+
+    // Get VPS public IP so the bot can generate correct vless:// URLs
+    let vps_ip = get_vps_public_ip(&backend, config).await;
+
+    let run_cmd = format!(
+        "docker run -d --name axadmin --restart unless-stopped \
+         -v /var/run/docker.sock:/var/run/docker.sock \
+         -e TELEGRAM_TOKEN='{}' \
+         -e ADMIN_ID='{}' \
+         -e XRAY_CONTAINER='{}' \
+         {} \
+         --telegram-bot --local --container '{}' --admin-id {} --host '{}' 2>&1",
+        token, admin_id, config.container, image, config.container, admin_id, vps_ip
+    );
+    let result = backend
+        .exec_on_host(&run_cmd)
+        .await
+        .map_err(|e| format!("Docker start failed: {}", e))?;
+    if !result.success() {
+        return Err(format!("Docker start failed: {}", result.combined_output()));
+    }
+
+    // Verify container is running
+    let result = backend
+        .exec_on_host("docker inspect axadmin --format '{{.State.Status}}' 2>&1")
+        .await
+        .map_err(|e| format!("Verification failed: {}", e))?;
+
+    let _ = backend.close().await;
+
+    if !result.success() {
+        return Err(format!("Verification failed: {}", result.combined_output()));
+    }
+
+    let status = result.stdout.trim().to_string();
+    if status.contains("Up") || status.contains("running") {
+        Ok("Bot deployed and running! Send /start to your bot.".to_string())
+    } else {
+        Err(format!("Bot container not running. Status: {}", status))
+    }
+}
 
 fn main() {
     let cli = Cli::parse();
@@ -244,7 +505,7 @@ async fn connect_cli_backend(config: &Config, local: bool) -> error::Result<Box<
             hostname,
         )))
     } else {
-        let backend = backend::connect_backend(config).await?;
+        let backend = connect_backend(config).await?;
         Ok(Box::new(backend))
     }
 }
@@ -301,7 +562,7 @@ fn looks_like_ip(s: &str) -> bool {
 
 async fn cli_check_server(config: &Config, local: bool) -> error::Result<()> {
     if !local {
-        let (_, port, user, _) = backend::resolve_connection_info(config)?;
+        let (_, port, user, _) = resolve_connection_info(config)?;
         eprintln!(
             "Connecting to {}@{}:{}...",
             user,
@@ -361,7 +622,9 @@ async fn cli_user_url(config: &Config, name: &str, local: bool) -> error::Result
         }
     };
 
-    let vless_url = backend::build_vless_url(backend.as_ref(), &user.uuid, &user.name).await?;
+    // TODO(Epic D Phase 4): rewire to bridge URL
+    let _ = user;
+    let vless_url = String::new();
 
     println!("{}", vless_url);
     Ok(())
@@ -380,7 +643,9 @@ async fn cli_user_qr(config: &Config, name: &str, local: bool) -> error::Result<
         }
     };
 
-    let vless_url = backend::build_vless_url(backend.as_ref(), &user.uuid, &user.name).await?;
+    // TODO(Epic D Phase 4): rewire to bridge URL
+    let _ = user;
+    let vless_url = String::new();
 
     // TODO(Epic D Task 2.x): re-wire QR rendering after ui::qr is relocated.
     println!("{}", name);
@@ -458,13 +723,13 @@ async fn cli_server_info(config: &Config, local: bool) -> error::Result<()> {
 
     // Get container uptime and check for newer Xray via shared helpers
     // (keeps the 3 s GitHub timeout and anchored docker filter consistent with the TUI/Telegram).
-    let uptime_raw = backend::fetch_container_uptime(backend.as_ref()).await;
+    let uptime_raw = fetch_container_uptime(backend.as_ref()).await;
     let uptime = if uptime_raw.is_empty() {
         "unknown".to_string()
     } else {
         uptime_raw
     };
-    let latest_version = backend::fetch_latest_xray_version(backend.as_ref()).await;
+    let latest_version = fetch_latest_xray_version(backend.as_ref()).await;
 
     let version_display = match &latest_version {
         Some(latest) if latest != &server_info.version => {
@@ -487,7 +752,7 @@ async fn cli_server_info(config: &Config, local: bool) -> error::Result<()> {
 
 async fn cli_list_users(config: &Config, local: bool) -> error::Result<()> {
     if !local {
-        let (_, port, user, _) = backend::resolve_connection_info(config)?;
+        let (_, port, user, _) = resolve_connection_info(config)?;
         eprintln!(
             "Connecting to {}@{}:{}...",
             user,
@@ -573,7 +838,7 @@ async fn cli_telegram_bot(
             };
             Box::new(native::backend::NativeLocalBackend::new(hostname))
         } else {
-            let (hostname, port, user, key_path) = backend::resolve_connection_info(config)?;
+            let (hostname, port, user, key_path) = resolve_connection_info(config)?;
             let addr = if hostname.contains(':') {
                 format!("[{}]:{}", hostname, port)
             } else {
@@ -666,7 +931,7 @@ async fn cli_add_user(config: &Config, name: &str, local: bool, bridge: bool) ->
             };
             Box::new(native::backend::NativeLocalBackend::new(hostname))
         } else {
-            let (hostname, port, user, key_path) = backend::resolve_connection_info(config)?;
+            let (hostname, port, user, key_path) = resolve_connection_info(config)?;
             let addr = if hostname.contains(':') {
                 format!("[{}]:{}", hostname, port)
             } else {
@@ -741,18 +1006,8 @@ async fn cli_add_user(config: &Config, name: &str, local: bool, bridge: bool) ->
     println!("Name:  {}", name);
     println!("UUID:  {}", uuid);
 
-    // URL generation is best-effort: if it fails, the user was still added successfully.
-    match backend::build_vless_url(backend.as_ref(), &uuid, name).await {
-        Ok(vless_url) => {
-            println!("URL:   {}", vless_url);
-            println!();
-            println!("{}", native::url::render_qr_ascii(&vless_url));
-        }
-        Err(e) => eprintln!(
-            "Warning: URL generation failed: {}. Use --user-url to retry.",
-            e
-        ),
-    }
+    // TODO(Epic D Phase 4): rewire to bridge URL
+    let _ = uuid;
 
     Ok(())
 }
@@ -824,7 +1079,7 @@ async fn cli_deploy_bot(config: &Config, token: &str) -> error::Result<()> {
     eprintln!("Connecting to VPS...");
     eprintln!("Deploying Telegram bot...");
 
-    match backend::deploy_bot(config, token).await {
+    match deploy_bot(config, token).await {
         Ok(msg) => {
             println!("{}", msg);
             Ok(())
@@ -939,4 +1194,198 @@ async fn cli_upgrade_xray(config: &Config, local: bool) -> error::Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    // Tests ported from the deleted src/backend.rs for the helpers now inlined above.
+    use super::*;
+
+    #[test]
+    fn test_resolve_connection_with_host() {
+        let config = Config {
+            host: Some("1.2.3.4".to_string()),
+            port: 2222,
+            user: "admin".to_string(),
+            key_path: None,
+            ssh_host: None,
+            container: "amnezia-xray".to_string(),
+            telegram_token: None,
+            telegram_admin_chat_id: None,
+            bot_image: Default::default(),
+            snapshot_dir: None,
+        };
+        let (host, port, user, key) = resolve_connection_info(&config).unwrap();
+        assert_eq!(host, "1.2.3.4");
+        assert_eq!(port, 2222);
+        assert_eq!(user, "admin");
+        assert!(key.is_none());
+    }
+
+    #[test]
+    fn test_resolve_connection_no_host() {
+        let config = Config::default();
+        let result = resolve_connection_info(&config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_connection_ssh_host_not_in_config() {
+        let config = Config {
+            ssh_host: Some("nonexistent-alias".to_string()),
+            host: None,
+            port: 22,
+            user: "root".to_string(),
+            key_path: None,
+            container: "amnezia-xray".to_string(),
+            telegram_token: None,
+            telegram_admin_chat_id: None,
+            bot_image: Default::default(),
+            snapshot_dir: None,
+        };
+        // Falls back to treating alias as hostname
+        let (host, port, user, _key) = resolve_connection_info(&config).unwrap();
+        assert_eq!(host, "nonexistent-alias");
+        assert_eq!(port, 22);
+        assert_eq!(user, "root");
+    }
+
+    #[test]
+    fn test_resolve_connection_expands_tilde_in_key_path() {
+        let config = Config {
+            host: Some("1.2.3.4".to_string()),
+            port: 22,
+            user: "root".to_string(),
+            key_path: Some(std::path::PathBuf::from("~/.ssh/id_ed25519")),
+            ssh_host: None,
+            container: "amnezia-xray".to_string(),
+            telegram_token: None,
+            telegram_admin_chat_id: None,
+            bot_image: Default::default(),
+            snapshot_dir: None,
+        };
+        let (_host, _port, _user, key) = resolve_connection_info(&config).unwrap();
+        let key_path = key.expect("key_path should be Some");
+        // Tilde should be expanded to the home directory
+        assert!(
+            !key_path.to_string_lossy().starts_with("~/"),
+            "tilde should be expanded, got: {}",
+            key_path.display()
+        );
+        assert!(
+            key_path.to_string_lossy().ends_with(".ssh/id_ed25519"),
+            "path suffix should be preserved, got: {}",
+            key_path.display()
+        );
+    }
+
+    #[test]
+    fn test_resolve_connection_absolute_key_path_unchanged() {
+        let config = Config {
+            host: Some("1.2.3.4".to_string()),
+            port: 22,
+            user: "root".to_string(),
+            key_path: Some(std::path::PathBuf::from("/home/user/.ssh/id_rsa")),
+            ssh_host: None,
+            container: "amnezia-xray".to_string(),
+            telegram_token: None,
+            telegram_admin_chat_id: None,
+            bot_image: Default::default(),
+            snapshot_dir: None,
+        };
+        let (_host, _port, _user, key) = resolve_connection_info(&config).unwrap();
+        let key_path = key.expect("key_path should be Some");
+        assert_eq!(key_path.to_string_lossy(), "/home/user/.ssh/id_rsa");
+    }
+
+    #[test]
+    fn test_expand_key_path_none() {
+        assert!(expand_key_path(None).is_none());
+    }
+
+    #[test]
+    fn test_public_key_path_is_inside_container() {
+        // The public key lives inside the Amnezia container (no bind mounts).
+        // read_public_key() must use exec_in_container(), not exec_command().
+        assert_eq!(PUBLIC_KEY_PATH, "/opt/amnezia/xray/xray_public.key");
+        assert!(PUBLIC_KEY_PATH.starts_with("/opt/amnezia/"));
+    }
+
+    #[test]
+    fn test_parse_xray_version_valid() {
+        let body = r#"{"tag_name":"v25.8.3","name":"v25.8.3"}"#;
+        assert_eq!(parse_xray_version_from_json(body), Some("25.8.3".into()));
+    }
+
+    #[test]
+    fn test_parse_xray_version_no_v_prefix() {
+        let body = r#"{"tag_name":"25.8.3"}"#;
+        assert_eq!(parse_xray_version_from_json(body), Some("25.8.3".into()));
+    }
+
+    #[test]
+    fn test_parse_xray_version_missing_field() {
+        let body = r#"{"name":"v25.8.3"}"#;
+        assert_eq!(parse_xray_version_from_json(body), None);
+    }
+
+    #[test]
+    fn test_parse_xray_version_malformed_json() {
+        assert_eq!(parse_xray_version_from_json("not json"), None);
+        assert_eq!(parse_xray_version_from_json(""), None);
+    }
+
+    #[test]
+    fn test_parse_xray_version_rejects_non_semver() {
+        // Rate-limit or error bodies, prerelease tags, etc. must not render as versions.
+        let body = r#"{"tag_name":"rate limit exceeded"}"#;
+        assert_eq!(parse_xray_version_from_json(body), None);
+        let body = r#"{"tag_name":"v1.0-beta"}"#;
+        assert_eq!(parse_xray_version_from_json(body), None);
+        let body = r#"{"tag_name":"v"}"#;
+        assert_eq!(parse_xray_version_from_json(body), None);
+        let body = r#"{"tag_name":""}"#;
+        assert_eq!(parse_xray_version_from_json(body), None);
+    }
+
+    #[tokio::test]
+    async fn test_deploy_bot_requires_admin_id() {
+        let config = Config {
+            host: Some("1.2.3.4".to_string()),
+            port: 22,
+            user: "root".to_string(),
+            key_path: None,
+            ssh_host: None,
+            container: "amnezia-xray".to_string(),
+            telegram_token: None,
+            telegram_admin_chat_id: None,
+            bot_image: Default::default(), // no admin_id
+            snapshot_dir: None,
+        };
+        let result = deploy_bot(&config, "123:abc").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("admin_id is required"));
+    }
+
+    #[tokio::test]
+    async fn test_deploy_bot_with_admin_id_attempts_connection() {
+        let config = Config {
+            host: Some("192.0.2.1".to_string()), // non-routable IP
+            port: 22,
+            user: "root".to_string(),
+            key_path: None,
+            ssh_host: None,
+            container: "amnezia-xray".to_string(),
+            telegram_token: None,
+            telegram_admin_chat_id: Some(123456789),
+            bot_image: Default::default(),
+            snapshot_dir: None,
+        };
+        // With admin_id set, it should pass the admin_id check and fail at SSH connection
+        let result = deploy_bot(&config, "123:abc").await;
+        assert!(result.is_err());
+        // Should NOT be the "admin_id is required" error
+        let err = result.unwrap_err();
+        assert!(!err.contains("admin_id is required"), "got: {}", err);
+    }
 }

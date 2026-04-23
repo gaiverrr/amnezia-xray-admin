@@ -12,7 +12,6 @@ use teloxide::types::{
 use teloxide::utils::command::BotCommands;
 use tokio::sync::Mutex;
 
-use crate::backend;
 use crate::backend_trait::XrayBackend;
 use crate::config::Config;
 use crate::error::Result;
@@ -768,7 +767,7 @@ async fn cmd_add(
     }
     let client = XrayApiClient::new(state.backend.as_ref());
     let uuid = client.add_user(name).await?;
-    let vless_url = backend::build_vless_url(state.backend.as_ref(), &uuid, name).await?;
+    let vless_url = crate::build_vless_url(state.backend.as_ref(), &uuid, name).await?;
     Ok((format_add_message(name, &uuid, &vless_url), vless_url))
 }
 
@@ -902,7 +901,7 @@ async fn cmd_url(
         .find(|u| u.name == name)
         .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
 
-    let vless_url = backend::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
+    let vless_url = crate::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
     Ok(format_url_message(name, &vless_url))
 }
 
@@ -931,7 +930,7 @@ async fn cmd_qr(
         .find(|u| u.name == name)
         .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
 
-    let vless_url = backend::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
+    let vless_url = crate::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
 
     let png_bytes = render_qr_to_png(&vless_url, 8)
         .map_err(|e| crate::error::AppError::Xray(format!("QR generation failed: {}", e)))?;
@@ -1386,8 +1385,8 @@ async fn cmd_status(state: &BotState) -> std::result::Result<String, crate::erro
         online_total += count as usize;
     }
 
-    let uptime = crate::backend::fetch_container_uptime(state.backend.as_ref()).await;
-    let latest_version = crate::backend::fetch_latest_xray_version(state.backend.as_ref()).await;
+    let uptime = crate::fetch_container_uptime(state.backend.as_ref()).await;
+    let latest_version = crate::fetch_latest_xray_version(state.backend.as_ref()).await;
 
     Ok(format_status_message(
         &server_info,
