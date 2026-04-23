@@ -6,7 +6,7 @@
 Clients (RU)
     ↓ XHTTP+Reality, SNI=www.sberbank.ru
     ↓
-yc-vm  81.26.190.206:443   ←── bridge (Yandex Cloud, Ubuntu 24.04)
+yc-vm  81.26.189.136:443   ←── bridge (Yandex Cloud, Ubuntu 24.04)
     │  routing: geoip:ru → direct, else → foreign-egress
     ↓ XHTTP+Reality, SNI=yuriy-vps.duckdns.org, dest 127.0.0.1:9443 (nginx self-steal)
     ↓
@@ -19,7 +19,7 @@ Internet
 ## Hosts
 
 ### `yc-vm` (bridge) — Yandex Cloud, Moscow
-- **Public IP**: `81.26.190.206` (static)
+- **Public IP**: `81.26.189.136` (static)
 - **OS**: Ubuntu 24.04
 - **SSH user**: `yuriy` (sudo NOPASSWD)
 - **xray**: native systemd service, binary `/usr/local/bin/xray`, version 26.3.27+

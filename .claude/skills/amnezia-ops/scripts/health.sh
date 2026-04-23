@@ -13,7 +13,7 @@ require_alias() {
   }
 }
 
-echo "=== Bridge (yc-vm / 81.26.190.206) ==="
+echo "=== Bridge (yc-vm / 81.26.189.136) ==="
 if require_alias yc-vm; then
   if ssh yc-vm 'sudo systemctl is-active xray' 2>/dev/null | grep -q active; then
     ok "xray service active"

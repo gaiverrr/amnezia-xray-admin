@@ -36,7 +36,7 @@ PATH_=$(ssh yc-vm "sudo jq -r '.inbounds[0].streamSettings.xhttpSettings.path' /
 SNI=$(ssh yc-vm "sudo jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' /usr/local/etc/xray/config.json")
 
 PATH_ENC=$(printf '%s' "$PATH_" | sed 's|/|%2F|g')
-URL="vless://${UUID}@81.26.190.206:443?encryption=none&type=xhttp&path=${PATH_ENC}&security=reality&sni=${SNI}&fp=chrome&pbk=${PBK}&sid=${SID}#${NAME}"
+URL="vless://${UUID}@81.26.189.136:443?encryption=none&type=xhttp&path=${PATH_ENC}&security=reality&sni=${SNI}&fp=chrome&pbk=${PBK}&sid=${SID}#${NAME}"
 echo "$URL"
 qrencode -t ANSIUTF8 "$URL"  # if qrencode installed locally
 ```

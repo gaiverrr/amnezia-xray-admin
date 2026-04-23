@@ -1,6 +1,6 @@
 ---
 name: amnezia-ops
-description: Operate Yuriy's personal double-hop Xray VPN (RU bridge on yc-vm 81.26.190.206 + foreign egress on vps-vpn 103.231.72.109). Use when the user says "VPN не работает", "проверь VPN", "кто-то не может подключиться", "добавь/удали юзера", "сгенери URL/QR", "обнови сертификат", "смени SNI", "мигрируй на другой VPS", "потерял bridge/egress", or mentions specific users (Masha, ivan, rita, Tima, Anton, Alexander, Anna, Kostya, Natasha, sanek, router, yuriy, Admin) having connection issues. Covers health diagnosis, user CRUD on the new double-hop bridge (native xray at /usr/local/etc/xray/config.json) AND the legacy Amnezia container (managed by Telegram bot), Let's Encrypt renewal, Reality key rotation, VPS migration, and disaster recovery. NOT for Rust development of the amnezia-xray-admin codebase — this skill is for live ops only.
+description: Operate Yuriy's personal double-hop Xray VPN (RU bridge on yc-vm 81.26.189.136 + foreign egress on vps-vpn 103.231.72.109). Use when the user says "VPN не работает", "проверь VPN", "кто-то не может подключиться", "добавь/удали юзера", "сгенери URL/QR", "обнови сертификат", "смени SNI", "мигрируй на другой VPS", "потерял bridge/egress", or mentions specific users (Masha, ivan, rita, Tima, Anton, Alexander, Anna, Kostya, Natasha, sanek, router, yuriy, Admin) having connection issues. Covers health diagnosis, user CRUD on the new double-hop bridge (native xray at /usr/local/etc/xray/config.json) AND the legacy Amnezia container (managed by Telegram bot), Let's Encrypt renewal, Reality key rotation, VPS migration, and disaster recovery. NOT for Rust development of the amnezia-xray-admin codebase — this skill is for live ops only.
 ---
 
 # Amnezia Ops
@@ -11,7 +11,7 @@ Operational runbook for Yuriy's double-hop Xray VPN. When this skill fires, your
 
 | Role | SSH alias | Public | Config |
 |---|---|---|---|
-| Bridge (clients connect here) | `yc-vm` | `81.26.190.206:443` | `/usr/local/etc/xray/config.json` (native xray, XHTTP+Reality, SNI `www.sberbank.ru`) |
+| Bridge (clients connect here) | `yc-vm` | `81.26.189.136:443` | `/usr/local/etc/xray/config.json` (native xray, XHTTP+Reality, SNI `www.sberbank.ru`) |
 | Egress (bridge → internet) | `vps-vpn` | `103.231.72.109:8444` | `/usr/local/etc/xray/config.json` (native xray, dest `127.0.0.1:9443` = local nginx with LE cert for `yuriy-vps.duckdns.org`) |
 
 Logs: `/var/log/xray/{access,error}.log` on both. Restart: `sudo systemctl restart xray`.
