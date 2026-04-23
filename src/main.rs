@@ -943,7 +943,7 @@ async fn cli_add_user(config: &Config, name: &str, local: bool, bridge: bool) ->
             Box::new(native::backend::NativeSshBackend::new(session, hostname))
         };
 
-        let client = native::client::NativeXrayClient::new(backend.as_ref());
+        let client = xray::client::XrayClient::new(backend.as_ref());
         let entry = client.add_client(name).await?;
 
         println!("User added successfully.");

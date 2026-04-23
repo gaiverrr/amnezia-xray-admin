@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 use crate::backend_trait::XrayBackend;
 use crate::config::Config;
 use crate::error::Result;
-use crate::native::client::NativeXrayClient;
+use crate::xray::client::XrayClient;
 use crate::native::url::{render_qr_png, render_xhttp_url, XhttpUrlParams};
 use crate::ui::dashboard::format_bytes;
 use crate::ui::qr::render_qr_to_png;
@@ -28,7 +28,7 @@ pub struct BotState {
     pub backend: Box<dyn XrayBackend>,
     pub config: Mutex<Config>,
     /// When true, bot operates against a native-xray bridge (systemd),
-    /// using `NativeXrayClient` instead of the legacy Amnezia `XrayApiClient`.
+    /// using `XrayClient` instead of the legacy Amnezia `XrayApiClient`.
     pub bridge: bool,
 }
 
@@ -480,7 +480,7 @@ async fn handle_command(
                         // up during the response. Now that responses have been
                         // sent, reload so xray picks up the new client.
                         if state.bridge {
-                            if let Err(e) = NativeXrayClient::new(state.backend.as_ref())
+                            if let Err(e) = XrayClient::new(state.backend.as_ref())
                                 .reload_xray()
                                 .await
                             {
@@ -720,7 +720,7 @@ async fn handle_command(
 /// Execute /users command: list users with stats.
 async fn cmd_users(state: &BotState) -> std::result::Result<String, crate::error::AppError> {
     if state.bridge {
-        let client = NativeXrayClient::new(state.backend.as_ref());
+        let client = XrayClient::new(state.backend.as_ref());
         let clients = client.list_clients().await?;
         let user_data: Vec<(XrayUser, TrafficStats, u32)> = clients
             .into_iter()
@@ -760,7 +760,7 @@ async fn cmd_add(
     name: &str,
 ) -> std::result::Result<(String, String), crate::error::AppError> {
     if state.bridge {
-        let client = NativeXrayClient::new(state.backend.as_ref());
+        let client = XrayClient::new(state.backend.as_ref());
         let entry = client.add_client(name).await?;
         let url = build_bridge_url_for(state, name).await?;
         return Ok((format_add_message(name, &entry.uuid, &url), url));
@@ -777,7 +777,7 @@ async fn cmd_delete_prompt(
     name: &str,
 ) -> std::result::Result<(String, InlineKeyboardMarkup), crate::error::AppError> {
     if state.bridge {
-        let client = NativeXrayClient::new(state.backend.as_ref());
+        let client = XrayClient::new(state.backend.as_ref());
         // Verify the user exists before prompting for confirmation.
         let uuid = client.get_uuid(name).await?;
         let text = format_delete_confirm_message(name);
@@ -804,7 +804,7 @@ async fn cmd_delete_execute(
     uuid: &str,
 ) -> std::result::Result<String, crate::error::AppError> {
     if state.bridge {
-        let client = NativeXrayClient::new(state.backend.as_ref());
+        let client = XrayClient::new(state.backend.as_ref());
         let clients = client.list_clients().await?;
         let entry = clients.iter().find(|c| c.uuid == uuid).ok_or_else(|| {
             crate::error::AppError::Xray(format!("user with uuid '{}' not found", uuid))
@@ -838,7 +838,7 @@ async fn cmd_user_keyboard(
     callback_prefix: &str,
 ) -> std::result::Result<UserKeyboardResult, crate::error::AppError> {
     if state.bridge {
-        let client = NativeXrayClient::new(state.backend.as_ref());
+        let client = XrayClient::new(state.backend.as_ref());
         let clients = client.list_clients().await?;
         let users: Vec<XrayUser> = clients
             .into_iter()
@@ -868,7 +868,7 @@ async fn build_bridge_url_for(
     state: &BotState,
     name: &str,
 ) -> std::result::Result<String, crate::error::AppError> {
-    let client = NativeXrayClient::new(state.backend.as_ref());
+    let client = XrayClient::new(state.backend.as_ref());
     let uuid = client.get_uuid(name).await?;
     let params = client.bridge_public_params().await?;
     Ok(render_xhttp_url(&XhttpUrlParams {
@@ -1276,7 +1276,7 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
         }
         // Defer xray reload until after the response is sent; see cmd_add.
         if state.bridge {
-            if let Err(e) = NativeXrayClient::new(state.backend.as_ref())
+            if let Err(e) = XrayClient::new(state.backend.as_ref())
                 .reload_xray()
                 .await
             {
@@ -1340,7 +1340,7 @@ async fn cmd_status(state: &BotState) -> std::result::Result<String, crate::erro
     if state.bridge {
         // Native bridge: no Amnezia API, no docker container. Report user count
         // and xray binary version only (uptime/stats/latest not plumbed yet).
-        let client = NativeXrayClient::new(state.backend.as_ref());
+        let client = XrayClient::new(state.backend.as_ref());
         let clients = client.list_clients().await?;
         let version_out = state
             .backend
@@ -2280,7 +2280,7 @@ mod tests {
     #[test]
     fn test_bot_state_carries_bridge_flag() {
         // Regression test for Task 6.2: BotState must expose a `bridge: bool`
-        // field so command handlers can route to NativeXrayClient.
+        // field so command handlers can route to XrayClient.
         let state = BotState {
             backend: Box::new(NoopBackend {
                 host: "1.2.3.4".to_string(),
