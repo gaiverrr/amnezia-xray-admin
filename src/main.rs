@@ -7,6 +7,8 @@ mod ssh;
 mod telegram;
 mod ui;
 mod xray;
+pub mod migrate;
+pub mod native;
 
 use backend_trait::{LocalBackend, XrayBackend};
 use clap::Parser;
