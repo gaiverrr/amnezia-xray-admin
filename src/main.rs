@@ -15,14 +15,10 @@ use std::io::IsTerminal;
 use xray::client::XrayClient;
 
 // ── Helpers inlined from the deleted src/backend.rs (Epic D Task 1.2) ──
-//
-// A few network probes still live here because `src/telegram.rs` (legacy
-// non-bridge branches) imports them as `crate::fetch_container_uptime` /
-// `crate::fetch_latest_xray_version`. Those imports go away in Task 5.1.
 
 /// GitHub API endpoint for the latest Xray-core release.
 const XRAY_LATEST_RELEASE_URL: &str = "https://api.github.com/repos/XTLS/Xray-core/releases/latest";
-/// Timeout for best-effort network calls (uptime probe, version check).
+/// Timeout for best-effort network calls (version check).
 const NETWORK_PROBE_TIMEOUT_SECS: u32 = 3;
 
 /// Expand tilde in a PathBuf (e.g. `~/.ssh/id_ed25519` -> `/home/user/.ssh/id_ed25519`).
@@ -35,20 +31,6 @@ fn expand_key_path(path: Option<std::path::PathBuf>) -> Option<std::path::PathBu
             p
         }
     })
-}
-
-/// Fetch `docker ps` status for the backend's container. Empty string on failure or no match.
-///
-/// Kept for telegram.rs legacy paths (Task 5.1 rips those out).
-pub(crate) async fn fetch_container_uptime(backend: &dyn XrayBackend) -> String {
-    backend
-        .exec_on_host(&format!(
-            "docker ps --filter 'name=^/{}$' --format '{{{{.Status}}}}'",
-            backend.container_name()
-        ))
-        .await
-        .map(|o| o.stdout.trim().to_string())
-        .unwrap_or_default()
 }
 
 /// Fetch the latest Xray-core release tag from GitHub. `None` on network failure or
@@ -79,19 +61,6 @@ fn parse_xray_version_from_json(body: &str) -> Option<String> {
         return None;
     }
     Some(version.to_string())
-}
-
-/// Stub kept so `src/telegram.rs` legacy branches still compile. Task 5.1
-/// removes those callers and this function along with them.
-pub(crate) async fn build_vless_url(
-    _backend: &dyn XrayBackend,
-    _uuid: &str,
-    _name: &str,
-) -> Result<String, AppError> {
-    Err(AppError::Xray(
-        "legacy Amnezia vless URL builder removed; bridge path uses xray::url instead"
-            .to_string(),
-    ))
 }
 
 // ── Connection helpers ──
@@ -369,9 +338,7 @@ async fn cli_server_info(config: &Config, cli: &Cli) -> error::Result<()> {
 async fn cli_telegram_bot(config: &Config, cli: &Cli, token: &str) -> error::Result<()> {
     env_logger::init();
     let backend = connect(config, cli).await?;
-    // `bridge = true` — the only mode this tool supports now. Task 5.1 will
-    // delete that parameter from `telegram::run_bot`.
-    telegram::run_bot(token, backend, config.clone(), true).await
+    telegram::run_bot(token, backend, config.clone()).await
 }
 
 async fn cli_add_user(config: &Config, cli: &Cli, name: &str) -> error::Result<()> {

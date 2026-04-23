@@ -17,18 +17,36 @@ use crate::config::Config;
 use crate::error::Result;
 use crate::xray::client::XrayClient;
 use crate::xray::url::{render_qr_png, render_xhttp_url, XhttpUrlParams};
-use crate::ui::dashboard::format_bytes;
-use crate::ui::qr::render_qr_to_png;
-use crate::xray::client::{ServerInfo, XrayApiClient};
 use crate::xray::types::{TrafficStats, XrayUser};
+
+/// Minimal summary of the running xray instance, used by `/status`.
+#[derive(Debug, Clone, Default)]
+pub struct ServerInfo {
+    pub version: String,
+    pub uplink: u64,
+    pub downlink: u64,
+}
+
+/// Format a byte count as a human-readable string (e.g. `1.5 MB`).
+fn format_bytes(n: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut v = n as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{} {}", n, UNITS[0])
+    } else {
+        format!("{:.1} {}", v, UNITS[i])
+    }
+}
 
 /// State shared across all Telegram handlers.
 pub struct BotState {
     pub backend: Box<dyn XrayBackend>,
     pub config: Mutex<Config>,
-    /// When true, bot operates against a native-xray bridge (systemd),
-    /// using `XrayClient` instead of the legacy Amnezia `XrayApiClient`.
-    pub bridge: bool,
 }
 
 /// Callback query prefix for URL inline buttons.
@@ -435,17 +453,16 @@ async fn handle_command(
                                     .await?;
                             }
                         }
-                        // In bridge mode we deferred xray reload so that the
-                        // bot's own HTTP proxy (which runs through xray) stays
-                        // up during the response. Now that responses have been
-                        // sent, reload so xray picks up the new client.
-                        if state.bridge {
-                            if let Err(e) = XrayClient::new(state.backend.as_ref())
-                                .reload_xray()
-                                .await
-                            {
-                                log::warn!("reload_xray after /add failed: {}", e);
-                            }
+                        // Defer xray reload until after the response is sent
+                        // so the bot's own HTTP proxy (which runs through
+                        // xray) stays up during the reply. Now that responses
+                        // have been sent, reload so xray picks up the new
+                        // client.
+                        if let Err(e) = XrayClient::new(state.backend.as_ref())
+                            .reload_xray()
+                            .await
+                        {
+                            log::warn!("reload_xray after /add failed: {}", e);
                         }
                     }
                     Err(e) => {
@@ -583,37 +600,23 @@ async fn handle_command(
 
 /// Execute /users command: list users with stats.
 async fn cmd_users(state: &BotState) -> std::result::Result<String, crate::error::AppError> {
-    if state.bridge {
-        let client = XrayClient::new(state.backend.as_ref());
-        let clients = client.list_clients().await?;
-        let user_data: Vec<(XrayUser, TrafficStats, u32)> = clients
-            .into_iter()
-            .map(|c| {
-                let name = c.email.strip_suffix("@vpn").unwrap_or(&c.email).to_string();
-                let user = XrayUser {
-                    uuid: c.uuid,
-                    name,
-                    email: c.email,
-                    flow: String::new(),
-                    stats: TrafficStats::default(),
-                    online_count: 0,
-                };
-                (user, TrafficStats::default(), 0)
-            })
-            .collect();
-        return Ok(format_users_message(&user_data));
-    }
-
-    let client = XrayApiClient::new(state.backend.as_ref());
-    let users = client.list_users().await?;
-
-    let mut user_data = Vec::new();
-    for user in users {
-        let stats = client.get_user_stats(&user.email).await.unwrap_or_default();
-        let online = client.get_online_count(&user.email).await.unwrap_or(0);
-        user_data.push((user, stats, online));
-    }
-
+    let client = XrayClient::new(state.backend.as_ref());
+    let clients = client.list_clients().await?;
+    let user_data: Vec<(XrayUser, TrafficStats, u32)> = clients
+        .into_iter()
+        .map(|c| {
+            let name = c.email.strip_suffix("@vpn").unwrap_or(&c.email).to_string();
+            let user = XrayUser {
+                uuid: c.uuid,
+                name,
+                email: c.email,
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            };
+            (user, TrafficStats::default(), 0)
+        })
+        .collect();
     Ok(format_users_message(&user_data))
 }
 
@@ -623,16 +626,10 @@ async fn cmd_add(
     state: &BotState,
     name: &str,
 ) -> std::result::Result<(String, String), crate::error::AppError> {
-    if state.bridge {
-        let client = XrayClient::new(state.backend.as_ref());
-        let entry = client.add_client(name).await?;
-        let url = build_bridge_url_for(state, name).await?;
-        return Ok((format_add_message(name, &entry.uuid, &url), url));
-    }
-    let client = XrayApiClient::new(state.backend.as_ref());
-    let uuid = client.add_user(name).await?;
-    let vless_url = crate::build_vless_url(state.backend.as_ref(), &uuid, name).await?;
-    Ok((format_add_message(name, &uuid, &vless_url), vless_url))
+    let client = XrayClient::new(state.backend.as_ref());
+    let entry = client.add_client(name).await?;
+    let url = build_bridge_url_for(state, name).await?;
+    Ok((format_add_message(name, &entry.uuid, &url), url))
 }
 
 /// Execute /delete prompt: find user and return confirmation message with inline keyboard.
@@ -640,25 +637,11 @@ async fn cmd_delete_prompt(
     state: &BotState,
     name: &str,
 ) -> std::result::Result<(String, InlineKeyboardMarkup), crate::error::AppError> {
-    if state.bridge {
-        let client = XrayClient::new(state.backend.as_ref());
-        // Verify the user exists before prompting for confirmation.
-        let uuid = client.get_uuid(name).await?;
-        let text = format_delete_confirm_message(name);
-        let keyboard = delete_confirmation_keyboard(&uuid);
-        return Ok((text, keyboard));
-    }
-
-    let client = XrayApiClient::new(state.backend.as_ref());
-    let users = client.list_users().await?;
-
-    let user = users
-        .iter()
-        .find(|u| u.name == name)
-        .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
-
+    let client = XrayClient::new(state.backend.as_ref());
+    // Verify the user exists before prompting for confirmation.
+    let uuid = client.get_uuid(name).await?;
     let text = format_delete_confirm_message(name);
-    let keyboard = delete_confirmation_keyboard(&user.uuid);
+    let keyboard = delete_confirmation_keyboard(&uuid);
     Ok((text, keyboard))
 }
 
@@ -667,32 +650,17 @@ async fn cmd_delete_execute(
     state: &BotState,
     uuid: &str,
 ) -> std::result::Result<String, crate::error::AppError> {
-    if state.bridge {
-        let client = XrayClient::new(state.backend.as_ref());
-        let clients = client.list_clients().await?;
-        let entry = clients.iter().find(|c| c.uuid == uuid).ok_or_else(|| {
-            crate::error::AppError::Xray(format!("user with uuid '{}' not found", uuid))
-        })?;
-        let name = entry
-            .email
-            .strip_suffix("@vpn")
-            .unwrap_or(&entry.email)
-            .to_string();
-        client.remove_client(&name).await?;
-        return Ok(format_delete_success_message(&name));
-    }
-
-    let client = XrayApiClient::new(state.backend.as_ref());
-
-    // Look up user name before deletion for the response message
-    let users = client.list_users().await?;
-    let name = users
-        .iter()
-        .find(|u| u.uuid == uuid)
-        .map(|u| u.name.clone())
-        .unwrap_or_else(|| uuid[..std::cmp::min(8, uuid.len())].to_string());
-
-    client.remove_user(uuid).await?;
+    let client = XrayClient::new(state.backend.as_ref());
+    let clients = client.list_clients().await?;
+    let entry = clients.iter().find(|c| c.uuid == uuid).ok_or_else(|| {
+        crate::error::AppError::Xray(format!("user with uuid '{}' not found", uuid))
+    })?;
+    let name = entry
+        .email
+        .strip_suffix("@vpn")
+        .unwrap_or(&entry.email)
+        .to_string();
+    client.remove_client(&name).await?;
     Ok(format_delete_success_message(&name))
 }
 
@@ -701,33 +669,26 @@ async fn cmd_user_keyboard(
     state: &BotState,
     callback_prefix: &str,
 ) -> std::result::Result<UserKeyboardResult, crate::error::AppError> {
-    if state.bridge {
-        let client = XrayClient::new(state.backend.as_ref());
-        let clients = client.list_clients().await?;
-        let users: Vec<XrayUser> = clients
-            .into_iter()
-            .map(|c| {
-                let name = c.email.strip_suffix("@vpn").unwrap_or(&c.email).to_string();
-                XrayUser {
-                    uuid: c.uuid,
-                    name,
-                    email: c.email,
-                    flow: String::new(),
-                    stats: TrafficStats::default(),
-                    online_count: 0,
-                }
-            })
-            .collect();
-        return Ok(build_user_keyboard(&users, callback_prefix));
-    }
-
-    let client = XrayApiClient::new(state.backend.as_ref());
-    let users = client.list_users().await?;
+    let client = XrayClient::new(state.backend.as_ref());
+    let clients = client.list_clients().await?;
+    let users: Vec<XrayUser> = clients
+        .into_iter()
+        .map(|c| {
+            let name = c.email.strip_suffix("@vpn").unwrap_or(&c.email).to_string();
+            XrayUser {
+                uuid: c.uuid,
+                name,
+                email: c.email,
+                flow: String::new(),
+                stats: TrafficStats::default(),
+                online_count: 0,
+            }
+        })
+        .collect();
     Ok(build_user_keyboard(&users, callback_prefix))
 }
 
 /// Build the vless URL for `name` given the current bridge config.
-/// Only valid when `state.bridge` is true.
 async fn build_bridge_url_for(
     state: &BotState,
     name: &str,
@@ -752,20 +713,7 @@ async fn cmd_url(
     state: &BotState,
     name: &str,
 ) -> std::result::Result<String, crate::error::AppError> {
-    if state.bridge {
-        let vless_url = build_bridge_url_for(state, name).await?;
-        return Ok(format_url_message(name, &vless_url));
-    }
-
-    let client = XrayApiClient::new(state.backend.as_ref());
-    let users = client.list_users().await?;
-
-    let user = users
-        .iter()
-        .find(|u| u.name == name)
-        .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
-
-    let vless_url = crate::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
+    let vless_url = build_bridge_url_for(state, name).await?;
     Ok(format_url_message(name, &vless_url))
 }
 
@@ -774,32 +722,14 @@ async fn cmd_qr(
     state: &BotState,
     name: &str,
 ) -> std::result::Result<(Vec<u8>, String), crate::error::AppError> {
-    if state.bridge {
-        let vless_url = build_bridge_url_for(state, name).await?;
-        let png_bytes = render_qr_png(&vless_url)
-            .map_err(|e| crate::error::AppError::Xray(format!("QR generation failed: {}", e)))?;
-        let caption = format!(
-            "🔗 {}\n\n<code>{}</code>",
-            html_escape(name),
-            html_escape(&vless_url)
-        );
-        return Ok((png_bytes, caption));
-    }
-
-    let client = XrayApiClient::new(state.backend.as_ref());
-    let users = client.list_users().await?;
-
-    let user = users
-        .iter()
-        .find(|u| u.name == name)
-        .ok_or_else(|| crate::error::AppError::Xray(format!("user '{}' not found", name)))?;
-
-    let vless_url = crate::build_vless_url(state.backend.as_ref(), &user.uuid, name).await?;
-
-    let png_bytes = render_qr_to_png(&vless_url, 8)
+    let vless_url = build_bridge_url_for(state, name).await?;
+    let png_bytes = render_qr_png(&vless_url)
         .map_err(|e| crate::error::AppError::Xray(format!("QR generation failed: {}", e)))?;
-
-    let caption = format!("🔗 {}\n\n{}", name, vless_url);
+    let caption = format!(
+        "🔗 {}\n\n<code>{}</code>",
+        html_escape(name),
+        html_escape(&vless_url)
+    );
     Ok((png_bytes, caption))
 }
 
@@ -902,13 +832,11 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
             bot.edit_message_text(chat_id, msg.id(), &text).await?;
         }
         // Defer xray reload until after the response is sent; see cmd_add.
-        if state.bridge {
-            if let Err(e) = XrayClient::new(state.backend.as_ref())
-                .reload_xray()
-                .await
-            {
-                log::warn!("reload_xray after /delete failed: {}", e);
-            }
+        if let Err(e) = XrayClient::new(state.backend.as_ref())
+            .reload_xray()
+            .await
+        {
+            log::warn!("reload_xray after /delete failed: {}", e);
         }
     } else if data.starts_with(DELETE_CANCEL_PREFIX) {
         bot.answer_callback_query(q.id.clone()).await?;
@@ -923,63 +851,40 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
 
 /// Execute /status command: server info + online summary.
 async fn cmd_status(state: &BotState) -> std::result::Result<String, crate::error::AppError> {
-    if state.bridge {
-        // Native bridge: no Amnezia API, no docker container. Report user count
-        // and xray binary version only (uptime/stats/latest not plumbed yet).
-        let client = XrayClient::new(state.backend.as_ref());
-        let clients = client.list_clients().await?;
-        let version_out = state
-            .backend
-            .exec_on_host("xray version 2>/dev/null | head -n 1 | awk '{print $2}'")
-            .await
-            .ok();
-        let version = version_out
-            .and_then(|o| {
-                if o.success() {
-                    let v = o.stdout.trim().to_string();
-                    if v.is_empty() {
-                        None
-                    } else {
-                        Some(v)
-                    }
-                } else {
+    // Native bridge: no Amnezia API, no docker container. Report user count
+    // and xray binary version only (uptime/stats/latest not plumbed yet).
+    let client = XrayClient::new(state.backend.as_ref());
+    let clients = client.list_clients().await?;
+    let version_out = state
+        .backend
+        .exec_on_host("xray version 2>/dev/null | head -n 1 | awk '{print $2}'")
+        .await
+        .ok();
+    let version = version_out
+        .and_then(|o| {
+            if o.success() {
+                let v = o.stdout.trim().to_string();
+                if v.is_empty() {
                     None
+                } else {
+                    Some(v)
                 }
-            })
-            .unwrap_or_else(|| "unknown".to_string());
-        let server_info = ServerInfo {
-            version,
-            uplink: 0,
-            downlink: 0,
-        };
-        return Ok(format_status_message(
-            &server_info,
-            clients.len(),
-            0,
-            "",
-            None,
-        ));
-    }
-
-    let client = XrayApiClient::new(state.backend.as_ref());
-    let server_info = client.get_server_info().await?;
-    let users = client.list_users().await?;
-
-    let mut online_total = 0usize;
-    for user in &users {
-        let count = client.get_online_count(&user.email).await.unwrap_or(0);
-        online_total += count as usize;
-    }
-
-    let uptime = crate::fetch_container_uptime(state.backend.as_ref()).await;
-    let latest_version = crate::fetch_latest_xray_version(state.backend.as_ref()).await;
-
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    let server_info = ServerInfo {
+        version,
+        uplink: 0,
+        downlink: 0,
+    };
     Ok(format_status_message(
         &server_info,
-        users.len(),
-        online_total,
-        &uptime,
-        latest_version.as_deref(),
+        clients.len(),
+        0,
+        "",
+        None,
     ))
 }
 
@@ -988,7 +893,6 @@ pub async fn run_bot(
     token: &str,
     backend: Box<dyn XrayBackend>,
     config: Config,
-    bridge: bool,
 ) -> Result<()> {
     log::info!("Starting Telegram bot...");
 
@@ -1020,7 +924,6 @@ pub async fn run_bot(
     let state = Arc::new(BotState {
         backend,
         config: Mutex::new(config),
-        bridge,
     });
 
     let state_cmd = Arc::clone(&state);
@@ -1857,26 +1760,15 @@ mod tests {
     }
 
     #[test]
-    fn test_bot_state_carries_bridge_flag() {
-        // Regression test for Task 6.2: BotState must expose a `bridge: bool`
-        // field so command handlers can route to XrayClient.
+    fn test_bot_state_constructible() {
+        // BotState should be constructible with the minimum set of fields
+        // required by bridge-mode handlers.
         let state = BotState {
             backend: Box::new(NoopBackend {
                 host: "1.2.3.4".to_string(),
             }),
             config: Mutex::new(Config::default()),
-            bridge: true,
         };
-        assert!(state.bridge);
         assert_eq!(state.backend.hostname(), "1.2.3.4");
-
-        let legacy = BotState {
-            backend: Box::new(NoopBackend {
-                host: "5.6.7.8".to_string(),
-            }),
-            config: Mutex::new(Config::default()),
-            bridge: false,
-        };
-        assert!(!legacy.bridge);
     }
 }
