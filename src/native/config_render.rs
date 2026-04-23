@@ -103,6 +103,53 @@ pub fn render_bridge_config(input: &BridgeConfigInput) -> Result<String> {
         .map_err(|e| AppError::Config(format!("render bridge config: {e}")))
 }
 
+#[derive(Debug, Clone)]
+pub struct EgressConfigInput {
+    pub bridge_uuid: String,
+    pub port: u16,
+    pub xhttp_path: String,
+    pub reality_private_key: String,
+    pub reality_short_id: String,
+    pub domain: String,
+    pub nginx_port: u16,
+}
+
+pub fn render_egress_config(input: &EgressConfigInput) -> Result<String> {
+    let value = serde_json::json!({
+        "log": {
+            "loglevel": "warning",
+            "access": "/var/log/xray/access.log",
+            "error": "/var/log/xray/error.log"
+        },
+        "inbounds": [{
+            "listen": "0.0.0.0",
+            "port": input.port,
+            "tag": "bridge-in",
+            "protocol": "vless",
+            "settings": {
+                "clients": [{
+                    "id": input.bridge_uuid,
+                    "email": "bridge@vpn"
+                }],
+                "decryption": "none"
+            },
+            "streamSettings": {
+                "network": "xhttp",
+                "security": "reality",
+                "xhttpSettings": {"path": input.xhttp_path},
+                "realitySettings": {
+                    "dest": format!("127.0.0.1:{}", input.nginx_port),
+                    "serverNames": [input.domain],
+                    "privateKey": input.reality_private_key,
+                    "shortIds": [input.reality_short_id]
+                }
+            }
+        }],
+        "outbounds": [{"protocol": "freedom", "tag": "direct"}]
+    });
+    serde_json::to_string_pretty(&value).map_err(|e| AppError::Config(format!("render egress config: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,6 +182,25 @@ mod tests {
             include_str!("../../tests/fixtures/bridge-config-sample.json")
         ).unwrap();
 
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn egress_config_matches_snapshot() {
+        let input = EgressConfigInput {
+            bridge_uuid: "00000000-0000-0000-0000-000000000009".into(),
+            port: 8444,
+            xhttp_path: "/egresspath".into(),
+            reality_private_key: "EGRESS_PRIVATE".into(),
+            reality_short_id: "EGRESSSID".into(),
+            domain: "example.duckdns.org".into(),
+            nginx_port: 9443,
+        };
+        let rendered = render_egress_config(&input).unwrap();
+        let actual: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        let expected: serde_json::Value = serde_json::from_str(
+            include_str!("../../tests/fixtures/egress-config-sample.json")
+        ).unwrap();
         assert_eq!(actual, expected);
     }
 }
