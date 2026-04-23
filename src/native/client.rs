@@ -37,7 +37,10 @@ impl<'a> NativeXrayClient<'a> {
             .exec_on_host(&format!("sudo cat {NATIVE_CONFIG_PATH}"))
             .await?;
         if !out.success() {
-            return Err(AppError::Config(format!("read bridge config: {}", out.stderr)));
+            return Err(AppError::Config(format!(
+                "read bridge config: {}",
+                out.stderr
+            )));
         }
         let parsed = parse_bridge_config(&out.stdout)?;
         Ok(parsed.clients)
@@ -100,7 +103,10 @@ impl<'a> NativeXrayClient<'a> {
             .exec_on_host(&format!("sudo cat {NATIVE_CONFIG_PATH}"))
             .await?;
         if !out.success() {
-            return Err(AppError::Config(format!("read bridge config: {}", out.stderr)));
+            return Err(AppError::Config(format!(
+                "read bridge config: {}",
+                out.stderr
+            )));
         }
         let v: serde_json::Value = serde_json::from_str(&out.stdout)
             .map_err(|e| AppError::Config(format!("parse bridge config: {e}")))?;

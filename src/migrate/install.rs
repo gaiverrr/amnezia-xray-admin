@@ -13,7 +13,10 @@ pub async fn write_xray_config(backend: &dyn XrayBackend, content: &str) -> Resu
     );
     let out = backend.exec_on_host(&cmd).await?;
     if !out.success() {
-        return Err(AppError::Config(format!("write config failed: {}", out.stderr)));
+        return Err(AppError::Config(format!(
+            "write config failed: {}",
+            out.stderr
+        )));
     }
     Ok(())
 }
@@ -21,13 +24,19 @@ pub async fn write_xray_config(backend: &dyn XrayBackend, content: &str) -> Resu
 pub async fn restart_xray(backend: &dyn XrayBackend) -> Result<()> {
     let out = backend.exec_on_host("sudo systemctl restart xray").await?;
     if !out.success() {
-        return Err(AppError::Config(format!("systemctl restart xray: {}", out.stderr)));
+        return Err(AppError::Config(format!(
+            "systemctl restart xray: {}",
+            out.stderr
+        )));
     }
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    let status = backend.exec_on_host("sudo systemctl is-active xray").await?;
+    let status = backend
+        .exec_on_host("sudo systemctl is-active xray")
+        .await?;
     if !status.stdout.trim().eq("active") {
         return Err(AppError::Config(format!(
-            "xray not active after restart: {}", status.stdout
+            "xray not active after restart: {}",
+            status.stdout
         )));
     }
     Ok(())
@@ -44,7 +53,10 @@ pub struct Secrets {
 pub async fn generate_secrets(backend: &dyn XrayBackend) -> Result<Secrets> {
     let keys = backend.exec_on_host("xray x25519").await?;
     if !keys.success() {
-        return Err(AppError::Config(format!("xray x25519 failed: {}", keys.stderr)));
+        return Err(AppError::Config(format!(
+            "xray x25519 failed: {}",
+            keys.stderr
+        )));
     }
     let mut priv_key = String::new();
     let mut pub_key = String::new();
@@ -60,7 +72,8 @@ pub async fn generate_secrets(backend: &dyn XrayBackend) -> Result<Secrets> {
     }
     if priv_key.is_empty() || pub_key.is_empty() {
         return Err(AppError::Config(format!(
-            "cannot parse x25519 output: {}", keys.stdout
+            "cannot parse x25519 output: {}",
+            keys.stdout
         )));
     }
     let sid = backend.exec_on_host("openssl rand -hex 8").await?;
@@ -76,16 +89,26 @@ pub async fn generate_secrets(backend: &dyn XrayBackend) -> Result<Secrets> {
 pub async fn preflight(backend: &dyn XrayBackend, required_free_ports: &[u16]) -> Result<()> {
     let sudo = backend.exec_on_host("sudo -n true").await?;
     if !sudo.success() {
-        return Err(AppError::Config("sudo requires password — configure NOPASSWD".into()));
+        return Err(AppError::Config(
+            "sudo requires password — configure NOPASSWD".into(),
+        ));
     }
-    let os = backend.exec_on_host("grep PRETTY_NAME /etc/os-release").await?;
+    let os = backend
+        .exec_on_host("grep PRETTY_NAME /etc/os-release")
+        .await?;
     if !os.success() || !os.stdout.contains("Ubuntu 2") {
         return Err(AppError::Config(format!(
-            "unsupported OS (need Ubuntu 22+/24+): {}", os.stdout.trim()
+            "unsupported OS (need Ubuntu 22+/24+): {}",
+            os.stdout.trim()
         )));
     }
-    let mem = backend.exec_on_host("grep MemAvailable /proc/meminfo").await?;
-    let mem_kb: u64 = mem.stdout.split_whitespace().nth(1)
+    let mem = backend
+        .exec_on_host("grep MemAvailable /proc/meminfo")
+        .await?;
+    let mem_kb: u64 = mem
+        .stdout
+        .split_whitespace()
+        .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     if mem_kb < 500_000 {
@@ -94,9 +117,13 @@ pub async fn preflight(backend: &dyn XrayBackend, required_free_ports: &[u16]) -
         )));
     }
     for port in required_free_ports {
-        let check = backend.exec_on_host(&format!("ss -tln | grep -E \":{port}\\b\" | head -1")).await?;
+        let check = backend
+            .exec_on_host(&format!("ss -tln | grep -E \":{port}\\b\" | head -1"))
+            .await?;
         if !check.stdout.trim().is_empty() {
-            return Err(AppError::Config(format!("port {port} is already in use on new host")));
+            return Err(AppError::Config(format!(
+                "port {port} is already in use on new host"
+            )));
         }
     }
     Ok(())
@@ -106,7 +133,10 @@ pub async fn install_xray(backend: &dyn XrayBackend) -> Result<String> {
     let install_cmd = "sudo bash -c \"$(curl -Ls https://github.com/XTLS/Xray-install/raw/main/install-release.sh)\" @ install";
     let install = backend.exec_on_host(install_cmd).await?;
     if !install.success() {
-        return Err(AppError::Config(format!("xray install failed: {}", install.stderr)));
+        return Err(AppError::Config(format!(
+            "xray install failed: {}",
+            install.stderr
+        )));
     }
 
     let version = backend.exec_on_host("xray version 2>&1 | head -1").await?;
@@ -119,31 +149,39 @@ pub async fn install_xray(backend: &dyn XrayBackend) -> Result<String> {
         .split_whitespace()
         .nth(1)
         .ok_or_else(|| AppError::Config(format!("cannot parse xray version from: {stdout}")))?;
-    let major: u32 = token.split('.').next()
+    let major: u32 = token
+        .split('.')
+        .next()
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| AppError::Config(format!("cannot parse major version from: {token}")))?;
     if major < 25 {
-        return Err(AppError::Config(format!("xray version {token} is too old; need 25+ for XHTTP")));
+        return Err(AppError::Config(format!(
+            "xray version {token} is too old; need 25+ for XHTTP"
+        )));
     }
     Ok(token.to_string())
 }
 
 pub async fn apt_install(backend: &dyn XrayBackend, packages: &[&str]) -> Result<()> {
-    let update = backend.exec_on_host(
-        "sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq"
-    ).await?;
+    let update = backend
+        .exec_on_host("sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq")
+        .await?;
     if !update.success() {
         return Err(AppError::Config(format!(
-            "apt-get update failed: {}", update.stderr
+            "apt-get update failed: {}",
+            update.stderr
         )));
     }
-    let install = backend.exec_on_host(&format!(
-        "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {}",
-        packages.join(" ")
-    )).await?;
+    let install = backend
+        .exec_on_host(&format!(
+            "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq {}",
+            packages.join(" ")
+        ))
+        .await?;
     if !install.success() {
         return Err(AppError::Config(format!(
-            "apt-get install failed: {}", install.stderr
+            "apt-get install failed: {}",
+            install.stderr
         )));
     }
     Ok(())
@@ -170,8 +208,12 @@ mod tests {
             self.calls.lock().unwrap().push(cmd.to_string());
             Ok(self.responses.lock().unwrap().remove(0))
         }
-        fn container_name(&self) -> &str { "mock" }
-        fn hostname(&self) -> &str { "mock.example.com" }
+        fn container_name(&self) -> &str {
+            "mock"
+        }
+        fn hostname(&self) -> &str {
+            "mock.example.com"
+        }
     }
 
     #[tokio::test]
@@ -179,8 +221,16 @@ mod tests {
         let backend = MockBackend {
             calls: Mutex::new(vec![]),
             responses: Mutex::new(vec![
-                CommandOutput { stdout: "ok".into(), stderr: "".into(), exit_code: 0 },
-                CommandOutput { stdout: "ok".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput {
+                    stdout: "ok".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
+                CommandOutput {
+                    stdout: "ok".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
             ]),
         };
         apt_install(&backend, &["nginx", "certbot"]).await.unwrap();
@@ -195,9 +245,11 @@ mod tests {
     async fn apt_install_fails_on_nonzero_exit() {
         let backend = MockBackend {
             calls: Mutex::new(vec![]),
-            responses: Mutex::new(vec![
-                CommandOutput { stdout: "".into(), stderr: "E: broken".into(), exit_code: 100 },
-            ]),
+            responses: Mutex::new(vec![CommandOutput {
+                stdout: "".into(),
+                stderr: "E: broken".into(),
+                exit_code: 100,
+            }]),
         };
         let result = apt_install(&backend, &["nginx"]).await;
         assert!(result.is_err());
@@ -208,8 +260,16 @@ mod tests {
         let backend = MockBackend {
             calls: Mutex::new(vec![]),
             responses: Mutex::new(vec![
-                CommandOutput { stdout: "Xray installed".into(), stderr: "".into(), exit_code: 0 },
-                CommandOutput { stdout: "Xray 26.3.27 ...\nA unified platform...".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput {
+                    stdout: "Xray installed".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
+                CommandOutput {
+                    stdout: "Xray 26.3.27 ...\nA unified platform...".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
             ]),
         };
         let version = install_xray(&backend).await.unwrap();
@@ -224,8 +284,16 @@ mod tests {
         let backend = MockBackend {
             calls: Mutex::new(vec![]),
             responses: Mutex::new(vec![
-                CommandOutput { stdout: "ok".into(), stderr: "".into(), exit_code: 0 },
-                CommandOutput { stdout: "Xray 1.8.4 ...".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput {
+                    stdout: "ok".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
+                CommandOutput {
+                    stdout: "Xray 1.8.4 ...".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
             ]),
         };
         let err = install_xray(&backend).await.unwrap_err();
@@ -237,10 +305,26 @@ mod tests {
         let backend = MockBackend {
             calls: Mutex::new(vec![]),
             responses: Mutex::new(vec![
-                CommandOutput { stdout: "".into(), stderr: "".into(), exit_code: 0 },
-                CommandOutput { stdout: "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"".into(), stderr: "".into(), exit_code: 0 },
-                CommandOutput { stdout: "MemAvailable:    1500000 kB".into(), stderr: "".into(), exit_code: 0 },
-                CommandOutput { stdout: "".into(), stderr: "".into(), exit_code: 1 },
+                CommandOutput {
+                    stdout: "".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
+                CommandOutput {
+                    stdout: "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
+                CommandOutput {
+                    stdout: "MemAvailable:    1500000 kB".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
+                CommandOutput {
+                    stdout: "".into(),
+                    stderr: "".into(),
+                    exit_code: 1,
+                },
             ]),
         };
         preflight(&backend, &[443]).await.unwrap();
@@ -251,10 +335,26 @@ mod tests {
         let backend = MockBackend {
             calls: Mutex::new(vec![]),
             responses: Mutex::new(vec![
-                CommandOutput { stdout: "".into(), stderr: "".into(), exit_code: 0 },
-                CommandOutput { stdout: "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"".into(), stderr: "".into(), exit_code: 0 },
-                CommandOutput { stdout: "MemAvailable:    1500000 kB".into(), stderr: "".into(), exit_code: 0 },
-                CommandOutput { stdout: "LISTEN 0 128 *:443 *:* users:((something))".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput {
+                    stdout: "".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
+                CommandOutput {
+                    stdout: "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
+                CommandOutput {
+                    stdout: "MemAvailable:    1500000 kB".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
+                CommandOutput {
+                    stdout: "LISTEN 0 128 *:443 *:* users:((something))".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
             ]),
         };
         let err = preflight(&backend, &[443]).await.unwrap_err();
@@ -265,9 +365,11 @@ mod tests {
     async fn write_xray_config_uses_base64() {
         let backend = MockBackend {
             calls: Mutex::new(vec![]),
-            responses: Mutex::new(vec![
-                CommandOutput { stdout: "".into(), stderr: "".into(), exit_code: 0 },
-            ]),
+            responses: Mutex::new(vec![CommandOutput {
+                stdout: "".into(),
+                stderr: "".into(),
+                exit_code: 0,
+            }]),
         };
         write_xray_config(&backend, "{\"a\":1}").await.unwrap();
         let calls = backend.calls.lock().unwrap();
@@ -281,12 +383,21 @@ mod tests {
             calls: Mutex::new(vec![]),
             responses: Mutex::new(vec![
                 CommandOutput {
-                    stdout: "PrivateKey: ABC_PRIV\nPassword (PublicKey): ABC_PUB\nHash32: HASH".into(),
+                    stdout: "PrivateKey: ABC_PRIV\nPassword (PublicKey): ABC_PUB\nHash32: HASH"
+                        .into(),
                     stderr: "".into(),
                     exit_code: 0,
                 },
-                CommandOutput { stdout: "833552e201595cd4".into(), stderr: "".into(), exit_code: 0 },
-                CommandOutput { stdout: "0e1fa74ddc24".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput {
+                    stdout: "833552e201595cd4".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
+                CommandOutput {
+                    stdout: "0e1fa74ddc24".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
             ]),
         };
         let s = generate_secrets(&backend).await.unwrap();

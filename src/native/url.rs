@@ -47,10 +47,7 @@ pub fn render_qr_ascii(data: &str) -> String {
     use qrcode::render::unicode;
     use qrcode::QrCode;
     match QrCode::new(data) {
-        Ok(code) => code
-            .render::<unicode::Dense1x2>()
-            .quiet_zone(true)
-            .build(),
+        Ok(code) => code.render::<unicode::Dense1x2>().quiet_zone(true).build(),
         Err(_) => "(qr encoding failed)".to_string(),
     }
 }

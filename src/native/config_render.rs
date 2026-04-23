@@ -147,7 +147,8 @@ pub fn render_egress_config(input: &EgressConfigInput) -> Result<String> {
         }],
         "outbounds": [{"protocol": "freedom", "tag": "direct"}]
     });
-    serde_json::to_string_pretty(&value).map_err(|e| AppError::Config(format!("render egress config: {e}")))
+    serde_json::to_string_pretty(&value)
+        .map_err(|e| AppError::Config(format!("render egress config: {e}")))
 }
 
 #[derive(Debug)]
@@ -185,16 +186,39 @@ pub fn parse_bridge_config(raw: &str) -> Result<ParsedBridgeConfig> {
         .ok_or_else(|| AppError::Config("foreign-egress outbound not found".into()))?;
 
     let egress = EgressOutbound {
-        address: outbound_raw["settings"]["vnext"][0]["address"].as_str().unwrap_or("").to_string(),
-        port: outbound_raw["settings"]["vnext"][0]["port"].as_u64().unwrap_or(0) as u16,
-        bridge_uuid: outbound_raw["settings"]["vnext"][0]["users"][0]["id"].as_str().unwrap_or("").to_string(),
-        xhttp_path: outbound_raw["streamSettings"]["xhttpSettings"]["path"].as_str().unwrap_or("").to_string(),
-        reality_public_key: outbound_raw["streamSettings"]["realitySettings"]["publicKey"].as_str().unwrap_or("").to_string(),
-        reality_short_id: outbound_raw["streamSettings"]["realitySettings"]["shortId"].as_str().unwrap_or("").to_string(),
-        server_name: outbound_raw["streamSettings"]["realitySettings"]["serverName"].as_str().unwrap_or("").to_string(),
+        address: outbound_raw["settings"]["vnext"][0]["address"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
+        port: outbound_raw["settings"]["vnext"][0]["port"]
+            .as_u64()
+            .unwrap_or(0) as u16,
+        bridge_uuid: outbound_raw["settings"]["vnext"][0]["users"][0]["id"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
+        xhttp_path: outbound_raw["streamSettings"]["xhttpSettings"]["path"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
+        reality_public_key: outbound_raw["streamSettings"]["realitySettings"]["publicKey"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
+        reality_short_id: outbound_raw["streamSettings"]["realitySettings"]["shortId"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
+        server_name: outbound_raw["streamSettings"]["realitySettings"]["serverName"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
     };
 
-    Ok(ParsedBridgeConfig { clients, egress_outbound: egress })
+    Ok(ParsedBridgeConfig {
+        clients,
+        egress_outbound: egress,
+    })
 }
 
 #[cfg(test)]
@@ -205,8 +229,14 @@ mod tests {
     fn bridge_config_matches_snapshot() {
         let input = BridgeConfigInput {
             clients: vec![
-                ClientEntry { uuid: "00000000-0000-0000-0000-000000000001".into(), email: "alice@vpn".into() },
-                ClientEntry { uuid: "00000000-0000-0000-0000-000000000002".into(), email: "bob@vpn".into() },
+                ClientEntry {
+                    uuid: "00000000-0000-0000-0000-000000000001".into(),
+                    email: "alice@vpn".into(),
+                },
+                ClientEntry {
+                    uuid: "00000000-0000-0000-0000-000000000002".into(),
+                    email: "bob@vpn".into(),
+                },
             ],
             reality_private_key: "TEST_PRIVATE_KEY".into(),
             reality_short_id: "TESTSID".into(),
@@ -225,9 +255,10 @@ mod tests {
 
         let rendered = render_bridge_config(&input).unwrap();
         let actual: serde_json::Value = serde_json::from_str(&rendered).unwrap();
-        let expected: serde_json::Value = serde_json::from_str(
-            include_str!("../../tests/fixtures/bridge-config-sample.json")
-        ).unwrap();
+        let expected: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/bridge-config-sample.json"
+        ))
+        .unwrap();
 
         assert_eq!(actual, expected);
     }
@@ -245,9 +276,10 @@ mod tests {
         };
         let rendered = render_egress_config(&input).unwrap();
         let actual: serde_json::Value = serde_json::from_str(&rendered).unwrap();
-        let expected: serde_json::Value = serde_json::from_str(
-            include_str!("../../tests/fixtures/egress-config-sample.json")
-        ).unwrap();
+        let expected: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/egress-config-sample.json"
+        ))
+        .unwrap();
         assert_eq!(actual, expected);
     }
 
