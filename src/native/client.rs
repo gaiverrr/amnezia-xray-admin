@@ -47,7 +47,10 @@ impl<'a> NativeXrayClient<'a> {
     }
 
     /// Add a user (generates a fresh UUID). Name becomes email `<name>@vpn`.
-    /// Backs up config, patches via jq, reloads xray.
+    /// Backs up config, patches via jq. Does NOT reload xray — caller must
+    /// invoke `reload_xray` after any response has been sent, because the
+    /// bot's own HTTP proxy runs through xray and restart momentarily kills
+    /// it, racing with the response send.
     pub async fn add_client(&self, name: &str) -> Result<ClientEntry> {
         validate_name(name)?;
         let email = format!("{name}@vpn");
@@ -62,8 +65,7 @@ impl<'a> NativeXrayClient<'a> {
              sudo jq --arg uuid '{uuid}' --arg email '{email}' \
                '.inbounds[0].settings.clients += [{{id: $uuid, email: $email}}]' \
                {cfg} | sudo tee {cfg}.new > /dev/null && \
-             sudo mv {cfg}.new {cfg} && \
-             sudo systemctl reload-or-restart xray",
+             sudo mv {cfg}.new {cfg}",
             cfg = NATIVE_CONFIG_PATH,
             uuid = uuid,
             email = email,
@@ -75,7 +77,8 @@ impl<'a> NativeXrayClient<'a> {
         Ok(ClientEntry { uuid, email })
     }
 
-    /// Remove by user name (email prefix). Backs up, patches, reloads.
+    /// Remove by user name (email prefix). Backs up, patches config. Does NOT
+    /// reload xray — see `add_client` docs.
     pub async fn remove_client(&self, name: &str) -> Result<()> {
         validate_name(name)?;
         let email = format!("{name}@vpn");
@@ -84,14 +87,27 @@ impl<'a> NativeXrayClient<'a> {
              sudo jq --arg email '{email}' \
                '.inbounds[0].settings.clients |= map(select(.email != $email))' \
                {cfg} | sudo tee {cfg}.new > /dev/null && \
-             sudo mv {cfg}.new {cfg} && \
-             sudo systemctl reload-or-restart xray",
+             sudo mv {cfg}.new {cfg}",
             cfg = NATIVE_CONFIG_PATH,
             email = email,
         );
         let out = self.backend.exec_on_host(&cmd).await?;
         if !out.success() {
             return Err(AppError::Config(format!("remove client: {}", out.stderr)));
+        }
+        Ok(())
+    }
+
+    /// Reload xray so it picks up a config edit. Call AFTER any Telegram
+    /// response has been sent, because the bot proxies its outbound through
+    /// xray itself.
+    pub async fn reload_xray(&self) -> Result<()> {
+        let out = self
+            .backend
+            .exec_on_host("sudo systemctl reload-or-restart xray")
+            .await?;
+        if !out.success() {
+            return Err(AppError::Config(format!("reload xray: {}", out.stderr)));
         }
         Ok(())
     }

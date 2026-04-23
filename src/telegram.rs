@@ -462,6 +462,18 @@ async fn handle_command(
                                     .await?;
                             }
                         }
+                        // In bridge mode we deferred xray reload so that the
+                        // bot's own HTTP proxy (which runs through xray) stays
+                        // up during the response. Now that responses have been
+                        // sent, reload so xray picks up the new client.
+                        if state.bridge {
+                            if let Err(e) = NativeXrayClient::new(state.backend.as_ref())
+                                .reload_xray()
+                                .await
+                            {
+                                log::warn!("reload_xray after /add failed: {}", e);
+                            }
+                        }
                     }
                     Err(e) => {
                         bot.send_message(chat_id, format!("Error: {}", e)).await?;
@@ -1221,6 +1233,15 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
         // Edit the original message to show the result
         if let Some(ref msg) = q.message {
             bot.edit_message_text(chat_id, msg.id(), &text).await?;
+        }
+        // Defer xray reload until after the response is sent; see cmd_add.
+        if state.bridge {
+            if let Err(e) = NativeXrayClient::new(state.backend.as_ref())
+                .reload_xray()
+                .await
+            {
+                log::warn!("reload_xray after /delete failed: {}", e);
+            }
         }
     } else if data.starts_with(DELETE_CANCEL_PREFIX) {
         bot.answer_callback_query(q.id.clone()).await?;
