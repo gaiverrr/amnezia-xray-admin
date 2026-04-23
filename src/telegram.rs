@@ -447,11 +447,26 @@ async fn handle_command(
             if let Some(err) = validate_user_name(&name) {
                 bot.send_message(chat_id, err).await?;
             } else {
-                let text = match cmd_add(&state, &name).await {
-                    Ok(t) => t,
-                    Err(e) => format!("Error: {}", e),
-                };
-                bot.send_message(chat_id, text).await?;
+                match cmd_add(&state, &name).await {
+                    Ok((text, vless_url)) => {
+                        bot.send_message(chat_id, text).await?;
+                        // Render + send QR as a photo. Best-effort: if QR
+                        // encoding fails the user still has the URL.
+                        match render_qr_png(&vless_url) {
+                            Ok(png) => {
+                                let input = InputFile::memory(png).file_name("qr.png");
+                                bot.send_photo(chat_id, input).await?;
+                            }
+                            Err(e) => {
+                                bot.send_message(chat_id, format!("(QR render failed: {})", e))
+                                    .await?;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        bot.send_message(chat_id, format!("Error: {}", e)).await?;
+                    }
+                }
             }
         }
         Command::Delete(name) => {
@@ -705,21 +720,22 @@ async fn cmd_users(state: &BotState) -> std::result::Result<String, crate::error
     Ok(format_users_message(&user_data))
 }
 
-/// Execute /add command: add a user, return UUID + vless URL.
+/// Execute /add command: add a user, return (message text, vless URL) so the
+/// caller can both display the text and render a QR for the URL.
 async fn cmd_add(
     state: &BotState,
     name: &str,
-) -> std::result::Result<String, crate::error::AppError> {
+) -> std::result::Result<(String, String), crate::error::AppError> {
     if state.bridge {
         let client = NativeXrayClient::new(state.backend.as_ref());
         let entry = client.add_client(name).await?;
         let url = build_bridge_url_for(state, name).await?;
-        return Ok(format_add_message(name, &entry.uuid, &url));
+        return Ok((format_add_message(name, &entry.uuid, &url), url));
     }
     let client = XrayApiClient::new(state.backend.as_ref());
     let uuid = client.add_user(name).await?;
     let vless_url = backend::build_vless_url(state.backend.as_ref(), &uuid, name).await?;
-    Ok(format_add_message(name, &uuid, &vless_url))
+    Ok((format_add_message(name, &uuid, &vless_url), vless_url))
 }
 
 /// Execute /delete prompt: find user and return confirmation message with inline keyboard.

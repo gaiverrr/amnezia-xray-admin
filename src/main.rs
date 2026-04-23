@@ -736,6 +736,8 @@ async fn cli_add_user(config: &Config, name: &str, local: bool, bridge: bool) ->
                     name: name.to_string(),
                 });
                 println!("URL:   {}", url);
+                println!();
+                println!("{}", native::url::render_qr_ascii(&url));
             }
             Err(e) => eprintln!(
                 "Warning: URL generation failed: {}. Use --user-url to retry.",
@@ -779,7 +781,11 @@ async fn cli_add_user(config: &Config, name: &str, local: bool, bridge: bool) ->
 
     // URL generation is best-effort: if it fails, the user was still added successfully.
     match backend::build_vless_url(backend.as_ref(), &uuid, name).await {
-        Ok(vless_url) => println!("URL:   {}", vless_url),
+        Ok(vless_url) => {
+            println!("URL:   {}", vless_url);
+            println!();
+            println!("{}", native::url::render_qr_ascii(&vless_url));
+        }
         Err(e) => eprintln!(
             "Warning: URL generation failed: {}. Use --user-url to retry.",
             e
