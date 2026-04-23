@@ -20,7 +20,6 @@ use crate::xray::url::{render_qr_png, render_xhttp_url, XhttpUrlParams};
 use crate::ui::dashboard::format_bytes;
 use crate::ui::qr::render_qr_to_png;
 use crate::xray::client::{ServerInfo, XrayApiClient};
-use crate::xray::snapshot;
 use crate::xray::types::{TrafficStats, XrayUser};
 
 /// State shared across all Telegram handlers.
@@ -42,12 +41,6 @@ const DELETE_PREFIX: &str = "delete:";
 const DELETE_CONFIRM_PREFIX: &str = "delete_confirm:";
 /// Callback query prefix for delete cancel buttons.
 const DELETE_CANCEL_PREFIX: &str = "delete_cancel:";
-/// Callback query prefix for restore snapshot buttons.
-const RESTORE_PREFIX: &str = "restore:";
-/// Callback query prefix for upgrade confirmation buttons.
-const UPGRADE_CONFIRM_PREFIX: &str = "upgrade_confirm";
-/// Callback query prefix for upgrade cancel buttons.
-const UPGRADE_CANCEL_PREFIX: &str = "upgrade_cancel";
 
 /// Commands recognized by the bot.
 #[derive(BotCommands, Clone, Debug)]
@@ -69,27 +62,6 @@ pub enum Command {
     Url(String),
     #[command(description = "Get QR code: /qr <name>")]
     Qr(String),
-    /// Create server snapshot
-    #[command(description = "Create server snapshot")]
-    Snapshot,
-    /// List snapshots
-    #[command(description = "List snapshots")]
-    Snapshots,
-    /// Restore from snapshot
-    #[command(description = "Restore from snapshot")]
-    Restore(String),
-    /// Upgrade Xray to latest
-    #[command(description = "Upgrade Xray to latest")]
-    Upgrade,
-    /// Show routing rules
-    #[command(description = "Show routing rules")]
-    Routes,
-    /// Add route: /route user outbound
-    #[command(description = "Add route: /route user outbound")]
-    Route(String),
-    /// Remove route
-    #[command(description = "Remove route")]
-    Unroute(String),
 }
 
 /// Check if a chat ID matches the configured admin.
@@ -109,13 +81,6 @@ pub fn help_text() -> String {
         "/url <name> - Get vless:// URL",
         "/qr <name> - Get QR code image",
         "/status - Server info + online users",
-        "/snapshot - Create server snapshot",
-        "/snapshots - List snapshots",
-        "/restore [tag] - Restore from snapshot",
-        "/upgrade - Upgrade Xray to latest",
-        "/routes - Show routing rules",
-        "/route <user> <outbound> - Add route",
-        "/unroute <name> - Remove route",
     ]
     .join("\n")
 }
@@ -133,11 +98,6 @@ pub fn welcome_text() -> String {
 /// Format the access denied message for non-admin users.
 pub fn access_denied_text() -> String {
     "Access denied. Contact the server administrator.".to_string()
-}
-
-/// Reply shown when an Amnezia-only command is invoked in native-bridge mode.
-pub fn bridge_unsupported_msg() -> &'static str {
-    "This command isn't supported on bridge mode yet."
 }
 
 /// Format the /users response: list users with traffic stats.
@@ -616,102 +576,6 @@ async fn handle_command(
                 }
             }
         }
-        Command::Snapshot => {
-            if state.bridge {
-                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
-            } else {
-                match cmd_snapshot(&bot, chat_id, &state).await {
-                    Ok(()) => {} // message already sent inside
-                    Err(e) => {
-                        bot.send_message(chat_id, format!("Error: {}", e)).await?;
-                    }
-                }
-            }
-        }
-        Command::Snapshots => {
-            if state.bridge {
-                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
-            } else {
-                let text = match cmd_snapshots(&state).await {
-                    Ok(t) => t,
-                    Err(e) => format!("Error: {}", e),
-                };
-                bot.send_message(chat_id, text).await?;
-            }
-        }
-        Command::Restore(tag) => {
-            if state.bridge {
-                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
-            } else {
-                let tag = tag.trim().to_string();
-                if tag.is_empty() {
-                    match cmd_restore_keyboard(&state).await {
-                        Ok(Some((text, keyboard))) => {
-                            bot.send_message(chat_id, text)
-                                .reply_markup(keyboard)
-                                .await?;
-                        }
-                        Ok(None) => {
-                            bot.send_message(chat_id, "No snapshots found.").await?;
-                        }
-                        Err(e) => {
-                            bot.send_message(chat_id, format!("Error: {}", e)).await?;
-                        }
-                    }
-                } else {
-                    let text = match cmd_restore(&state, &tag).await {
-                        Ok(t) => t,
-                        Err(e) => format!("Error: {}", e),
-                    };
-                    bot.send_message(chat_id, text).await?;
-                }
-            }
-        }
-        Command::Upgrade => {
-            if state.bridge {
-                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
-            } else {
-                match cmd_upgrade_check(&bot, chat_id, &state).await {
-                    Ok(()) => {} // messages already sent inside
-                    Err(e) => {
-                        bot.send_message(chat_id, format!("Error: {}", e)).await?;
-                    }
-                }
-            }
-        }
-        Command::Routes => {
-            if state.bridge {
-                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
-            } else {
-                let text = match cmd_routes(&state).await {
-                    Ok(t) => t,
-                    Err(e) => format!("Error: {}", e),
-                };
-                bot.send_message(chat_id, text).await?;
-            }
-        }
-        Command::Route(args) => {
-            if state.bridge {
-                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
-            } else {
-                let text = match cmd_route(&state, &args).await {
-                    Ok(t) => t,
-                    Err(e) => format!("Error: {}", e),
-                };
-                bot.send_message(chat_id, text).await?;
-            }
-        }
-        Command::Unroute(name) => {
-            if state.bridge {
-                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
-            } else {
-                let text = match cmd_unroute(&state, &name).await {
-                    Ok(t) => t,
-                    Err(e) => format!("Error: {}", e),
-                };
-                bot.send_message(chat_id, text).await?;
-            }
-        }
     }
 
     Ok(())
@@ -939,243 +803,6 @@ async fn cmd_qr(
     Ok((png_bytes, caption))
 }
 
-/// Execute /snapshot command: create snapshot and send archive as document.
-async fn cmd_snapshot(
-    bot: &Bot,
-    chat_id: ChatId,
-    state: &BotState,
-) -> std::result::Result<(), crate::error::AppError> {
-    bot.send_message(chat_id, "Creating snapshot...").await.ok();
-
-    let snapshot_dir = state.config.lock().await.snapshot_dir().to_string();
-    let info = snapshot::create_snapshot(state.backend.as_ref(), &snapshot_dir).await?;
-    let zip_bytes =
-        snapshot::pack_snapshot_zip(state.backend.as_ref(), &info.tag, &snapshot_dir).await?;
-
-    let file_name = format!("snapshot-{}.tar.gz", info.tag);
-    let caption = format!(
-        "\u{1f4e6} Snapshot {} | v{} | {} users",
-        info.tag, info.version, info.users_count
-    );
-    let input = InputFile::memory(zip_bytes).file_name(file_name);
-    bot.send_document(chat_id, input)
-        .caption(caption)
-        .await
-        .map_err(|e| crate::error::AppError::Xray(format!("failed to send document: {}", e)))?;
-
-    Ok(())
-}
-
-/// Execute /snapshots command: list available snapshots.
-async fn cmd_snapshots(state: &BotState) -> std::result::Result<String, crate::error::AppError> {
-    let snapshot_dir = state.config.lock().await.snapshot_dir().to_string();
-    let snapshots = snapshot::list_snapshots(state.backend.as_ref(), &snapshot_dir).await?;
-
-    if snapshots.is_empty() {
-        return Ok("No snapshots found.".to_string());
-    }
-
-    let mut lines = Vec::new();
-    lines.push("\u{1f4cb} Snapshots:".to_string());
-    lines.push(String::new());
-    for s in &snapshots {
-        lines.push(format!(
-            "  {} | v{} | {} users",
-            s.tag, s.version, s.users_count
-        ));
-    }
-    Ok(lines.join("\n"))
-}
-
-/// Build inline keyboard for restore (last 5 snapshots).
-async fn cmd_restore_keyboard(
-    state: &BotState,
-) -> std::result::Result<Option<(String, InlineKeyboardMarkup)>, crate::error::AppError> {
-    let snapshot_dir = state.config.lock().await.snapshot_dir().to_string();
-    let snapshots = snapshot::list_snapshots(state.backend.as_ref(), &snapshot_dir).await?;
-
-    if snapshots.is_empty() {
-        return Ok(None);
-    }
-
-    // Take last 5 (most recent)
-    let recent: Vec<_> = snapshots.iter().rev().take(5).collect();
-    let buttons: Vec<Vec<InlineKeyboardButton>> = recent
-        .iter()
-        .map(|s| {
-            vec![InlineKeyboardButton::callback(
-                format!("{} | v{}", s.tag, s.version),
-                format!("{}{}", RESTORE_PREFIX, s.tag),
-            )]
-        })
-        .collect();
-
-    let keyboard = InlineKeyboardMarkup::new(buttons);
-    Ok(Some((
-        "Select a snapshot to restore:".to_string(),
-        keyboard,
-    )))
-}
-
-/// Execute restore from a specific snapshot tag.
-async fn cmd_restore(
-    state: &BotState,
-    tag: &str,
-) -> std::result::Result<String, crate::error::AppError> {
-    let snapshot_dir = state.config.lock().await.snapshot_dir().to_string();
-    snapshot::restore_snapshot(state.backend.as_ref(), tag, &snapshot_dir).await?;
-    Ok(format!(
-        "\u{2705} Restored from snapshot [{}]. Container restarted.",
-        tag
-    ))
-}
-
-/// Execute /upgrade command: show confirmation before proceeding.
-async fn cmd_upgrade_check(
-    bot: &Bot,
-    chat_id: ChatId,
-    state: &BotState,
-) -> std::result::Result<(), crate::error::AppError> {
-    let client = XrayApiClient::new(state.backend.as_ref());
-    let server_info = client.get_server_info().await?;
-    let latest = snapshot::get_latest_xray_version(state.backend.as_ref()).await?;
-
-    if latest == server_info.version {
-        bot.send_message(
-            chat_id,
-            format!(
-                "\u{2705} Already on latest version v{}. Nothing to do.",
-                latest
-            ),
-        )
-        .await
-        .ok();
-        return Ok(());
-    }
-
-    let text = format!(
-        "\u{26a0}\u{fe0f} Upgrade Xray v{} \u{2192} v{}?\n\n\
-         This will restart the container and briefly drop all VPN connections.\n\
-         A snapshot will be created automatically before upgrading.",
-        server_info.version, latest
-    );
-    let confirm = InlineKeyboardButton::callback("Yes, upgrade", UPGRADE_CONFIRM_PREFIX);
-    let cancel = InlineKeyboardButton::callback("Cancel", UPGRADE_CANCEL_PREFIX);
-    let keyboard = InlineKeyboardMarkup::new(vec![vec![confirm, cancel]]);
-    bot.send_message(chat_id, text)
-        .reply_markup(keyboard)
-        .await
-        .ok();
-
-    Ok(())
-}
-
-/// Execute the actual upgrade after confirmation.
-async fn cmd_upgrade_execute(
-    bot: &Bot,
-    chat_id: ChatId,
-    state: &BotState,
-) -> std::result::Result<(), crate::error::AppError> {
-    bot.send_message(chat_id, "\u{23f3} Upgrading...")
-        .await
-        .ok();
-
-    let snapshot_dir = state.config.lock().await.snapshot_dir().to_string();
-    let result = snapshot::upgrade_xray(state.backend.as_ref(), &snapshot_dir).await?;
-
-    // Send pre-upgrade backup as document
-    match snapshot::pack_snapshot_zip(state.backend.as_ref(), &result.snapshot_tag, &snapshot_dir)
-        .await
-    {
-        Ok(zip_bytes) => {
-            let file_name = format!("pre-upgrade-{}.tar.gz", result.snapshot_tag);
-            let caption = format!("\u{1f4e6} Pre-upgrade backup (v{})", result.old_version);
-            let input = InputFile::memory(zip_bytes).file_name(file_name);
-            bot.send_document(chat_id, input)
-                .caption(caption)
-                .await
-                .ok();
-        }
-        Err(e) => {
-            bot.send_message(chat_id, format!("Warning: could not pack backup: {}", e))
-                .await
-                .ok();
-        }
-    }
-
-    bot.send_message(
-        chat_id,
-        format!(
-            "\u{2705} Upgraded! v{} \u{2192} v{}\nSnapshot: {}",
-            result.old_version, result.new_version, result.snapshot_tag
-        ),
-    )
-    .await
-    .ok();
-
-    Ok(())
-}
-
-/// Execute /routes command: show routing rules from server config.
-async fn cmd_routes(state: &BotState) -> std::result::Result<String, crate::error::AppError> {
-    let config = crate::xray::config::read_server_config(state.backend.as_ref()).await?;
-    let routes = config.list_user_routes();
-
-    if routes.is_empty() {
-        return Ok("No custom routing rules found.".to_string());
-    }
-
-    let mut lines = Vec::new();
-    lines.push("\u{1f6e3}\u{fe0f} Routing rules:".to_string());
-    lines.push(String::new());
-    for (user, outbound) in &routes {
-        lines.push(format!("  {} \u{2192} {}", user, outbound));
-    }
-    Ok(lines.join("\n"))
-}
-
-/// Execute /route command: add a routing rule for a user.
-async fn cmd_route(
-    state: &BotState,
-    args: &str,
-) -> std::result::Result<String, crate::error::AppError> {
-    let parts: Vec<&str> = args.trim().splitn(2, ' ').collect();
-    if parts.len() < 2 {
-        return Ok("Usage: /route <user> <outbound>".to_string());
-    }
-    let user = parts[0].trim();
-    let outbound = parts[1].trim();
-
-    let mut config = crate::xray::config::read_server_config(state.backend.as_ref()).await?;
-    config.add_user_route(user, outbound);
-    crate::xray::config::upload_and_restart(state.backend.as_ref(), &config).await?;
-
-    Ok(format!(
-        "\u{2705} Route added: {} \u{2192} {}",
-        user, outbound
-    ))
-}
-
-/// Execute /unroute command: remove a routing rule.
-async fn cmd_unroute(
-    state: &BotState,
-    name: &str,
-) -> std::result::Result<String, crate::error::AppError> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Ok("Usage: /unroute <user>".to_string());
-    }
-
-    let mut config = crate::xray::config::read_server_config(state.backend.as_ref()).await?;
-    let removed = config.remove_user_route(name);
-    if !removed {
-        return Ok(format!("No route found for '{}'.", name));
-    }
-    crate::xray::config::upload_and_restart(state.backend.as_ref(), &config).await?;
-
-    Ok(format!("\u{2705} Route removed for '{}'.", name))
-}
-
 /// Format the /url response: vless:// URL wrapped in <code> so Telegram
 /// renders it as a tap-to-copy block. Caller must send with ParseMode::Html.
 pub fn format_url_message(name: &str, vless_url: &str) -> String {
@@ -1287,47 +914,6 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
         bot.answer_callback_query(q.id.clone()).await?;
         if let Some(ref msg) = q.message {
             bot.edit_message_text(chat_id, msg.id(), "Deletion cancelled.")
-                .await?;
-        }
-    } else if let Some(tag) = data.strip_prefix(RESTORE_PREFIX) {
-        bot.answer_callback_query(q.id.clone()).await?;
-        if state.bridge {
-            bot.send_message(chat_id, bridge_unsupported_msg()).await?;
-        } else {
-            if let Some(ref msg) = q.message {
-                bot.edit_message_text(
-                    chat_id,
-                    msg.id(),
-                    format!("Restoring from snapshot [{}]...", tag),
-                )
-                .await?;
-            }
-            let text = match cmd_restore(&state, tag).await {
-                Ok(t) => t,
-                Err(e) => format!("Error: {}", e),
-            };
-            bot.send_message(chat_id, text).await?;
-        }
-    } else if data == UPGRADE_CONFIRM_PREFIX {
-        bot.answer_callback_query(q.id.clone()).await?;
-        if state.bridge {
-            bot.send_message(chat_id, bridge_unsupported_msg()).await?;
-        } else {
-            if let Some(ref msg) = q.message {
-                bot.edit_message_text(chat_id, msg.id(), "\u{23f3} Upgrading...")
-                    .await?;
-            }
-            match cmd_upgrade_execute(&bot, chat_id, &state).await {
-                Ok(()) => {} // messages already sent inside
-                Err(e) => {
-                    bot.send_message(chat_id, format!("Error: {}", e)).await?;
-                }
-            }
-        }
-    } else if data == UPGRADE_CANCEL_PREFIX {
-        bot.answer_callback_query(q.id.clone()).await?;
-        if let Some(ref msg) = q.message {
-            bot.edit_message_text(chat_id, msg.id(), "Upgrade cancelled.")
                 .await?;
         }
     }
@@ -2233,13 +1819,6 @@ mod tests {
         assert!(msg.contains("Select a user:"));
         assert!(msg.contains("LongName"));
         assert!(msg.contains("2 unnamed user(s) not shown"));
-    }
-
-    #[test]
-    fn test_bridge_unsupported_msg_mentions_bridge() {
-        let msg = bridge_unsupported_msg();
-        assert!(msg.contains("bridge"));
-        assert!(msg.contains("isn't supported"));
     }
 
     /// Minimal no-op `XrayBackend` used to construct a `BotState` in tests.

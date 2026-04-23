@@ -276,10 +276,13 @@ impl Default for Config {
 
 impl Config {
     /// Returns the snapshot directory, using the configured value or the default.
+    ///
+    /// TODO(Epic D Task 4.1): remove along with the `snapshot_dir` field once the
+    /// Cli struct is stripped — snapshot functionality is gone as of Task 3.1.
     pub fn snapshot_dir(&self) -> &str {
         self.snapshot_dir
             .as_deref()
-            .unwrap_or(crate::xray::snapshot::DEFAULT_SNAPSHOT_HOST_DIR)
+            .unwrap_or("/data/projects/xray-backup")
     }
 
     /// Returns the config file path: ~/.config/amnezia-xray-admin/config.toml
