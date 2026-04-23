@@ -9,12 +9,6 @@ pub struct XrayUser {
     pub online_count: u32,
 }
 
-impl XrayUser {
-    pub fn email_from_name(name: &str) -> String {
-        format!("{}@vpn", name)
-    }
-}
-
 /// Traffic statistics for a user
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TrafficStats {
@@ -22,27 +16,9 @@ pub struct TrafficStats {
     pub downlink: u64,
 }
 
-/// Parameters needed to construct a vless:// URL
-#[derive(Debug, Clone)]
-pub struct VlessUrlParams {
-    pub uuid: String,
-    pub host: String,
-    pub port: u16,
-    pub sni: String,
-    pub public_key: String,
-    pub short_id: String,
-    pub name: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_email_from_name() {
-        assert_eq!(XrayUser::email_from_name("alice"), "alice@vpn");
-        assert_eq!(XrayUser::email_from_name("bob"), "bob@vpn");
-    }
 
     #[test]
     fn test_traffic_stats_default() {

@@ -16,8 +16,8 @@ use crate::backend_trait::XrayBackend;
 use crate::config::Config;
 use crate::error::Result;
 use crate::xray::client::XrayClient;
-use crate::xray::url::{render_qr_png, render_xhttp_url, XhttpUrlParams};
 use crate::xray::types::{TrafficStats, XrayUser};
+use crate::xray::url::{render_qr_png, render_xhttp_url, XhttpUrlParams};
 
 /// Minimal summary of the running xray instance, used by `/status`.
 #[derive(Debug, Clone, Default)]
@@ -458,9 +458,7 @@ async fn handle_command(
                         // xray) stays up during the reply. Now that responses
                         // have been sent, reload so xray picks up the new
                         // client.
-                        if let Err(e) = XrayClient::new(state.backend.as_ref())
-                            .reload_xray()
-                            .await
+                        if let Err(e) = XrayClient::new(state.backend.as_ref()).reload_xray().await
                         {
                             log::warn!("reload_xray after /add failed: {}", e);
                         }
@@ -832,10 +830,7 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
             bot.edit_message_text(chat_id, msg.id(), &text).await?;
         }
         // Defer xray reload until after the response is sent; see cmd_add.
-        if let Err(e) = XrayClient::new(state.backend.as_ref())
-            .reload_xray()
-            .await
-        {
+        if let Err(e) = XrayClient::new(state.backend.as_ref()).reload_xray().await {
             log::warn!("reload_xray after /delete failed: {}", e);
         }
     } else if data.starts_with(DELETE_CANCEL_PREFIX) {
@@ -889,11 +884,7 @@ async fn cmd_status(state: &BotState) -> std::result::Result<String, crate::erro
 }
 
 /// Start the Telegram bot and block until shutdown.
-pub async fn run_bot(
-    token: &str,
-    backend: Box<dyn XrayBackend>,
-    config: Config,
-) -> Result<()> {
+pub async fn run_bot(token: &str, backend: Box<dyn XrayBackend>, config: Config) -> Result<()> {
     log::info!("Starting Telegram bot...");
 
     let bot = Bot::new(token);

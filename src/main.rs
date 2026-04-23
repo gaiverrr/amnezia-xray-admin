@@ -88,8 +88,7 @@ async fn connect_ssh(config: &Config) -> Result<SshBackend, AppError> {
     } else {
         format!("{}:{}", hostname, port)
     };
-    // No Docker container in the bridge-native world; pass "" through.
-    let session = SshSession::connect(&addr, user, key_path.as_deref(), "").await?;
+    let session = SshSession::connect(&addr, user, key_path.as_deref()).await?;
     Ok(SshBackend::new(session, hostname))
 }
 
@@ -380,12 +379,7 @@ async fn cli_add_user(config: &Config, cli: &Cli, name: &str) -> error::Result<(
     Ok(())
 }
 
-async fn cli_delete_user(
-    config: &Config,
-    cli: &Cli,
-    name: &str,
-    yes: bool,
-) -> error::Result<()> {
+async fn cli_delete_user(config: &Config, cli: &Cli, name: &str, yes: bool) -> error::Result<()> {
     let backend = connect(config, cli).await?;
     let client = XrayClient::new(backend.as_ref());
 

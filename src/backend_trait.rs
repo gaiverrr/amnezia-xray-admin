@@ -41,11 +41,6 @@ impl SshBackend {
     pub fn new(session: SshSession, hostname: String) -> Self {
         Self { session, hostname }
     }
-
-    /// Close the underlying SSH session.
-    pub async fn close(self) -> Result<()> {
-        self.session.close().await
-    }
 }
 
 #[async_trait]

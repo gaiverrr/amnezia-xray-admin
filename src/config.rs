@@ -166,31 +166,6 @@ impl Config {
         Ok(config)
     }
 
-    /// Save config to the default config file path with 0600 permissions.
-    pub fn save(&self) -> Result<()> {
-        let path = Self::config_path()?;
-        self.save_to(&path)
-    }
-
-    /// Save config to a specific path with 0600 permissions.
-    pub fn save_to(&self, path: &PathBuf) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let content = toml::to_string_pretty(self)
-            .map_err(|e| AppError::Config(format!("TOML serialize error: {}", e)))?;
-        fs::write(path, &content)?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = fs::Permissions::from_mode(0o600);
-            fs::set_permissions(path, perms)?;
-        }
-
-        Ok(())
-    }
-
     /// Merge CLI arguments into this config. CLI args take precedence.
     pub fn merge_cli(&mut self, cli: &Cli) {
         if let Some(ref host) = cli.host {
@@ -208,11 +183,6 @@ impl Config {
         if let Some(admin_id) = cli.admin_id {
             self.telegram_admin_chat_id = Some(admin_id);
         }
-    }
-
-    /// Returns true if this config has enough info to attempt an SSH connection.
-    pub fn has_connection_info(&self) -> bool {
-        self.host.is_some()
     }
 }
 
@@ -277,51 +247,6 @@ host = "10.0.0.1"
         assert_eq!(config.host.as_deref(), Some("10.0.0.1"));
         assert_eq!(config.port, 22);
         assert_eq!(config.user, "root");
-    }
-
-    #[test]
-    fn test_save_and_reload() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-
-        let config = Config {
-            host: Some("1.2.3.4".to_string()),
-            port: 2222,
-            user: "deployer".to_string(),
-            key_path: Some(PathBuf::from("/keys/id_rsa")),
-            telegram_token: None,
-            telegram_admin_chat_id: None,
-        };
-        config.save_to(&path).unwrap();
-
-        let loaded = Config::load_from(&path).unwrap();
-        assert_eq!(config, loaded);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_save_permissions_0600() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-
-        let config = Config::default();
-        config.save_to(&path).unwrap();
-
-        let metadata = fs::metadata(&path).unwrap();
-        let mode = metadata.permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
-    }
-
-    #[test]
-    fn test_save_creates_parent_dirs() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("nested").join("dir").join("config.toml");
-
-        let config = Config::default();
-        config.save_to(&path).unwrap();
-        assert!(path.exists());
     }
 
     #[test]
@@ -412,15 +337,6 @@ host = "10.0.0.1"
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());
-    }
-
-    #[test]
-    fn test_has_connection_info() {
-        let mut config = Config::default();
-        assert!(!config.has_connection_info());
-
-        config.host = Some("1.2.3.4".to_string());
-        assert!(config.has_connection_info());
     }
 
     #[test]
