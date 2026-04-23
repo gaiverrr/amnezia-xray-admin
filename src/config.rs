@@ -12,9 +12,9 @@ const DEFAULT_SSH_USER: &str = "root";
 /// CLI arguments for amnezia-xray-admin
 #[derive(Parser, Debug)]
 #[command(name = "amnezia-xray-admin")]
-#[command(about = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray server")]
+#[command(about = "Personal CLI + Telegram bot for managing a native-systemd Xray VPN")]
 #[command(
-    long_about = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray (VLESS + XTLS-Reality) server.\n\nConnects to your VPS via SSH, talks to the Xray gRPC API for live user management\nand traffic stats. No container restarts needed.\n\nOn first run, a setup wizard guides you through the SSH connection.\nConfig is saved to ~/.config/amnezia-xray-admin/config.toml."
+    long_about = "Personal CLI + Telegram bot for managing a native-systemd Xray (VLESS + XHTTP + Reality) VPN.\n\nEdits /usr/local/etc/xray/config.json on the bridge host directly — either over SSH\n(default) or locally via --local. No Docker, no gRPC API.\n\nConfig is saved to ~/.config/amnezia-xray-admin/config.toml."
 )]
 #[command(after_help = "\
 EXAMPLES:

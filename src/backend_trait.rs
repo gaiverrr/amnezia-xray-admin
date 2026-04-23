@@ -14,17 +14,18 @@ use crate::ssh::{CommandOutput, SshSession};
 /// Trait abstracting command execution against an xray server.
 ///
 /// Implementations handle the transport layer (SSH or local shell),
-/// while xray-specific logic in `XrayApiClient` and `xray::config`
-/// works against this trait.
+/// while xray-specific logic in `XrayClient` works against this trait.
 #[async_trait]
 pub trait XrayBackend: Send + Sync {
-    /// Execute a command inside the xray Docker container.
+    /// Kept for trait-compatibility with legacy callers; on native xray this
+    /// just delegates to `exec_on_host` (there is no container).
     async fn exec_in_container(&self, cmd: &str) -> Result<CommandOutput>;
 
-    /// Execute a command on the host (outside the container).
+    /// Execute a command on the host.
     async fn exec_on_host(&self, cmd: &str) -> Result<CommandOutput>;
 
-    /// The Docker container name for xray.
+    /// Legacy docker-container name accessor. Retained for trait compatibility;
+    /// implementations return a fixed placeholder since native xray has no container.
     fn container_name(&self) -> &str;
 
     /// The server's hostname or IP (used for vless:// URL generation).

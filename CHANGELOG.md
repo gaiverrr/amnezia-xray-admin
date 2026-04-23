@@ -13,10 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI flags**: `--ssh-host`, `--container`, `--deploy-bot`, `--check-server`, `--backup`, `--restore`, `--upgrade-xray`, `--rename-user`, `--migrate-bridge`, `--migrate-egress`, `--new-ssh`, `--old-ssh`, `--bridge-ssh`, `--duckdns-token`, `--dry-run`, `--skip-old`, `--setup`, and `--bridge` (bridge is now the only mode — the flag is implicit).
 - **Telegram bot commands**: `/snapshot`, `/snapshots`, `/restore`, `/upgrade`, `/route`, `/unroute`, `/routes`. These wrapped Docker/Amnezia-only operations.
 - **Dependencies**: `ratatui`, `crossterm`, `tui-textarea`, `arboard`.
+- **Docker image pipeline**: `Dockerfile`, `.dockerignore`, and the `docker` job in `.github/workflows/release.yml`. The tool is distributed only as native binaries + Homebrew formula. (The bot runs as a systemd service on the bridge, not a container.)
 
 ### Changed
 - `src/native/` contents absorbed into `src/xray/` and `src/backend_trait.rs`. `NativeXrayClient` → `XrayClient`. `NativeLocalBackend` / `NativeSshBackend` → `LocalBackend` / `SshBackend` (the old docker-wrapping versions are gone).
 - CLI URL generation (`--user-url`, `--user-qr`, `--add-user`) now uses the SSH-resolved hostname instead of the raw `--host` argument, so `--host yc-vm` produces `vless://…@81.26.189.136:443` (the real IP) rather than embedding the SSH alias.
+- Package metadata (`Cargo.toml` description, keywords; clap `--help` about/long_about; Homebrew formula desc in `release.sh`) rewritten to reflect current scope.
+- `error::add_hint` hint strings updated: references to deleted `--check-server`, Amnezia Docker paths, and `docker` containers replaced with hints for the new native-xray layout (`/usr/local/etc/xray/`, `systemctl xray`).
 - README rewritten to reflect current scope (hobby + personal VPN admin).
 
 ### Context

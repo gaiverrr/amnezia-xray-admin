@@ -186,8 +186,10 @@ pub fn format_delete_success_message(name: &str) -> String {
     format!("🗑 User '{}' deleted.", name)
 }
 
-/// Validate a user name for /add command.
-/// Returns an error message if invalid, None if valid.
+/// Validate a user name for `/add` command. UX-level gate only — shell-safety
+/// (rejecting `'`, `"`, `\`, control chars) is enforced downstream by
+/// `validate_name` inside `XrayClient::{add_client,remove_client}`. Do not
+/// remove the downstream check thinking this one covers it.
 pub fn validate_user_name(name: &str) -> Option<String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {

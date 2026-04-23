@@ -116,7 +116,7 @@ ok "Pushed main + ${TAG}"
 
 # ── Wait for CI ───────────────────────────────────────────────────
 step "Waiting for Release CI..."
-echo "  (this takes ~7 minutes: test + build 5 targets + Docker image)"
+echo "  (this takes ~5 minutes: test + build 5 platform targets)"
 
 # Find the release run
 sleep 10

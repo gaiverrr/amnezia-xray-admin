@@ -53,27 +53,28 @@ pub type Result<T> = std::result::Result<T, AppError>;
 pub fn add_hint(msg: &str) -> String {
     let lower = msg.to_lowercase();
 
-    // Xray API errors (check before generic SSH patterns to avoid false matches)
-    if lower.contains("adu failed") || lower.contains("rmu failed") {
+    // Reality sidecar public-key missing (written once at bridge-setup time)
+    if lower.contains("failed to read public key") || lower.contains("reality-public-key") {
         return format!(
-            "{}. Xray API may not be responding. Run '--check-server' to diagnose",
+            "{}. The Reality public key should be at /usr/local/etc/xray/reality-public-key on the bridge (one-line file, written at setup time)",
             msg
         );
     }
 
-    // Public key missing
-    if lower.contains("failed to read public key") {
+    // xray config.json not found on the bridge
+    if lower.contains("/usr/local/etc/xray/config.json") && lower.contains("no such file") {
         return format!(
-            "{}. Is Amnezia Xray properly installed? The public key should be at /opt/amnezia/xray/xray_public.key inside the container",
+            "{}. Is xray installed and configured on the bridge? Expected config at /usr/local/etc/xray/config.json",
             msg
         );
     }
 
-    // Container errors
-    if (lower.contains("no such container") || lower.contains("is not running"))
-        && lower.contains("docker")
-    {
-        return format!("{}. Check container name with 'docker ps' on your VPS", msg);
+    // xray reload failed
+    if lower.contains("systemctl") && (lower.contains("failed") || lower.contains("not found")) {
+        return format!(
+            "{}. Is the xray service installed? Check with: systemctl status xray",
+            msg
+        );
     }
 
     // SSH connection errors
@@ -220,34 +221,24 @@ mod tests {
     }
 
     #[test]
-    fn test_hint_no_such_container() {
-        let msg = add_hint("docker exec failed: Error: No such container: amnezia-xray");
-        assert!(msg.contains("docker ps"));
-    }
-
-    #[test]
-    fn test_hint_container_not_running() {
-        let msg = add_hint("docker exec failed: Error response: Container abc is not running");
-        assert!(msg.contains("docker ps"));
-    }
-
-    #[test]
-    fn test_hint_adu_failed() {
-        let msg = add_hint("adu failed: gRPC connection error");
-        assert!(msg.contains("--check-server"));
-    }
-
-    #[test]
-    fn test_hint_rmu_failed() {
-        let msg = add_hint("rmu failed: connection refused");
-        assert!(msg.contains("--check-server"));
-    }
-
-    #[test]
-    fn test_hint_public_key_missing() {
+    fn test_hint_reality_public_key_missing() {
         let msg = add_hint("failed to read public key: No such file");
-        assert!(msg.contains("Amnezia Xray properly installed"));
-        assert!(msg.contains("xray_public.key"));
+        assert!(msg.contains("reality-public-key"));
+        assert!(msg.contains("/usr/local/etc/xray/reality-public-key"));
+    }
+
+    #[test]
+    fn test_hint_config_json_missing() {
+        let msg = add_hint("cat /usr/local/etc/xray/config.json: No such file or directory");
+        assert!(msg.contains("xray installed"));
+        assert!(msg.contains("/usr/local/etc/xray/config.json"));
+    }
+
+    #[test]
+    fn test_hint_systemctl_failed() {
+        let msg = add_hint("systemctl restart xray failed");
+        assert!(msg.contains("xray service"));
+        assert!(msg.contains("systemctl status xray"));
     }
 
     #[test]

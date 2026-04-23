@@ -1,4 +1,4 @@
-/// A user as seen in the TUI — merged from server.json + clientsTable
+/// A user record as rendered by the Telegram bot / CLI listing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct XrayUser {
     pub uuid: String,
@@ -9,7 +9,8 @@ pub struct XrayUser {
     pub online_count: u32,
 }
 
-/// Traffic statistics for a user
+/// Traffic statistics for a user. The native bridge does not surface these —
+/// kept as zeros for now; `amnezia-xray-admin-oar` tracks adding real numbers.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TrafficStats {
     pub uplink: u64,

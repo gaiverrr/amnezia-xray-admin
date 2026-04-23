@@ -1,4 +1,4 @@
-//! Pure config.json template rendering (bridge inbound, egress inbound+outbound, routing).
+//! Parse the bridge's `/usr/local/etc/xray/config.json` into `ClientEntry` records.
 
 use crate::error::{AppError, Result};
 
