@@ -264,13 +264,9 @@ async fn cli_user_url(config: &Config, cli: &Cli, name: &str) -> error::Result<(
     let uuid = client.get_uuid(name).await?;
     let params = client.bridge_public_params().await?;
 
-    let host = cli
-        .host
-        .clone()
-        .unwrap_or_else(|| backend.hostname().to_string());
     let url = crate::xray::url::render_xhttp_url(&crate::xray::url::XhttpUrlParams {
         uuid,
-        host,
+        host: backend.hostname().to_string(),
         port: params.port,
         path: params.path,
         sni: params.sni,
@@ -288,13 +284,9 @@ async fn cli_user_qr(config: &Config, cli: &Cli, name: &str) -> error::Result<()
     let uuid = client.get_uuid(name).await?;
     let params = client.bridge_public_params().await?;
 
-    let host = cli
-        .host
-        .clone()
-        .unwrap_or_else(|| backend.hostname().to_string());
     let url = crate::xray::url::render_xhttp_url(&crate::xray::url::XhttpUrlParams {
         uuid,
-        host,
+        host: backend.hostname().to_string(),
         port: params.port,
         path: params.path,
         sni: params.sni,
@@ -373,13 +365,9 @@ async fn cli_add_user(config: &Config, cli: &Cli, name: &str) -> error::Result<(
     let entry = client.add_client(name).await?;
     let params = client.bridge_public_params().await?;
 
-    let host = cli
-        .host
-        .clone()
-        .unwrap_or_else(|| backend.hostname().to_string());
     let url = crate::xray::url::render_xhttp_url(&crate::xray::url::XhttpUrlParams {
         uuid: entry.uuid.clone(),
-        host,
+        host: backend.hostname().to_string(),
         port: params.port,
         path: params.path,
         sni: params.sni,
