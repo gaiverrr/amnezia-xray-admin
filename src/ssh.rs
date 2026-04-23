@@ -287,7 +287,6 @@ impl client::Handler for SshHandler {
 /// An active SSH session that can execute remote commands.
 pub struct SshSession {
     handle: client::Handle<SshHandler>,
-    container: String,
 }
 
 impl SshSession {
@@ -298,7 +297,6 @@ impl SshSession {
         addr: A,
         user: &str,
         key_path: Option<&Path>,
-        container: &str,
     ) -> Result<Self> {
         let config = Arc::new(client::Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(60)),
@@ -340,10 +338,7 @@ impl SshSession {
             )));
         }
 
-        Ok(Self {
-            handle,
-            container: container.to_string(),
-        })
+        Ok(Self { handle })
     }
 
     /// Try authenticating via ssh-agent.
@@ -412,49 +407,6 @@ impl SshSession {
             stderr: String::from_utf8_lossy(&stderr).to_string(),
             exit_code,
         })
-    }
-
-    /// Execute a command inside the Docker container.
-    pub async fn exec_in_container(&self, command: &str) -> Result<CommandOutput> {
-        // Defense-in-depth: verify container name is shell-safe
-        if !self
-            .container
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
-        {
-            return Err(AppError::Ssh(format!(
-                "unsafe container name: {}",
-                self.container
-            )));
-        }
-        let full_cmd = format!("docker exec {} {}", self.container, command);
-        let output = self.exec_command(&full_cmd).await?;
-        // Enrich docker-level errors with hints (container not found, not running)
-        if !output.success() {
-            let stderr_lower = output.stderr.to_lowercase();
-            if stderr_lower.contains("no such container") || stderr_lower.contains("is not running")
-            {
-                return Err(AppError::Xray(crate::error::add_hint(&format!(
-                    "docker exec failed: {}",
-                    output.stderr.trim()
-                ))));
-            }
-        }
-        Ok(output)
-    }
-
-    /// The Docker container name this session targets.
-    pub fn container_name(&self) -> &str {
-        &self.container
-    }
-
-    /// Close the SSH session.
-    pub async fn close(self) -> Result<()> {
-        self.handle
-            .disconnect(russh::Disconnect::ByApplication, "", "")
-            .await
-            .map_err(|e| AppError::Ssh(format!("disconnect failed: {}", e)))?;
-        Ok(())
     }
 }
 
@@ -591,6 +543,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_expand_tilde() {
+        // With home dir available
+        let result = expand_tilde("~/test/path");
+        assert!(!result.starts_with("~/"));
+        assert!(result.ends_with("/test/path"));
+
+        // Without tilde
+        let result = expand_tilde("/absolute/path");
+        assert_eq!(result, "/absolute/path");
+
+        // Just tilde slash
+        let result = expand_tilde("~/");
+        assert!(!result.starts_with("~/"));
+    }
+
+    #[test]
+    fn test_expand_tilde_no_expand_for_non_tilde() {
+        assert_eq!(expand_tilde("relative/path"), "relative/path");
+        assert_eq!(expand_tilde("~notapath"), "~notapath");
+    }
+
+    #[test]
+    fn test_command_output_success() {
+        let output = CommandOutput {
+            stdout: "hello".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+        };
+        assert!(output.success());
+    }
+
+    #[test]
+    fn test_command_output_failure() {
+        let output = CommandOutput {
+            stdout: String::new(),
+            stderr: "error".to_string(),
+            exit_code: 1,
+        };
+        assert!(!output.success());
+    }
+
+    #[test]
     fn test_parse_ssh_config_basic() {
         let content = r#"
 Host vps-vpn
@@ -723,48 +717,6 @@ Host myhost
         assert_eq!(entry.hostname.as_deref(), Some("example.com"));
         assert_eq!(entry.port, None);
         assert_eq!(entry.user, None);
-    }
-
-    #[test]
-    fn test_expand_tilde() {
-        // With home dir available
-        let result = expand_tilde("~/test/path");
-        assert!(!result.starts_with("~/"));
-        assert!(result.ends_with("/test/path"));
-
-        // Without tilde
-        let result = expand_tilde("/absolute/path");
-        assert_eq!(result, "/absolute/path");
-
-        // Just tilde slash
-        let result = expand_tilde("~/");
-        assert!(!result.starts_with("~/"));
-    }
-
-    #[test]
-    fn test_expand_tilde_no_expand_for_non_tilde() {
-        assert_eq!(expand_tilde("relative/path"), "relative/path");
-        assert_eq!(expand_tilde("~notapath"), "~notapath");
-    }
-
-    #[test]
-    fn test_command_output_success() {
-        let output = CommandOutput {
-            stdout: "hello".to_string(),
-            stderr: String::new(),
-            exit_code: 0,
-        };
-        assert!(output.success());
-    }
-
-    #[test]
-    fn test_command_output_failure() {
-        let output = CommandOutput {
-            stdout: String::new(),
-            stderr: "error".to_string(),
-            exit_code: 1,
-        };
-        assert!(!output.success());
     }
 
     #[test]

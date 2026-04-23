@@ -2,9 +2,8 @@
 
 use crate::backend_trait::XrayBackend;
 use crate::error::{AppError, Result};
+use crate::xray::client::NATIVE_CONFIG_PATH;
 use base64::prelude::*;
-
-pub const NATIVE_CONFIG_PATH: &str = "/usr/local/etc/xray/config.json";
 
 pub async fn write_xray_config(backend: &dyn XrayBackend, content: &str) -> Result<()> {
     let encoded = BASE64_STANDARD.encode(content);

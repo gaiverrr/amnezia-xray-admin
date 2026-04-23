@@ -2,18 +2,16 @@
 name = "amnezia-xray-admin"
 version = "0.3.0"
 edition = "2021"
-description = "Hacker-aesthetic TUI dashboard for managing Amnezia VPN's Xray server"
+description = "Personal CLI + Telegram bot for managing a native-systemd Xray VPN"
 license = "MIT"
 repository = "https://github.com/gaiverrr/amnezia-xray-admin"
 homepage = "https://github.com/gaiverrr/amnezia-xray-admin"
 authors = ["gaiverrr"]
-keywords = ["vpn", "xray", "amnezia", "tui", "vless"]
+keywords = ["vpn", "xray", "vless", "telegram", "cli"]
 categories = ["command-line-utilities", "network-programming"]
 readme = "README.md"
 
 [dependencies]
-ratatui = "0.29"
-crossterm = "0.28"
 russh = "0.48"
 russh-keys = "0.48"
 tokio = { version = "1", features = ["full"] }
