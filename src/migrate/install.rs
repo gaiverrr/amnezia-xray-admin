@@ -3,6 +3,46 @@
 use crate::backend_trait::XrayBackend;
 use crate::error::{AppError, Result};
 
+#[derive(Debug, Clone)]
+pub struct Secrets {
+    pub reality_private: String,
+    pub reality_public: String,
+    pub short_id: String,
+    pub path: String,
+}
+
+pub async fn generate_secrets(backend: &dyn XrayBackend) -> Result<Secrets> {
+    let keys = backend.exec_on_host("xray x25519").await?;
+    if !keys.success() {
+        return Err(AppError::Config(format!("xray x25519 failed: {}", keys.stderr)));
+    }
+    let mut priv_key = String::new();
+    let mut pub_key = String::new();
+    for line in keys.stdout.lines() {
+        if let Some(rest) = line.strip_prefix("PrivateKey:") {
+            priv_key = rest.trim().to_string();
+        }
+        if line.starts_with("Password") {
+            if let Some(idx) = line.find(':') {
+                pub_key = line[idx + 1..].trim().to_string();
+            }
+        }
+    }
+    if priv_key.is_empty() || pub_key.is_empty() {
+        return Err(AppError::Config(format!(
+            "cannot parse x25519 output: {}", keys.stdout
+        )));
+    }
+    let sid = backend.exec_on_host("openssl rand -hex 8").await?;
+    let path = backend.exec_on_host("openssl rand -hex 6").await?;
+    Ok(Secrets {
+        reality_private: priv_key,
+        reality_public: pub_key,
+        short_id: sid.stdout.trim().to_string(),
+        path: format!("/{}", path.stdout.trim()),
+    })
+}
+
 pub async fn preflight(backend: &dyn XrayBackend, required_free_ports: &[u16]) -> Result<()> {
     let sudo = backend.exec_on_host("sudo -n true").await?;
     if !sudo.success() {
@@ -189,5 +229,26 @@ mod tests {
         };
         let err = preflight(&backend, &[443]).await.unwrap_err();
         assert!(err.to_string().contains("443"));
+    }
+
+    #[tokio::test]
+    async fn generate_secrets_parses_output() {
+        let backend = MockBackend {
+            calls: Mutex::new(vec![]),
+            responses: Mutex::new(vec![
+                CommandOutput {
+                    stdout: "PrivateKey: ABC_PRIV\nPassword (PublicKey): ABC_PUB\nHash32: HASH".into(),
+                    stderr: "".into(),
+                    exit_code: 0,
+                },
+                CommandOutput { stdout: "833552e201595cd4".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput { stdout: "0e1fa74ddc24".into(), stderr: "".into(), exit_code: 0 },
+            ]),
+        };
+        let s = generate_secrets(&backend).await.unwrap();
+        assert_eq!(s.reality_private, "ABC_PRIV");
+        assert_eq!(s.reality_public, "ABC_PUB");
+        assert_eq!(s.short_id, "833552e201595cd4");
+        assert_eq!(s.path, "/0e1fa74ddc24");
     }
 }
