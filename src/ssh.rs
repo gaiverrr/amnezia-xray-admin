@@ -3,9 +3,19 @@ use async_trait::async_trait;
 use russh::client;
 use russh::ChannelMsg;
 use russh_keys::load_secret_key;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::net::ToSocketAddrs;
+
+/// Parsed entry from ~/.ssh/config
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SshHostConfig {
+    pub hostname: Option<String>,
+    pub port: Option<u16>,
+    pub user: Option<String>,
+    pub identity_file: Option<PathBuf>,
+}
 
 /// Result of a remote command execution
 #[derive(Debug, Clone)]
@@ -422,6 +432,102 @@ fn parse_host_port(addr: &str) -> (&str, u16) {
     }
 }
 
+/// Parse an SSH config file and return a map of Host -> SshHostConfig.
+///
+/// Supports a subset of OpenSSH config: Host, HostName, Port, User, IdentityFile.
+/// Wildcard hosts (e.g. Host *) are ignored.
+pub fn parse_ssh_config(content: &str) -> HashMap<String, SshHostConfig> {
+    let mut hosts: HashMap<String, SshHostConfig> = HashMap::new();
+    let mut current_host: Option<String> = None;
+
+    for line in content.lines() {
+        let line = line.trim();
+
+        // Skip empty lines and comments
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Split on first whitespace or '='
+        let (key, value) = match line.split_once(|c: char| c.is_whitespace() || c == '=') {
+            Some((k, v)) => (k.trim().to_lowercase(), v.trim().to_string()),
+            None => continue,
+        };
+
+        match key.as_str() {
+            "host" => {
+                // Skip wildcard hosts
+                if value.contains('*') || value.contains('?') {
+                    current_host = None;
+                } else {
+                    // Handle multiple hosts on one line — take the first
+                    let host_name = value
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or(&value)
+                        .to_string();
+                    current_host = Some(host_name.clone());
+                    hosts.entry(host_name).or_default();
+                }
+            }
+            "hostname" => {
+                if let Some(ref host) = current_host {
+                    if let Some(entry) = hosts.get_mut(host) {
+                        entry.hostname = Some(value);
+                    }
+                }
+            }
+            "port" => {
+                if let Some(ref host) = current_host {
+                    if let Ok(port) = value.parse::<u16>() {
+                        if let Some(entry) = hosts.get_mut(host) {
+                            entry.port = Some(port);
+                        }
+                    }
+                }
+            }
+            "user" => {
+                if let Some(ref host) = current_host {
+                    if let Some(entry) = hosts.get_mut(host) {
+                        entry.user = Some(value);
+                    }
+                }
+            }
+            "identityfile" => {
+                if let Some(ref host) = current_host {
+                    if let Some(entry) = hosts.get_mut(host) {
+                        let expanded = expand_tilde(&value);
+                        entry.identity_file = Some(PathBuf::from(expanded));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    hosts
+}
+
+/// Load and parse the user's ~/.ssh/config file.
+/// Returns an empty map if the file doesn't exist.
+pub fn load_ssh_config() -> HashMap<String, SshHostConfig> {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return HashMap::new(),
+    };
+    let config_path = home.join(".ssh").join("config");
+    match std::fs::read_to_string(&config_path) {
+        Ok(content) => parse_ssh_config(&content),
+        Err(_) => HashMap::new(),
+    }
+}
+
+/// Resolve an SSH config host alias into connection parameters.
+pub fn resolve_ssh_host(alias: &str) -> Option<SshHostConfig> {
+    let configs = load_ssh_config();
+    configs.get(alias).cloned()
+}
+
 /// Expand ~ to the user's home directory.
 pub fn expand_tilde(path: &str) -> String {
     if path.starts_with("~/") {
@@ -476,5 +582,196 @@ mod tests {
             exit_code: 1,
         };
         assert!(!output.success());
+    }
+
+    #[test]
+    fn test_parse_ssh_config_basic() {
+        let content = r#"
+Host vps-vpn
+    HostName 192.168.1.100
+    Port 2222
+    User admin
+    IdentityFile ~/.ssh/id_ed25519
+"#;
+        let configs = parse_ssh_config(content);
+        let entry = configs.get("vps-vpn").expect("vps-vpn should be present");
+        assert_eq!(entry.hostname.as_deref(), Some("192.168.1.100"));
+        assert_eq!(entry.port, Some(2222));
+        assert_eq!(entry.user.as_deref(), Some("admin"));
+        assert!(entry.identity_file.is_some());
+    }
+
+    #[test]
+    fn test_parse_ssh_config_multiple_hosts() {
+        let content = r#"
+Host server1
+    HostName 10.0.0.1
+    User root
+
+Host server2
+    HostName 10.0.0.2
+    Port 22
+    User deploy
+"#;
+        let configs = parse_ssh_config(content);
+        assert_eq!(configs.len(), 2);
+
+        let s1 = configs.get("server1").unwrap();
+        assert_eq!(s1.hostname.as_deref(), Some("10.0.0.1"));
+        assert_eq!(s1.user.as_deref(), Some("root"));
+        assert_eq!(s1.port, None);
+
+        let s2 = configs.get("server2").unwrap();
+        assert_eq!(s2.hostname.as_deref(), Some("10.0.0.2"));
+        assert_eq!(s2.user.as_deref(), Some("deploy"));
+        assert_eq!(s2.port, Some(22));
+    }
+
+    #[test]
+    fn test_parse_ssh_config_wildcard_ignored() {
+        let content = r#"
+Host *
+    ServerAliveInterval 60
+
+Host myhost
+    HostName example.com
+"#;
+        let configs = parse_ssh_config(content);
+        assert_eq!(configs.len(), 1);
+        assert!(configs.contains_key("myhost"));
+        assert!(!configs.contains_key("*"));
+    }
+
+    #[test]
+    fn test_parse_ssh_config_empty() {
+        let configs = parse_ssh_config("");
+        assert!(configs.is_empty());
+    }
+
+    #[test]
+    fn test_parse_ssh_config_comments_only() {
+        let content = r#"
+# This is a comment
+# Another comment
+"#;
+        let configs = parse_ssh_config(content);
+        assert!(configs.is_empty());
+    }
+
+    #[test]
+    fn test_parse_ssh_config_equals_separator() {
+        let content = r#"
+Host myhost
+    HostName=example.com
+    Port=22
+    User=testuser
+"#;
+        let configs = parse_ssh_config(content);
+        let entry = configs.get("myhost").unwrap();
+        assert_eq!(entry.hostname.as_deref(), Some("example.com"));
+        assert_eq!(entry.port, Some(22));
+        assert_eq!(entry.user.as_deref(), Some("testuser"));
+    }
+
+    #[test]
+    fn test_parse_ssh_config_case_insensitive_keys() {
+        let content = r#"
+HOST myhost
+    HOSTNAME example.com
+    PORT 3333
+    USER admin
+    IDENTITYFILE ~/.ssh/my_key
+"#;
+        let configs = parse_ssh_config(content);
+        let entry = configs.get("myhost").unwrap();
+        assert_eq!(entry.hostname.as_deref(), Some("example.com"));
+        assert_eq!(entry.port, Some(3333));
+        assert_eq!(entry.user.as_deref(), Some("admin"));
+        assert!(entry.identity_file.is_some());
+    }
+
+    #[test]
+    fn test_parse_ssh_config_no_hostname() {
+        let content = r#"
+Host myalias
+    User root
+    Port 22
+"#;
+        let configs = parse_ssh_config(content);
+        let entry = configs.get("myalias").unwrap();
+        assert_eq!(entry.hostname, None);
+        assert_eq!(entry.user.as_deref(), Some("root"));
+    }
+
+    #[test]
+    fn test_parse_ssh_config_unknown_keys_ignored() {
+        let content = r#"
+Host myhost
+    HostName example.com
+    ForwardAgent yes
+    ProxyCommand ssh -W %h:%p bastion
+    ServerAliveInterval 60
+"#;
+        let configs = parse_ssh_config(content);
+        let entry = configs.get("myhost").unwrap();
+        assert_eq!(entry.hostname.as_deref(), Some("example.com"));
+        assert_eq!(entry.port, None);
+        assert_eq!(entry.user, None);
+    }
+
+    #[test]
+    fn test_ssh_host_config_default() {
+        let config = SshHostConfig::default();
+        assert_eq!(config.hostname, None);
+        assert_eq!(config.port, None);
+        assert_eq!(config.user, None);
+        assert_eq!(config.identity_file, None);
+    }
+
+    #[test]
+    fn test_load_ssh_config_returns_map() {
+        // Verify load_ssh_config returns a valid HashMap without panicking.
+        let configs = load_ssh_config();
+        // On any system, the result should be a HashMap (possibly empty)
+        // Verify it's actually a usable collection
+        assert!(configs.len() < 10_000, "unreasonably large SSH config");
+    }
+
+    #[test]
+    fn test_parse_ssh_config_invalid_port() {
+        let content = r#"
+Host myhost
+    HostName example.com
+    Port notanumber
+"#;
+        let configs = parse_ssh_config(content);
+        let entry = configs.get("myhost").unwrap();
+        assert_eq!(entry.port, None); // Invalid port is ignored
+    }
+
+    #[test]
+    fn test_parse_ssh_config_multiple_hosts_on_line() {
+        let content = r#"
+Host host1 host2
+    HostName example.com
+"#;
+        let configs = parse_ssh_config(content);
+        // We take the first host from the line
+        let entry = configs.get("host1").unwrap();
+        assert_eq!(entry.hostname.as_deref(), Some("example.com"));
+    }
+
+    #[test]
+    fn test_parse_ssh_config_identity_file_tilde_expanded() {
+        let content = r#"
+Host myhost
+    IdentityFile ~/.ssh/id_rsa
+"#;
+        let configs = parse_ssh_config(content);
+        let entry = configs.get("myhost").unwrap();
+        let id_path = entry.identity_file.as_ref().unwrap();
+        // Should not start with ~
+        assert!(!id_path.to_string_lossy().starts_with("~"));
+        assert!(id_path.to_string_lossy().ends_with(".ssh/id_rsa"));
     }
 }

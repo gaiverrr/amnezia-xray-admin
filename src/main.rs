@@ -10,7 +10,7 @@ use backend_trait::{LocalBackend, SshBackend, XrayBackend};
 use clap::{CommandFactory, Parser};
 use config::{Cli, Config};
 use error::AppError;
-use ssh::{expand_tilde, SshSession};
+use ssh::{expand_tilde, resolve_ssh_host, SshSession};
 use std::io::IsTerminal;
 use xray::client::XrayClient;
 
@@ -75,20 +75,41 @@ fn connect_local(config: &Config) -> LocalBackend {
 }
 
 /// Open an SSH session and wrap it in an `SshBackend`.
+///
+/// If `config.host` matches an entry in `~/.ssh/config`, expand the alias
+/// using `HostName` / `Port` / `User` / `IdentityFile` from that entry so
+/// commands like `--host yc-vm` work without resolving the alias manually.
 async fn connect_ssh(config: &Config) -> Result<SshBackend, AppError> {
-    let hostname = config
+    let alias_or_host = config
         .host
         .clone()
         .ok_or_else(|| AppError::Config("missing --host".to_string()))?;
-    let port = config.port;
-    let user = &config.user;
-    let key_path = expand_key_path(config.key_path.clone());
+
+    // Expand an SSH config alias (e.g. "yc-vm" -> "81.26.189.136") if one exists.
+    let (hostname, port, user, key_path) = match resolve_ssh_host(&alias_or_host) {
+        Some(ssh_cfg) => {
+            let hostname = ssh_cfg.hostname.unwrap_or_else(|| alias_or_host.clone());
+            let port = ssh_cfg.port.unwrap_or(config.port);
+            let user = ssh_cfg.user.unwrap_or_else(|| config.user.clone());
+            let key_path = ssh_cfg
+                .identity_file
+                .or_else(|| expand_key_path(config.key_path.clone()));
+            (hostname, port, user, key_path)
+        }
+        None => (
+            alias_or_host,
+            config.port,
+            config.user.clone(),
+            expand_key_path(config.key_path.clone()),
+        ),
+    };
+
     let addr = if hostname.contains(':') {
         format!("[{}]:{}", hostname, port)
     } else {
         format!("{}:{}", hostname, port)
     };
-    let session = SshSession::connect(&addr, user, key_path.as_deref()).await?;
+    let session = SshSession::connect(&addr, &user, key_path.as_deref()).await?;
     Ok(SshBackend::new(session, hostname))
 }
 
