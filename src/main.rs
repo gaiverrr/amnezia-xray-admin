@@ -1,4 +1,3 @@
-mod app;
 mod backend;
 mod backend_trait;
 mod config;
@@ -7,11 +6,10 @@ pub mod migrate;
 pub mod native;
 mod ssh;
 mod telegram;
-mod ui;
 mod xray;
 
 use backend_trait::{LocalBackend, XrayBackend};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use config::{Cli, Config};
 use std::io::IsTerminal;
 
@@ -227,28 +225,9 @@ fn main() {
         return;
     }
 
-    // Initialize terminal
-    let mut terminal = match app::init_terminal() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("Failed to initialize terminal: {}", e);
-            std::process::exit(1);
-        }
-    };
-
-    // Create app and run event loop
-    let mut application = app::App::with_config(config, runtime.handle().clone());
-    let result = app::run(&mut application, &mut terminal);
-
-    // Always restore terminal, even on error
-    if let Err(e) = app::restore_terminal(&mut terminal) {
-        eprintln!("Failed to restore terminal: {}", e);
-    }
-
-    if let Err(e) = result {
-        eprintln!("Application error: {}", e);
-        std::process::exit(1);
-    }
+    // No CLI subcommand matched — print help and exit non-zero.
+    Cli::command().print_help().ok();
+    std::process::exit(1);
 }
 
 /// Create a backend for CLI commands: either LocalBackend (--local) or SshBackend (default).
@@ -403,22 +382,9 @@ async fn cli_user_qr(config: &Config, name: &str, local: bool) -> error::Result<
 
     let vless_url = backend::build_vless_url(backend.as_ref(), &user.uuid, &user.name).await?;
 
-    match ui::qr::render_qr_to_lines(&vless_url) {
-        Ok(lines) => {
-            for line in &lines {
-                println!("{}", line);
-            }
-            println!();
-            println!("{}", name);
-            println!("{}", vless_url);
-        }
-        Err(e) => {
-            return Err(error::AppError::Xray(format!(
-                "QR generation failed: {}",
-                e
-            )));
-        }
-    }
+    // TODO(Epic D Task 2.x): re-wire QR rendering after ui::qr is relocated.
+    println!("{}", name);
+    println!("{}", vless_url);
 
     Ok(())
 }
@@ -512,14 +478,9 @@ async fn cli_server_info(config: &Config, local: bool) -> error::Result<()> {
     println!("API status:     {}", api_status);
     println!("Uptime:         {}", uptime);
     println!("Users:          {}", users.len());
-    println!(
-        "Total upload:   {}",
-        ui::dashboard::format_bytes(server_info.uplink)
-    );
-    println!(
-        "Total download: {}",
-        ui::dashboard::format_bytes(server_info.downlink)
-    );
+    // TODO(Epic D Task 2.x): re-introduce human-readable byte formatting.
+    println!("Total upload:   {} B", server_info.uplink);
+    println!("Total download: {} B", server_info.downlink);
 
     Ok(())
 }
@@ -580,12 +541,13 @@ async fn cli_list_users(config: &Config, local: bool) -> error::Result<()> {
             "○".to_string()
         };
 
+        // TODO(Epic D Task 2.x): re-introduce human-readable byte formatting.
         println!(
             "{:<30} {:<10} {:<12} {:<12} {:<8}",
             name,
             uuid_short,
-            ui::dashboard::format_bytes(user.stats.uplink),
-            ui::dashboard::format_bytes(user.stats.downlink),
+            format!("{} B", user.stats.uplink),
+            format!("{} B", user.stats.downlink),
             online,
         );
     }
@@ -852,7 +814,8 @@ async fn cli_rename_user(
 }
 
 async fn cli_deploy_bot(config: &Config, token: &str) -> error::Result<()> {
-    if !ui::telegram_setup::is_valid_token(token) {
+    // TODO(Epic D Task 2.x): reinstate token format validation after helper relocation.
+    if token.trim().is_empty() {
         return Err(error::AppError::Config(
             "Invalid token format (expected <digits>:<secret>)".to_string(),
         ));
