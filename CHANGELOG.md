@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed (breaking)
+- **TUI** — entire `src/ui/` directory, `src/app.rs`, `src/backend.rs` async task spawners. `amnezia-xray-admin` without CLI flags now prints help and exits. Use the CLI flags directly or the Telegram bot.
+- **Amnezia-Docker support** — `XrayApiClient`, `ensure_api_enabled`, `docker exec` wrapping in `LocalBackend` / `SshBackend`, `src/xray/snapshot.rs` backup/restore, `src/xray/config.rs`. The tool now only talks to native-systemd xray on the bridge.
+- **CLI flags**: `--ssh-host`, `--container`, `--deploy-bot`, `--check-server`, `--backup`, `--restore`, `--upgrade-xray`, `--rename-user`, `--migrate-bridge`, `--migrate-egress`, `--new-ssh`, `--old-ssh`, `--bridge-ssh`, `--duckdns-token`, `--dry-run`, `--skip-old`, `--setup`, and `--bridge` (bridge is now the only mode — the flag is implicit).
+- **Telegram bot commands**: `/snapshot`, `/snapshots`, `/restore`, `/upgrade`, `/route`, `/unroute`, `/routes`. These wrapped Docker/Amnezia-only operations.
+- **Dependencies**: `ratatui`, `crossterm`, `tui-textarea`, `arboard`.
+
+### Changed
+- `src/native/` contents absorbed into `src/xray/` and `src/backend_trait.rs`. `NativeXrayClient` → `XrayClient`. `NativeLocalBackend` / `NativeSshBackend` → `LocalBackend` / `SshBackend` (the old docker-wrapping versions are gone).
+- CLI URL generation (`--user-url`, `--user-qr`, `--add-user`) now uses the SSH-resolved hostname instead of the raw `--host` argument, so `--host yc-vm` produces `vless://…@81.26.189.136:443` (the real IP) rather than embedding the SSH alias.
+- README rewritten to reflect current scope (hobby + personal VPN admin).
+
+### Context
+This release clarifies tool positioning as a personal-use admin for a double-hop Xray VPN. `src/` dropped from ~16k to ~4.8k LOC. No new features — deletion + consolidation.
+
 ## [0.3.0] - 2026-04-23
 
 ### Added
