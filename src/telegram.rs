@@ -6,7 +6,8 @@
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{
-    BotCommandScope, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Recipient,
+    BotCommandScope, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ParseMode,
+    Recipient,
 };
 use teloxide::utils::command::BotCommands;
 use tokio::sync::Mutex;
@@ -174,12 +175,21 @@ pub fn format_users_message(users: &[(XrayUser, TrafficStats, u32)]) -> String {
 }
 
 /// Format the /add success response.
+/// Minimal HTML escape for Telegram HTML parse mode (only & < > need escaping
+/// outside of attributes).
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Formatted add-user message. Uses Telegram HTML parse mode so that UUID and
+/// URL appear inside <code>…</code> blocks, which most clients render as
+/// tap-to-copy. Caller must `.parse_mode(ParseMode::Html)` when sending.
 pub fn format_add_message(name: &str, uuid: &str, vless_url: &str) -> String {
     [
-        format!("✅ User '{}' added.", name),
+        format!("✅ User '{}' added.", html_escape(name)),
         String::new(),
-        format!("UUID: {}", uuid),
-        format!("URL: {}", vless_url),
+        format!("UUID: <code>{}</code>", html_escape(uuid)),
+        format!("URL: <code>{}</code>", html_escape(vless_url)),
     ]
     .join("\n")
 }
@@ -449,7 +459,9 @@ async fn handle_command(
             } else {
                 match cmd_add(&state, &name).await {
                     Ok((text, vless_url)) => {
-                        bot.send_message(chat_id, text).await?;
+                        bot.send_message(chat_id, text)
+                            .parse_mode(ParseMode::Html)
+                            .await?;
                         // Render + send QR as a photo. Best-effort: if QR
                         // encoding fails the user still has the URL.
                         match render_qr_png(&vless_url) {
@@ -549,11 +561,16 @@ async fn handle_command(
                     }
                 }
             } else {
-                let text = match cmd_url(&state, &name).await {
-                    Ok(t) => t,
-                    Err(e) => format!("Error: {}", e),
-                };
-                bot.send_message(chat_id, text).await?;
+                match cmd_url(&state, &name).await {
+                    Ok(t) => {
+                        bot.send_message(chat_id, t)
+                            .parse_mode(ParseMode::Html)
+                            .await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(chat_id, format!("Error: {}", e)).await?;
+                    }
+                }
             }
         }
         Command::Qr(name) => {
@@ -587,7 +604,10 @@ async fn handle_command(
                 match cmd_qr(&state, &name).await {
                     Ok((png_bytes, caption)) => {
                         let input = InputFile::memory(png_bytes).file_name("qr.png");
-                        bot.send_photo(chat_id, input).caption(caption).await?;
+                        bot.send_photo(chat_id, input)
+                            .caption(caption)
+                            .parse_mode(ParseMode::Html)
+                            .await?;
                     }
                     Err(e) => {
                         bot.send_message(chat_id, format!("Error: {}", e)).await?;
@@ -893,7 +913,11 @@ async fn cmd_qr(
         let vless_url = build_bridge_url_for(state, name).await?;
         let png_bytes = render_qr_png(&vless_url)
             .map_err(|e| crate::error::AppError::Xray(format!("QR generation failed: {}", e)))?;
-        let caption = format!("🔗 {}\n\n{}", name, vless_url);
+        let caption = format!(
+            "🔗 {}\n\n<code>{}</code>",
+            html_escape(name),
+            html_escape(&vless_url)
+        );
         return Ok((png_bytes, caption));
     }
 
@@ -1151,9 +1175,14 @@ async fn cmd_unroute(
     Ok(format!("\u{2705} Route removed for '{}'.", name))
 }
 
-/// Format the /url response: vless:// URL as a copyable message.
+/// Format the /url response: vless:// URL wrapped in <code> so Telegram
+/// renders it as a tap-to-copy block. Caller must send with ParseMode::Html.
 pub fn format_url_message(name: &str, vless_url: &str) -> String {
-    format!("🔗 {} URL:\n\n{}", name, vless_url)
+    format!(
+        "🔗 {} URL:\n\n<code>{}</code>",
+        html_escape(name),
+        html_escape(vless_url)
+    )
 }
 
 /// Handle callback queries from inline keyboard buttons (e.g., delete confirmation).
@@ -1183,20 +1212,30 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
     }
 
     if let Some(user_name) = data.strip_prefix(URL_PREFIX) {
-        let text = match cmd_url(&state, user_name).await {
-            Ok(t) => t,
-            Err(e) => format!("Error: {}", e),
-        };
+        let result = cmd_url(&state, user_name).await;
         bot.answer_callback_query(q.id.clone()).await?;
         if let Some(ref msg) = q.message {
-            bot.edit_message_text(chat_id, msg.id(), &text).await?;
+            match result {
+                Ok(t) => {
+                    bot.edit_message_text(chat_id, msg.id(), &t)
+                        .parse_mode(ParseMode::Html)
+                        .await?;
+                }
+                Err(e) => {
+                    bot.edit_message_text(chat_id, msg.id(), format!("Error: {}", e))
+                        .await?;
+                }
+            }
         }
     } else if let Some(user_name) = data.strip_prefix(QR_PREFIX) {
         bot.answer_callback_query(q.id.clone()).await?;
         match cmd_qr(&state, user_name).await {
             Ok((png_bytes, caption)) => {
                 let input = InputFile::memory(png_bytes).file_name("qr.png");
-                bot.send_photo(chat_id, input).caption(caption).await?;
+                bot.send_photo(chat_id, input)
+                    .caption(caption)
+                    .parse_mode(ParseMode::Html)
+                    .await?;
                 // Remove the inline keyboard from the original message
                 if let Some(ref msg) = q.message {
                     bot.edit_message_text(chat_id, msg.id(), format!("QR for {}", user_name))
