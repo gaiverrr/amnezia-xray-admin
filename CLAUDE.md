@@ -36,6 +36,28 @@ cargo run -- --telegram-bot --local --container c  # run Telegram bot daemon
 cargo run -- --deploy-bot --telegram-token <TOKEN> --admin-id <ID>  # deploy bot to VPS via SSH
 ```
 
+### Bridge mode (new double-hop setup)
+
+For the new RU-bridge + foreign-egress setup, pass `--bridge` to opt into the
+native-xray code path instead of Amnezia Docker:
+
+```bash
+# Telegram bot against new bridge (deploy binary to bridge host, run locally)
+amnezia-xray-admin --telegram-bot --local --bridge --admin-id <ID>
+
+# Add user directly on bridge via CLI (prints URL + ASCII QR)
+amnezia-xray-admin --bridge --local --add-user <name>
+```
+
+In `--bridge` mode, the tool reads/writes `/usr/local/etc/xray/config.json`
+directly and does not use `docker exec`. The Reality public key must be
+stored at `/usr/local/etc/xray/reality-public-key` (one-line file) at
+bridge setup time so `bridge_public_params` can render URLs without
+re-running `xray x25519`.
+
+Commands `/snapshot`, `/restore`, `/upgrade`, `/routes` are not supported
+in bridge mode yet — the bot will reply "not supported in bridge mode".
+
 ### Deploy prerequisites
 
 Bot deploy cross-compiles locally for Linux, then uploads the binary to VPS. Requires `cross`:
@@ -85,7 +107,9 @@ cargo install cross
 - **xray/config.rs**: `ensure_api_enabled()` — one-time server.json transformation (adds stats/policy/api sections, emails, level:0)
 - **xray/client.rs**: `XrayApiClient` — list/add/remove/rename users, stats, online status, backup/restore. Commands run via `docker exec <container> xray api ...`
 - **backend.rs**: Async task spawners, `BackendMsg` enum, connection helpers
-- **telegram.rs**: Telegram bot module using teloxide. Commands: /start, /help, /users, /status, /add, /delete, /url, /qr. Inline keyboard buttons for /url, /qr, /delete without argument. Callback query handler for button actions. Admin ID from `--admin-id` / `ADMIN_ID` env var (no auto-detect)
+- **telegram.rs**: Telegram bot module using teloxide. Commands: /start, /help, /users, /status, /add, /delete, /url, /qr. Inline keyboard buttons for /url, /qr, /delete without argument. Callback query handler for button actions. Admin ID from `--admin-id` / `ADMIN_ID` env var (no auto-detect). With `--bridge`, every command handler branches to `NativeXrayClient` instead of `XrayApiClient`. `/add` sends URL text **and** QR photo by default.
+- **native/** (bridge/egress with native systemd xray, no Docker): `backend.rs` has `NativeSshBackend` and `NativeLocalBackend` (XrayBackend impls without docker-exec wrapping). `client.rs` has `NativeXrayClient` with `list_clients`, `add_client`, `remove_client`, `get_uuid`, `bridge_public_params`, `reload_xray`. `config_render.rs` has pure-function `render_bridge_config` / `render_egress_config` + `parse_bridge_config`. `url.rs` renders XHTTP+Reality `vless://` URLs and QR codes (PNG + ASCII).
+- **migrate/** (scaffolded, not wired into CLI): `install.rs` has unit-tested helpers (`apt_install`, `install_xray`, `preflight`, `generate_secrets`, `write_xray_config`, `restart_xray`). `bridge.rs` / `egress.rs` are empty stubs — migrate-bridge/egress subcommands deferred in favour of the `.claude/skills/amnezia-ops/` runbook.
 - **error.rs**: `AppError` enum (SSH, Xray, Config, IO variants), `Result<T>` type alias, and `add_hint()` which enriches error messages with actionable troubleshooting suggestions
 - **app.rs**: 6-screen state machine (Setup→Dashboard→UserDetail/AddUser/QrView/TelegramSetup), event loop with 250ms poll + 5s auto-refresh
 - **ui/**: TUI rendering submodules — setup.rs (wizard), dashboard.rs (main view), user_detail.rs (detail panel), add_user.rs (add dialog), qr.rs (QR display + CLI rendering), telegram_setup.rs (bot deploy screen), theme.rs (color constants)
@@ -99,6 +123,15 @@ cargo install cross
 - **Email format**: `name@vpn` — derived from clientsTable name, used as xray stats identifier.
 - **Auto-backup**: `backup_config()` runs before every mutation (add/remove/rename/ensure_api_enabled). Creates `.bak` copies of server.json and clientsTable inside the container.
 - **Timestamped backups**: `backup_config_timestamped()` creates backups with `YYYYMMDD-HHMMSS` suffix for `--backup` CLI command.
+- **Bridge mode = bot uses xray as HTTP proxy**: The `--bridge` bot on the RU bridge routes its own `api.telegram.org` traffic through a local xray HTTP-proxy inbound on `127.0.0.1:8118` (itself routed out via `foreign-egress`) because RU ISPs filter Telegram Bot API. Consequently `NativeXrayClient::{add_client,remove_client}` deliberately do NOT restart xray — the callers in `src/telegram.rs` invoke `reload_xray()` **after** all `bot.send_*` calls, otherwise the reload kills the proxy mid-response.
+- **Bridge bot needs `--host <public-ip>`**: Without it, `NativeBackend::hostname()` returns the VM hostname (`bridge-ru`), which ends up in vless URLs — users' clients can't resolve it. Always pass `--host 81.26.189.136` (or current bridge IP) in the systemd unit's `ExecStart`.
+
+## Live infrastructure (as of 2026-04-23)
+
+- **Bridge** (ssh alias `yc-vm`, `81.26.189.136`, Yandex Cloud ru-central1-d): native xray on :443 (XHTTP+Reality, SNI `www.sberbank.ru`). Routes `geoip:ru → direct`, else → `foreign-egress`. Hosts the Telegram bot as `amnezia-xray-bot.service`.
+- **Egress** (ssh alias `vps-vpn`, `103.231.72.109`, Stark): native xray on :8444 + nginx self-steal on `127.0.0.1:9443` with LE cert for `yuriy-vps.duckdns.org`. Outbound freedom.
+- **Legacy on `vps-vpn`, do not touch**: Amnezia Docker VPN on :443 (original users), `mtproxymax` MTProto proxy on :8443.
+- **Runbook**: `.claude/skills/amnezia-ops/` — project-local skill for live VPN fixes (health check, user CRUD, key rotation, disaster recovery).
 
 ## Release Process
 

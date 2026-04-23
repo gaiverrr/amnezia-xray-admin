@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `--bridge` flag for `--telegram-bot` mode. Routes bot commands through a
+  new `NativeXrayClient` that talks to native xray at
+  `/usr/local/etc/xray/config.json` (no Amnezia Docker wrapping). Use on
+  the double-hop bridge (yc-vm).
+- `/add` (Telegram bot) now replies with both the vless URL text and a QR
+  code photo by default.
+- CLI `--add-user <name>` now prints the URL and an ASCII QR after it,
+  instead of just the URL.
+- New `src/native/` module: `NativeLocalBackend`, `NativeSshBackend`,
+  `NativeXrayClient` (list/add/remove/get_uuid/bridge_public_params).
+- New `src/migrate/install.rs` unit-tested helpers for VPS provisioning
+  primitives: `apt_install`, `install_xray`, `preflight`, `generate_secrets`,
+  `write_xray_config`, `restart_xray`.
+- Snapshot tests for bridge/egress config rendering and XHTTP vless URL.
+- Project-local operations skill at `.claude/skills/amnezia-ops/` with
+  SKILL.md + references + `health.sh` helper.
+
+### Changed
+- Internal: new `src/migrate/` module scaffolded for future VPS-migration
+  subcommands. The subcommand dispatch itself is deferred — the
+  `--migrate-bridge` / `--migrate-egress` flags are reserved but not wired.
+
 ## [0.2.1] - 2026-04-20
 
 ### Fixed

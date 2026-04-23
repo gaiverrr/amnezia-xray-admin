@@ -6,7 +6,8 @@
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{
-    BotCommandScope, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Recipient,
+    BotCommandScope, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ParseMode,
+    Recipient,
 };
 use teloxide::utils::command::BotCommands;
 use tokio::sync::Mutex;
@@ -15,6 +16,8 @@ use crate::backend;
 use crate::backend_trait::XrayBackend;
 use crate::config::Config;
 use crate::error::Result;
+use crate::native::client::NativeXrayClient;
+use crate::native::url::{render_qr_png, render_xhttp_url, XhttpUrlParams};
 use crate::ui::dashboard::format_bytes;
 use crate::ui::qr::render_qr_to_png;
 use crate::xray::client::{ServerInfo, XrayApiClient};
@@ -25,6 +28,9 @@ use crate::xray::types::{TrafficStats, XrayUser};
 pub struct BotState {
     pub backend: Box<dyn XrayBackend>,
     pub config: Mutex<Config>,
+    /// When true, bot operates against a native-xray bridge (systemd),
+    /// using `NativeXrayClient` instead of the legacy Amnezia `XrayApiClient`.
+    pub bridge: bool,
 }
 
 /// Callback query prefix for URL inline buttons.
@@ -130,6 +136,11 @@ pub fn access_denied_text() -> String {
     "Access denied. Contact the server administrator.".to_string()
 }
 
+/// Reply shown when an Amnezia-only command is invoked in native-bridge mode.
+pub fn bridge_unsupported_msg() -> &'static str {
+    "This command isn't supported on bridge mode yet."
+}
+
 /// Format the /users response: list users with traffic stats.
 pub fn format_users_message(users: &[(XrayUser, TrafficStats, u32)]) -> String {
     if users.is_empty() {
@@ -164,12 +175,23 @@ pub fn format_users_message(users: &[(XrayUser, TrafficStats, u32)]) -> String {
 }
 
 /// Format the /add success response.
+/// Minimal HTML escape for Telegram HTML parse mode (only & < > need escaping
+/// outside of attributes).
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Formatted add-user message. Uses Telegram HTML parse mode so that UUID and
+/// URL appear inside <code>…</code> blocks, which most clients render as
+/// tap-to-copy. Caller must `.parse_mode(ParseMode::Html)` when sending.
 pub fn format_add_message(name: &str, uuid: &str, vless_url: &str) -> String {
     [
-        format!("✅ User '{}' added.", name),
+        format!("✅ User '{}' added.", html_escape(name)),
         String::new(),
-        format!("UUID: {}", uuid),
-        format!("URL: {}", vless_url),
+        format!("UUID: <code>{}</code>", html_escape(uuid)),
+        format!("URL: <code>{}</code>", html_escape(vless_url)),
     ]
     .join("\n")
 }
@@ -437,11 +459,40 @@ async fn handle_command(
             if let Some(err) = validate_user_name(&name) {
                 bot.send_message(chat_id, err).await?;
             } else {
-                let text = match cmd_add(&state, &name).await {
-                    Ok(t) => t,
-                    Err(e) => format!("Error: {}", e),
-                };
-                bot.send_message(chat_id, text).await?;
+                match cmd_add(&state, &name).await {
+                    Ok((text, vless_url)) => {
+                        bot.send_message(chat_id, text)
+                            .parse_mode(ParseMode::Html)
+                            .await?;
+                        // Render + send QR as a photo. Best-effort: if QR
+                        // encoding fails the user still has the URL.
+                        match render_qr_png(&vless_url) {
+                            Ok(png) => {
+                                let input = InputFile::memory(png).file_name("qr.png");
+                                bot.send_photo(chat_id, input).await?;
+                            }
+                            Err(e) => {
+                                bot.send_message(chat_id, format!("(QR render failed: {})", e))
+                                    .await?;
+                            }
+                        }
+                        // In bridge mode we deferred xray reload so that the
+                        // bot's own HTTP proxy (which runs through xray) stays
+                        // up during the response. Now that responses have been
+                        // sent, reload so xray picks up the new client.
+                        if state.bridge {
+                            if let Err(e) = NativeXrayClient::new(state.backend.as_ref())
+                                .reload_xray()
+                                .await
+                            {
+                                log::warn!("reload_xray after /add failed: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        bot.send_message(chat_id, format!("Error: {}", e)).await?;
+                    }
+                }
             }
         }
         Command::Delete(name) => {
@@ -512,11 +563,16 @@ async fn handle_command(
                     }
                 }
             } else {
-                let text = match cmd_url(&state, &name).await {
-                    Ok(t) => t,
-                    Err(e) => format!("Error: {}", e),
-                };
-                bot.send_message(chat_id, text).await?;
+                match cmd_url(&state, &name).await {
+                    Ok(t) => {
+                        bot.send_message(chat_id, t)
+                            .parse_mode(ParseMode::Html)
+                            .await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(chat_id, format!("Error: {}", e)).await?;
+                    }
+                }
             }
         }
         Command::Qr(name) => {
@@ -550,7 +606,10 @@ async fn handle_command(
                 match cmd_qr(&state, &name).await {
                     Ok((png_bytes, caption)) => {
                         let input = InputFile::memory(png_bytes).file_name("qr.png");
-                        bot.send_photo(chat_id, input).caption(caption).await?;
+                        bot.send_photo(chat_id, input)
+                            .caption(caption)
+                            .parse_mode(ParseMode::Html)
+                            .await?;
                     }
                     Err(e) => {
                         bot.send_message(chat_id, format!("Error: {}", e)).await?;
@@ -559,72 +618,100 @@ async fn handle_command(
             }
         }
         Command::Snapshot => {
-            match cmd_snapshot(&bot, chat_id, &state).await {
-                Ok(()) => {} // message already sent inside
-                Err(e) => {
-                    bot.send_message(chat_id, format!("Error: {}", e)).await?;
-                }
-            }
-        }
-        Command::Snapshots => {
-            let text = match cmd_snapshots(&state).await {
-                Ok(t) => t,
-                Err(e) => format!("Error: {}", e),
-            };
-            bot.send_message(chat_id, text).await?;
-        }
-        Command::Restore(tag) => {
-            let tag = tag.trim().to_string();
-            if tag.is_empty() {
-                match cmd_restore_keyboard(&state).await {
-                    Ok(Some((text, keyboard))) => {
-                        bot.send_message(chat_id, text)
-                            .reply_markup(keyboard)
-                            .await?;
-                    }
-                    Ok(None) => {
-                        bot.send_message(chat_id, "No snapshots found.").await?;
-                    }
+            if state.bridge {
+                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
+            } else {
+                match cmd_snapshot(&bot, chat_id, &state).await {
+                    Ok(()) => {} // message already sent inside
                     Err(e) => {
                         bot.send_message(chat_id, format!("Error: {}", e)).await?;
                     }
                 }
+            }
+        }
+        Command::Snapshots => {
+            if state.bridge {
+                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
             } else {
-                let text = match cmd_restore(&state, &tag).await {
+                let text = match cmd_snapshots(&state).await {
                     Ok(t) => t,
                     Err(e) => format!("Error: {}", e),
                 };
                 bot.send_message(chat_id, text).await?;
             }
         }
+        Command::Restore(tag) => {
+            if state.bridge {
+                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
+            } else {
+                let tag = tag.trim().to_string();
+                if tag.is_empty() {
+                    match cmd_restore_keyboard(&state).await {
+                        Ok(Some((text, keyboard))) => {
+                            bot.send_message(chat_id, text)
+                                .reply_markup(keyboard)
+                                .await?;
+                        }
+                        Ok(None) => {
+                            bot.send_message(chat_id, "No snapshots found.").await?;
+                        }
+                        Err(e) => {
+                            bot.send_message(chat_id, format!("Error: {}", e)).await?;
+                        }
+                    }
+                } else {
+                    let text = match cmd_restore(&state, &tag).await {
+                        Ok(t) => t,
+                        Err(e) => format!("Error: {}", e),
+                    };
+                    bot.send_message(chat_id, text).await?;
+                }
+            }
+        }
         Command::Upgrade => {
-            match cmd_upgrade_check(&bot, chat_id, &state).await {
-                Ok(()) => {} // messages already sent inside
-                Err(e) => {
-                    bot.send_message(chat_id, format!("Error: {}", e)).await?;
+            if state.bridge {
+                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
+            } else {
+                match cmd_upgrade_check(&bot, chat_id, &state).await {
+                    Ok(()) => {} // messages already sent inside
+                    Err(e) => {
+                        bot.send_message(chat_id, format!("Error: {}", e)).await?;
+                    }
                 }
             }
         }
         Command::Routes => {
-            let text = match cmd_routes(&state).await {
-                Ok(t) => t,
-                Err(e) => format!("Error: {}", e),
-            };
-            bot.send_message(chat_id, text).await?;
+            if state.bridge {
+                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
+            } else {
+                let text = match cmd_routes(&state).await {
+                    Ok(t) => t,
+                    Err(e) => format!("Error: {}", e),
+                };
+                bot.send_message(chat_id, text).await?;
+            }
         }
         Command::Route(args) => {
-            let text = match cmd_route(&state, &args).await {
-                Ok(t) => t,
-                Err(e) => format!("Error: {}", e),
-            };
-            bot.send_message(chat_id, text).await?;
+            if state.bridge {
+                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
+            } else {
+                let text = match cmd_route(&state, &args).await {
+                    Ok(t) => t,
+                    Err(e) => format!("Error: {}", e),
+                };
+                bot.send_message(chat_id, text).await?;
+            }
         }
         Command::Unroute(name) => {
-            let text = match cmd_unroute(&state, &name).await {
-                Ok(t) => t,
-                Err(e) => format!("Error: {}", e),
-            };
-            bot.send_message(chat_id, text).await?;
+            if state.bridge {
+                bot.send_message(chat_id, bridge_unsupported_msg()).await?;
+            } else {
+                let text = match cmd_unroute(&state, &name).await {
+                    Ok(t) => t,
+                    Err(e) => format!("Error: {}", e),
+                };
+                bot.send_message(chat_id, text).await?;
+            }
         }
     }
 
@@ -633,6 +720,27 @@ async fn handle_command(
 
 /// Execute /users command: list users with stats.
 async fn cmd_users(state: &BotState) -> std::result::Result<String, crate::error::AppError> {
+    if state.bridge {
+        let client = NativeXrayClient::new(state.backend.as_ref());
+        let clients = client.list_clients().await?;
+        let user_data: Vec<(XrayUser, TrafficStats, u32)> = clients
+            .into_iter()
+            .map(|c| {
+                let name = c.email.strip_suffix("@vpn").unwrap_or(&c.email).to_string();
+                let user = XrayUser {
+                    uuid: c.uuid,
+                    name,
+                    email: c.email,
+                    flow: String::new(),
+                    stats: TrafficStats::default(),
+                    online_count: 0,
+                };
+                (user, TrafficStats::default(), 0)
+            })
+            .collect();
+        return Ok(format_users_message(&user_data));
+    }
+
     let client = XrayApiClient::new(state.backend.as_ref());
     let users = client.list_users().await?;
 
@@ -646,15 +754,22 @@ async fn cmd_users(state: &BotState) -> std::result::Result<String, crate::error
     Ok(format_users_message(&user_data))
 }
 
-/// Execute /add command: add a user, return UUID + vless URL.
+/// Execute /add command: add a user, return (message text, vless URL) so the
+/// caller can both display the text and render a QR for the URL.
 async fn cmd_add(
     state: &BotState,
     name: &str,
-) -> std::result::Result<String, crate::error::AppError> {
+) -> std::result::Result<(String, String), crate::error::AppError> {
+    if state.bridge {
+        let client = NativeXrayClient::new(state.backend.as_ref());
+        let entry = client.add_client(name).await?;
+        let url = build_bridge_url_for(state, name).await?;
+        return Ok((format_add_message(name, &entry.uuid, &url), url));
+    }
     let client = XrayApiClient::new(state.backend.as_ref());
     let uuid = client.add_user(name).await?;
     let vless_url = backend::build_vless_url(state.backend.as_ref(), &uuid, name).await?;
-    Ok(format_add_message(name, &uuid, &vless_url))
+    Ok((format_add_message(name, &uuid, &vless_url), vless_url))
 }
 
 /// Execute /delete prompt: find user and return confirmation message with inline keyboard.
@@ -662,6 +777,15 @@ async fn cmd_delete_prompt(
     state: &BotState,
     name: &str,
 ) -> std::result::Result<(String, InlineKeyboardMarkup), crate::error::AppError> {
+    if state.bridge {
+        let client = NativeXrayClient::new(state.backend.as_ref());
+        // Verify the user exists before prompting for confirmation.
+        let uuid = client.get_uuid(name).await?;
+        let text = format_delete_confirm_message(name);
+        let keyboard = delete_confirmation_keyboard(&uuid);
+        return Ok((text, keyboard));
+    }
+
     let client = XrayApiClient::new(state.backend.as_ref());
     let users = client.list_users().await?;
 
@@ -680,6 +804,21 @@ async fn cmd_delete_execute(
     state: &BotState,
     uuid: &str,
 ) -> std::result::Result<String, crate::error::AppError> {
+    if state.bridge {
+        let client = NativeXrayClient::new(state.backend.as_ref());
+        let clients = client.list_clients().await?;
+        let entry = clients.iter().find(|c| c.uuid == uuid).ok_or_else(|| {
+            crate::error::AppError::Xray(format!("user with uuid '{}' not found", uuid))
+        })?;
+        let name = entry
+            .email
+            .strip_suffix("@vpn")
+            .unwrap_or(&entry.email)
+            .to_string();
+        client.remove_client(&name).await?;
+        return Ok(format_delete_success_message(&name));
+    }
+
     let client = XrayApiClient::new(state.backend.as_ref());
 
     // Look up user name before deletion for the response message
@@ -699,9 +838,50 @@ async fn cmd_user_keyboard(
     state: &BotState,
     callback_prefix: &str,
 ) -> std::result::Result<UserKeyboardResult, crate::error::AppError> {
+    if state.bridge {
+        let client = NativeXrayClient::new(state.backend.as_ref());
+        let clients = client.list_clients().await?;
+        let users: Vec<XrayUser> = clients
+            .into_iter()
+            .map(|c| {
+                let name = c.email.strip_suffix("@vpn").unwrap_or(&c.email).to_string();
+                XrayUser {
+                    uuid: c.uuid,
+                    name,
+                    email: c.email,
+                    flow: String::new(),
+                    stats: TrafficStats::default(),
+                    online_count: 0,
+                }
+            })
+            .collect();
+        return Ok(build_user_keyboard(&users, callback_prefix));
+    }
+
     let client = XrayApiClient::new(state.backend.as_ref());
     let users = client.list_users().await?;
     Ok(build_user_keyboard(&users, callback_prefix))
+}
+
+/// Build the vless URL for `name` given the current bridge config.
+/// Only valid when `state.bridge` is true.
+async fn build_bridge_url_for(
+    state: &BotState,
+    name: &str,
+) -> std::result::Result<String, crate::error::AppError> {
+    let client = NativeXrayClient::new(state.backend.as_ref());
+    let uuid = client.get_uuid(name).await?;
+    let params = client.bridge_public_params().await?;
+    Ok(render_xhttp_url(&XhttpUrlParams {
+        uuid,
+        host: state.backend.hostname().to_string(),
+        port: params.port,
+        path: params.path,
+        sni: params.sni,
+        public_key: params.public_key,
+        short_id: params.short_id,
+        name: name.to_string(),
+    }))
 }
 
 /// Execute /url command: get vless:// URL for a user.
@@ -709,6 +889,11 @@ async fn cmd_url(
     state: &BotState,
     name: &str,
 ) -> std::result::Result<String, crate::error::AppError> {
+    if state.bridge {
+        let vless_url = build_bridge_url_for(state, name).await?;
+        return Ok(format_url_message(name, &vless_url));
+    }
+
     let client = XrayApiClient::new(state.backend.as_ref());
     let users = client.list_users().await?;
 
@@ -726,6 +911,18 @@ async fn cmd_qr(
     state: &BotState,
     name: &str,
 ) -> std::result::Result<(Vec<u8>, String), crate::error::AppError> {
+    if state.bridge {
+        let vless_url = build_bridge_url_for(state, name).await?;
+        let png_bytes = render_qr_png(&vless_url)
+            .map_err(|e| crate::error::AppError::Xray(format!("QR generation failed: {}", e)))?;
+        let caption = format!(
+            "🔗 {}\n\n<code>{}</code>",
+            html_escape(name),
+            html_escape(&vless_url)
+        );
+        return Ok((png_bytes, caption));
+    }
+
     let client = XrayApiClient::new(state.backend.as_ref());
     let users = client.list_users().await?;
 
@@ -980,9 +1177,14 @@ async fn cmd_unroute(
     Ok(format!("\u{2705} Route removed for '{}'.", name))
 }
 
-/// Format the /url response: vless:// URL as a copyable message.
+/// Format the /url response: vless:// URL wrapped in <code> so Telegram
+/// renders it as a tap-to-copy block. Caller must send with ParseMode::Html.
 pub fn format_url_message(name: &str, vless_url: &str) -> String {
-    format!("🔗 {} URL:\n\n{}", name, vless_url)
+    format!(
+        "🔗 {} URL:\n\n<code>{}</code>",
+        html_escape(name),
+        html_escape(vless_url)
+    )
 }
 
 /// Handle callback queries from inline keyboard buttons (e.g., delete confirmation).
@@ -1012,20 +1214,30 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
     }
 
     if let Some(user_name) = data.strip_prefix(URL_PREFIX) {
-        let text = match cmd_url(&state, user_name).await {
-            Ok(t) => t,
-            Err(e) => format!("Error: {}", e),
-        };
+        let result = cmd_url(&state, user_name).await;
         bot.answer_callback_query(q.id.clone()).await?;
         if let Some(ref msg) = q.message {
-            bot.edit_message_text(chat_id, msg.id(), &text).await?;
+            match result {
+                Ok(t) => {
+                    bot.edit_message_text(chat_id, msg.id(), &t)
+                        .parse_mode(ParseMode::Html)
+                        .await?;
+                }
+                Err(e) => {
+                    bot.edit_message_text(chat_id, msg.id(), format!("Error: {}", e))
+                        .await?;
+                }
+            }
         }
     } else if let Some(user_name) = data.strip_prefix(QR_PREFIX) {
         bot.answer_callback_query(q.id.clone()).await?;
         match cmd_qr(&state, user_name).await {
             Ok((png_bytes, caption)) => {
                 let input = InputFile::memory(png_bytes).file_name("qr.png");
-                bot.send_photo(chat_id, input).caption(caption).await?;
+                bot.send_photo(chat_id, input)
+                    .caption(caption)
+                    .parse_mode(ParseMode::Html)
+                    .await?;
                 // Remove the inline keyboard from the original message
                 if let Some(ref msg) = q.message {
                     bot.edit_message_text(chat_id, msg.id(), format!("QR for {}", user_name))
@@ -1063,6 +1275,15 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
         if let Some(ref msg) = q.message {
             bot.edit_message_text(chat_id, msg.id(), &text).await?;
         }
+        // Defer xray reload until after the response is sent; see cmd_add.
+        if state.bridge {
+            if let Err(e) = NativeXrayClient::new(state.backend.as_ref())
+                .reload_xray()
+                .await
+            {
+                log::warn!("reload_xray after /delete failed: {}", e);
+            }
+        }
     } else if data.starts_with(DELETE_CANCEL_PREFIX) {
         bot.answer_callback_query(q.id.clone()).await?;
         if let Some(ref msg) = q.message {
@@ -1071,29 +1292,37 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
         }
     } else if let Some(tag) = data.strip_prefix(RESTORE_PREFIX) {
         bot.answer_callback_query(q.id.clone()).await?;
-        if let Some(ref msg) = q.message {
-            bot.edit_message_text(
-                chat_id,
-                msg.id(),
-                format!("Restoring from snapshot [{}]...", tag),
-            )
-            .await?;
+        if state.bridge {
+            bot.send_message(chat_id, bridge_unsupported_msg()).await?;
+        } else {
+            if let Some(ref msg) = q.message {
+                bot.edit_message_text(
+                    chat_id,
+                    msg.id(),
+                    format!("Restoring from snapshot [{}]...", tag),
+                )
+                .await?;
+            }
+            let text = match cmd_restore(&state, tag).await {
+                Ok(t) => t,
+                Err(e) => format!("Error: {}", e),
+            };
+            bot.send_message(chat_id, text).await?;
         }
-        let text = match cmd_restore(&state, tag).await {
-            Ok(t) => t,
-            Err(e) => format!("Error: {}", e),
-        };
-        bot.send_message(chat_id, text).await?;
     } else if data == UPGRADE_CONFIRM_PREFIX {
         bot.answer_callback_query(q.id.clone()).await?;
-        if let Some(ref msg) = q.message {
-            bot.edit_message_text(chat_id, msg.id(), "\u{23f3} Upgrading...")
-                .await?;
-        }
-        match cmd_upgrade_execute(&bot, chat_id, &state).await {
-            Ok(()) => {} // messages already sent inside
-            Err(e) => {
-                bot.send_message(chat_id, format!("Error: {}", e)).await?;
+        if state.bridge {
+            bot.send_message(chat_id, bridge_unsupported_msg()).await?;
+        } else {
+            if let Some(ref msg) = q.message {
+                bot.edit_message_text(chat_id, msg.id(), "\u{23f3} Upgrading...")
+                    .await?;
+            }
+            match cmd_upgrade_execute(&bot, chat_id, &state).await {
+                Ok(()) => {} // messages already sent inside
+                Err(e) => {
+                    bot.send_message(chat_id, format!("Error: {}", e)).await?;
+                }
             }
         }
     } else if data == UPGRADE_CANCEL_PREFIX {
@@ -1109,6 +1338,44 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
 
 /// Execute /status command: server info + online summary.
 async fn cmd_status(state: &BotState) -> std::result::Result<String, crate::error::AppError> {
+    if state.bridge {
+        // Native bridge: no Amnezia API, no docker container. Report user count
+        // and xray binary version only (uptime/stats/latest not plumbed yet).
+        let client = NativeXrayClient::new(state.backend.as_ref());
+        let clients = client.list_clients().await?;
+        let version_out = state
+            .backend
+            .exec_on_host("xray version 2>/dev/null | head -n 1 | awk '{print $2}'")
+            .await
+            .ok();
+        let version = version_out
+            .and_then(|o| {
+                if o.success() {
+                    let v = o.stdout.trim().to_string();
+                    if v.is_empty() {
+                        None
+                    } else {
+                        Some(v)
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+        let server_info = ServerInfo {
+            version,
+            uplink: 0,
+            downlink: 0,
+        };
+        return Ok(format_status_message(
+            &server_info,
+            clients.len(),
+            0,
+            "",
+            None,
+        ));
+    }
+
     let client = XrayApiClient::new(state.backend.as_ref());
     let server_info = client.get_server_info().await?;
     let users = client.list_users().await?;
@@ -1132,7 +1399,12 @@ async fn cmd_status(state: &BotState) -> std::result::Result<String, crate::erro
 }
 
 /// Start the Telegram bot and block until shutdown.
-pub async fn run_bot(token: &str, backend: Box<dyn XrayBackend>, config: Config) -> Result<()> {
+pub async fn run_bot(
+    token: &str,
+    backend: Box<dyn XrayBackend>,
+    config: Config,
+    bridge: bool,
+) -> Result<()> {
     log::info!("Starting Telegram bot...");
 
     let bot = Bot::new(token);
@@ -1163,6 +1435,7 @@ pub async fn run_bot(token: &str, backend: Box<dyn XrayBackend>, config: Config)
     let state = Arc::new(BotState {
         backend,
         config: Mutex::new(config),
+        bridge,
     });
 
     let state_cmd = Arc::clone(&state);
@@ -1961,5 +2234,71 @@ mod tests {
         assert!(msg.contains("Select a user:"));
         assert!(msg.contains("LongName"));
         assert!(msg.contains("2 unnamed user(s) not shown"));
+    }
+
+    #[test]
+    fn test_bridge_unsupported_msg_mentions_bridge() {
+        let msg = bridge_unsupported_msg();
+        assert!(msg.contains("bridge"));
+        assert!(msg.contains("isn't supported"));
+    }
+
+    /// Minimal no-op `XrayBackend` used to construct a `BotState` in tests.
+    struct NoopBackend {
+        host: String,
+    }
+
+    #[async_trait::async_trait]
+    impl XrayBackend for NoopBackend {
+        async fn exec_in_container(
+            &self,
+            _cmd: &str,
+        ) -> crate::error::Result<crate::ssh::CommandOutput> {
+            Ok(crate::ssh::CommandOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        }
+        async fn exec_on_host(
+            &self,
+            _cmd: &str,
+        ) -> crate::error::Result<crate::ssh::CommandOutput> {
+            Ok(crate::ssh::CommandOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        }
+        fn container_name(&self) -> &str {
+            ""
+        }
+        fn hostname(&self) -> &str {
+            &self.host
+        }
+    }
+
+    #[test]
+    fn test_bot_state_carries_bridge_flag() {
+        // Regression test for Task 6.2: BotState must expose a `bridge: bool`
+        // field so command handlers can route to NativeXrayClient.
+        let state = BotState {
+            backend: Box::new(NoopBackend {
+                host: "1.2.3.4".to_string(),
+            }),
+            config: Mutex::new(Config::default()),
+            bridge: true,
+        };
+        assert!(state.bridge);
+        assert_eq!(state.backend.hostname(), "1.2.3.4");
+
+        let legacy = BotState {
+            backend: Box::new(NoopBackend {
+                host: "5.6.7.8".to_string(),
+            }),
+            config: Mutex::new(Config::default()),
+            bridge: false,
+        };
+        assert!(!legacy.bridge);
     }
 }

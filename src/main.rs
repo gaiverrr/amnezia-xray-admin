@@ -3,6 +3,8 @@ mod backend;
 mod backend_trait;
 mod config;
 mod error;
+pub mod migrate;
+pub mod native;
 mod ssh;
 mod telegram;
 mod ui;
@@ -112,7 +114,7 @@ fn main() {
             eprintln!("To find your Telegram ID, send /start to @userinfobot.");
             std::process::exit(1);
         }
-        if let Err(e) = runtime.block_on(cli_telegram_bot(&config, &token, local)) {
+        if let Err(e) = runtime.block_on(cli_telegram_bot(&config, &token, local, cli.bridge)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
@@ -144,7 +146,7 @@ fn main() {
     }
 
     if let Some(ref name) = cli.add_user {
-        if let Err(e) = runtime.block_on(cli_add_user(&config, name, local)) {
+        if let Err(e) = runtime.block_on(cli_add_user(&config, name, local, cli.bridge)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
@@ -591,8 +593,38 @@ async fn cli_list_users(config: &Config, local: bool) -> error::Result<()> {
     Ok(())
 }
 
-async fn cli_telegram_bot(config: &Config, token: &str, local: bool) -> error::Result<()> {
+async fn cli_telegram_bot(
+    config: &Config,
+    token: &str,
+    local: bool,
+    bridge: bool,
+) -> error::Result<()> {
     env_logger::init();
+
+    if bridge {
+        // Bridge mode: native systemd xray, no Amnezia Docker container.
+        let backend: Box<dyn XrayBackend> = if local {
+            let hostname = if let Some(ref host) = config.host {
+                host.clone()
+            } else {
+                get_local_hostname().await
+            };
+            Box::new(native::backend::NativeLocalBackend::new(hostname))
+        } else {
+            let (hostname, port, user, key_path) = backend::resolve_connection_info(config)?;
+            let addr = if hostname.contains(':') {
+                format!("[{}]:{}", hostname, port)
+            } else {
+                format!("{}:{}", hostname, port)
+            };
+            let session =
+                ssh::SshSession::connect(&addr, &user, key_path.as_deref(), &config.container)
+                    .await?;
+            Box::new(native::backend::NativeSshBackend::new(session, hostname))
+        };
+        return telegram::run_bot(token, backend, config.clone(), true).await;
+    }
+
     let backend = connect_cli_backend(config, local).await?;
 
     // Ensure the Xray API is configured before starting the bot.
@@ -610,7 +642,7 @@ async fn cli_telegram_bot(config: &Config, token: &str, local: bool) -> error::R
         }
     }
 
-    telegram::run_bot(token, backend, config.clone()).await
+    telegram::run_bot(token, backend, config.clone(), false).await
 }
 
 async fn cli_backup(config: &Config, local: bool) -> error::Result<()> {
@@ -655,11 +687,64 @@ async fn cli_restore(config: &Config, timestamp: Option<&str>, local: bool) -> e
     Ok(())
 }
 
-async fn cli_add_user(config: &Config, name: &str, local: bool) -> error::Result<()> {
+async fn cli_add_user(config: &Config, name: &str, local: bool, bridge: bool) -> error::Result<()> {
     if name.trim().is_empty() {
         return Err(error::AppError::Xray(
             "user name cannot be empty".to_string(),
         ));
+    }
+
+    if bridge {
+        // Native bridge: no Amnezia API bootstrap, no clientsTable.
+        let backend: Box<dyn XrayBackend> = if local {
+            let hostname = if let Some(ref host) = config.host {
+                host.clone()
+            } else {
+                get_local_hostname().await
+            };
+            Box::new(native::backend::NativeLocalBackend::new(hostname))
+        } else {
+            let (hostname, port, user, key_path) = backend::resolve_connection_info(config)?;
+            let addr = if hostname.contains(':') {
+                format!("[{}]:{}", hostname, port)
+            } else {
+                format!("{}:{}", hostname, port)
+            };
+            let session =
+                ssh::SshSession::connect(&addr, &user, key_path.as_deref(), &config.container)
+                    .await?;
+            Box::new(native::backend::NativeSshBackend::new(session, hostname))
+        };
+
+        let client = native::client::NativeXrayClient::new(backend.as_ref());
+        let entry = client.add_client(name).await?;
+
+        println!("User added successfully.");
+        println!("Name:  {}", name);
+        println!("UUID:  {}", entry.uuid);
+
+        match client.bridge_public_params().await {
+            Ok(params) => {
+                let url = native::url::render_xhttp_url(&native::url::XhttpUrlParams {
+                    uuid: entry.uuid.clone(),
+                    host: backend.hostname().to_string(),
+                    port: params.port,
+                    path: params.path,
+                    sni: params.sni,
+                    public_key: params.public_key,
+                    short_id: params.short_id,
+                    name: name.to_string(),
+                });
+                println!("URL:   {}", url);
+                println!();
+                println!("{}", native::url::render_qr_ascii(&url));
+            }
+            Err(e) => eprintln!(
+                "Warning: URL generation failed: {}. Use --user-url to retry.",
+                e
+            ),
+        }
+        return Ok(());
     }
 
     let backend = connect_cli_backend(config, local).await?;
@@ -696,7 +781,11 @@ async fn cli_add_user(config: &Config, name: &str, local: bool) -> error::Result
 
     // URL generation is best-effort: if it fails, the user was still added successfully.
     match backend::build_vless_url(backend.as_ref(), &uuid, name).await {
-        Ok(vless_url) => println!("URL:   {}", vless_url),
+        Ok(vless_url) => {
+            println!("URL:   {}", vless_url);
+            println!();
+            println!("{}", native::url::render_qr_ascii(&vless_url));
+        }
         Err(e) => eprintln!(
             "Warning: URL generation failed: {}. Use --user-url to retry.",
             e
