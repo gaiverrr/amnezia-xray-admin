@@ -143,7 +143,7 @@ echo "  SHA256: ${SHA256}"
 # Build new formula
 NEW_FORMULA=$(cat <<RUBY
 class AmneziaXrayAdmin < Formula
-  desc "TUI dashboard for managing Amnezia VPN's Xray server"
+  desc "Personal CLI + Telegram bot for a double-hop Xray VPN"
   homepage "https://github.com/${REPO}"
   url "${TARBALL_URL}"
   sha256 "${SHA256}"
@@ -180,6 +180,5 @@ echo -e "${GREEN}  Released ${TAG} successfully!${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo "  GitHub:   https://github.com/${REPO}/releases/tag/${TAG}"
-echo "  Docker:   ghcr.io/${REPO}:${TAG}"
 echo "  Homebrew: brew upgrade amnezia-xray-admin"
 echo ""
