@@ -148,7 +148,7 @@ pub struct Cli {
     #[arg(long = "rename-user", num_args = 2, value_names = ["OLD_NAME", "NEW_NAME"])]
     pub rename_user: Option<Vec<String>>,
 
-    /// Skip interactive confirmation (for --delete-user)
+    /// Skip interactive confirmation prompts.
     #[arg(long = "yes")]
     pub yes: bool,
 
@@ -171,6 +171,42 @@ pub struct Cli {
     /// Host directory for storing snapshots (default: /data/projects/xray-backup)
     #[arg(long = "snapshot-dir")]
     pub snapshot_dir: Option<String>,
+
+    /// Run `migrate-bridge` subcommand.
+    #[arg(long)]
+    pub migrate_bridge: bool,
+
+    /// Run `migrate-egress` subcommand.
+    #[arg(long)]
+    pub migrate_egress: bool,
+
+    /// SSH alias of the NEW target VPS (for migrate commands).
+    #[arg(long)]
+    pub new_ssh: Option<String>,
+
+    /// SSH alias of the OLD VPS (for migrate commands).
+    #[arg(long)]
+    pub old_ssh: Option<String>,
+
+    /// SSH alias of the BRIDGE (for migrate-egress).
+    #[arg(long)]
+    pub bridge_ssh: Option<String>,
+
+    /// DuckDNS token for automated DNS update in migrate-egress.
+    #[arg(long, env = "DUCKDNS_TOKEN")]
+    pub duckdns_token: Option<String>,
+
+    /// Dry run — print the plan without executing side effects.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Skip stopping the old host in migrate-egress (if old is unreachable).
+    #[arg(long)]
+    pub skip_old: bool,
+
+    /// Bot operates against a native-xray bridge (not Amnezia Docker).
+    #[arg(long)]
+    pub bridge: bool,
 }
 
 /// Application configuration
@@ -495,6 +531,15 @@ host = "10.0.0.1"
             snapshot_list: false,
             upgrade_xray: false,
             snapshot_dir: None,
+            migrate_bridge: false,
+            migrate_egress: false,
+            new_ssh: None,
+            old_ssh: None,
+            bridge_ssh: None,
+            duckdns_token: None,
+            dry_run: false,
+            skip_old: false,
+            bridge: false,
         };
         config.merge_cli(&cli);
 
@@ -549,6 +594,15 @@ host = "10.0.0.1"
             snapshot_list: false,
             upgrade_xray: false,
             snapshot_dir: None,
+            migrate_bridge: false,
+            migrate_egress: false,
+            new_ssh: None,
+            old_ssh: None,
+            bridge_ssh: None,
+            duckdns_token: None,
+            dry_run: false,
+            skip_old: false,
+            bridge: false,
         };
         config.merge_cli(&cli);
 
@@ -592,6 +646,15 @@ host = "10.0.0.1"
             snapshot_list: false,
             upgrade_xray: false,
             snapshot_dir: None,
+            migrate_bridge: false,
+            migrate_egress: false,
+            new_ssh: None,
+            old_ssh: None,
+            bridge_ssh: None,
+            duckdns_token: None,
+            dry_run: false,
+            skip_old: false,
+            bridge: false,
         };
         config.merge_cli(&cli);
         assert_eq!(config, Config::default());
