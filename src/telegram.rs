@@ -984,15 +984,19 @@ mod tests {
 
     #[test]
     fn test_is_admin_matching() {
-        let mut config = Config::default();
-        config.telegram_admin_chat_id = Some(12345);
+        let config = Config {
+            telegram_admin_chat_id: Some(12345),
+            ..Default::default()
+        };
         assert!(is_admin(&config, ChatId(12345)));
     }
 
     #[test]
     fn test_is_admin_wrong_user() {
-        let mut config = Config::default();
-        config.telegram_admin_chat_id = Some(12345);
+        let config = Config {
+            telegram_admin_chat_id: Some(12345),
+            ..Default::default()
+        };
         assert!(!is_admin(&config, ChatId(99999)));
     }
 
@@ -1141,8 +1145,10 @@ mod tests {
 
     #[test]
     fn test_config_telegram_admin_serialization() {
-        let mut config = Config::default();
-        config.telegram_admin_chat_id = Some(123456789);
+        let config = Config {
+            telegram_admin_chat_id: Some(123456789),
+            ..Default::default()
+        };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("telegram_admin_chat_id = 123456789"));
 
@@ -1476,8 +1482,10 @@ mod tests {
     #[test]
     fn test_is_admin_negative_id() {
         // Telegram group chat IDs can be negative
-        let mut config = Config::default();
-        config.telegram_admin_chat_id = Some(-100123456);
+        let config = Config {
+            telegram_admin_chat_id: Some(-100123456),
+            ..Default::default()
+        };
         assert!(is_admin(&config, ChatId(-100123456)));
         assert!(!is_admin(&config, ChatId(100123456)));
     }

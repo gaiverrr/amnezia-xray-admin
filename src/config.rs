@@ -374,8 +374,10 @@ host = "10.0.0.1"
 
     #[test]
     fn test_config_telegram_token_serialization() {
-        let mut config = Config::default();
-        config.telegram_token = Some("123456:ABCdef".to_string());
+        let config = Config {
+            telegram_token: Some("123456:ABCdef".to_string()),
+            ..Default::default()
+        };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("telegram_token = \"123456:ABCdef\""));
 
