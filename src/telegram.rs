@@ -178,7 +178,9 @@ pub fn format_users_message(users: &[(XrayUser, TrafficStats, u32)]) -> String {
 /// Minimal HTML escape for Telegram HTML parse mode (only & < > need escaping
 /// outside of attributes).
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Formatted add-user message. Uses Telegram HTML parse mode so that UUID and
