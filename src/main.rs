@@ -500,10 +500,7 @@ async fn connect_cli_backend(config: &Config, local: bool) -> error::Result<Box<
         } else {
             get_local_hostname().await
         };
-        Ok(Box::new(LocalBackend::new(
-            config.container.clone(),
-            hostname,
-        )))
+        Ok(Box::new(LocalBackend::new(hostname)))
     } else {
         let backend = connect_backend(config).await?;
         Ok(Box::new(backend))
@@ -836,7 +833,7 @@ async fn cli_telegram_bot(
             } else {
                 get_local_hostname().await
             };
-            Box::new(native::backend::NativeLocalBackend::new(hostname))
+            Box::new(LocalBackend::new(hostname))
         } else {
             let (hostname, port, user, key_path) = resolve_connection_info(config)?;
             let addr = if hostname.contains(':') {
@@ -847,7 +844,7 @@ async fn cli_telegram_bot(
             let session =
                 ssh::SshSession::connect(&addr, &user, key_path.as_deref(), &config.container)
                     .await?;
-            Box::new(native::backend::NativeSshBackend::new(session, hostname))
+            Box::new(SshBackend::new(session, hostname))
         };
         return telegram::run_bot(token, backend, config.clone(), true).await;
     }
@@ -929,7 +926,7 @@ async fn cli_add_user(config: &Config, name: &str, local: bool, bridge: bool) ->
             } else {
                 get_local_hostname().await
             };
-            Box::new(native::backend::NativeLocalBackend::new(hostname))
+            Box::new(LocalBackend::new(hostname))
         } else {
             let (hostname, port, user, key_path) = resolve_connection_info(config)?;
             let addr = if hostname.contains(':') {
@@ -940,7 +937,7 @@ async fn cli_add_user(config: &Config, name: &str, local: bool, bridge: bool) ->
             let session =
                 ssh::SshSession::connect(&addr, &user, key_path.as_deref(), &config.container)
                     .await?;
-            Box::new(native::backend::NativeSshBackend::new(session, hostname))
+            Box::new(SshBackend::new(session, hostname))
         };
 
         let client = xray::client::XrayClient::new(backend.as_ref());
