@@ -36,6 +36,28 @@ cargo run -- --telegram-bot --local --container c  # run Telegram bot daemon
 cargo run -- --deploy-bot --telegram-token <TOKEN> --admin-id <ID>  # deploy bot to VPS via SSH
 ```
 
+### Bridge mode (new double-hop setup)
+
+For the new RU-bridge + foreign-egress setup, pass `--bridge` to opt into the
+native-xray code path instead of Amnezia Docker:
+
+```bash
+# Telegram bot against new bridge (deploy binary to bridge host, run locally)
+amnezia-xray-admin --telegram-bot --local --bridge --admin-id <ID>
+
+# Add user directly on bridge via CLI (prints URL + ASCII QR)
+amnezia-xray-admin --bridge --local --add-user <name>
+```
+
+In `--bridge` mode, the tool reads/writes `/usr/local/etc/xray/config.json`
+directly and does not use `docker exec`. The Reality public key must be
+stored at `/usr/local/etc/xray/reality-public-key` (one-line file) at
+bridge setup time so `bridge_public_params` can render URLs without
+re-running `xray x25519`.
+
+Commands `/snapshot`, `/restore`, `/upgrade`, `/routes` are not supported
+in bridge mode yet — the bot will reply "not supported in bridge mode".
+
 ### Deploy prerequisites
 
 Bot deploy cross-compiles locally for Linux, then uploads the binary to VPS. Requires `cross`:
