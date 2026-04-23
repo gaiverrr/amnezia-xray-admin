@@ -3,6 +3,35 @@
 use crate::backend_trait::XrayBackend;
 use crate::error::{AppError, Result};
 
+pub async fn preflight(backend: &dyn XrayBackend, required_free_ports: &[u16]) -> Result<()> {
+    let sudo = backend.exec_on_host("sudo -n true").await?;
+    if !sudo.success() {
+        return Err(AppError::Config("sudo requires password — configure NOPASSWD".into()));
+    }
+    let os = backend.exec_on_host("grep PRETTY_NAME /etc/os-release").await?;
+    if !os.success() || !os.stdout.contains("Ubuntu 2") {
+        return Err(AppError::Config(format!(
+            "unsupported OS (need Ubuntu 22+/24+): {}", os.stdout.trim()
+        )));
+    }
+    let mem = backend.exec_on_host("grep MemAvailable /proc/meminfo").await?;
+    let mem_kb: u64 = mem.stdout.split_whitespace().nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if mem_kb < 500_000 {
+        return Err(AppError::Config(format!(
+            "insufficient memory: {mem_kb} KB available, need ≥ 500_000"
+        )));
+    }
+    for port in required_free_ports {
+        let check = backend.exec_on_host(&format!("ss -tln | grep -E \":{port}\\b\" | head -1")).await?;
+        if !check.stdout.trim().is_empty() {
+            return Err(AppError::Config(format!("port {port} is already in use on new host")));
+        }
+    }
+    Ok(())
+}
+
 pub async fn install_xray(backend: &dyn XrayBackend) -> Result<String> {
     let install_cmd = "sudo bash -c \"$(curl -Ls https://github.com/XTLS/Xray-install/raw/main/install-release.sh)\" @ install";
     let install = backend.exec_on_host(install_cmd).await?;
@@ -131,5 +160,34 @@ mod tests {
         };
         let err = install_xray(&backend).await.unwrap_err();
         assert!(err.to_string().contains("too old") || err.to_string().contains("1.8"));
+    }
+
+    #[tokio::test]
+    async fn preflight_passes_on_healthy_host() {
+        let backend = MockBackend {
+            calls: Mutex::new(vec![]),
+            responses: Mutex::new(vec![
+                CommandOutput { stdout: "".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput { stdout: "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput { stdout: "MemAvailable:    1500000 kB".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput { stdout: "".into(), stderr: "".into(), exit_code: 1 },
+            ]),
+        };
+        preflight(&backend, &[443]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn preflight_fails_on_busy_port() {
+        let backend = MockBackend {
+            calls: Mutex::new(vec![]),
+            responses: Mutex::new(vec![
+                CommandOutput { stdout: "".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput { stdout: "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput { stdout: "MemAvailable:    1500000 kB".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput { stdout: "LISTEN 0 128 *:443 *:* users:((something))".into(), stderr: "".into(), exit_code: 0 },
+            ]),
+        };
+        let err = preflight(&backend, &[443]).await.unwrap_err();
+        assert!(err.to_string().contains("443"));
     }
 }
