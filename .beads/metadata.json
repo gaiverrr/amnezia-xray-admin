@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "amnezia_xray_admin",
+  "project_id": "626fb086-1e83-418f-9004-4712ff23f0af"
+}

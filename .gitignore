@@ -10,3 +10,8 @@
 .claude/settings.local.json
 .claude/settings.json
 .claude/scheduled_tasks.lock
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
