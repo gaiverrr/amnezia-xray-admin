@@ -3,6 +3,32 @@
 use crate::backend_trait::XrayBackend;
 use crate::error::{AppError, Result};
 
+pub async fn install_xray(backend: &dyn XrayBackend) -> Result<String> {
+    let install_cmd = "sudo bash -c \"$(curl -Ls https://github.com/XTLS/Xray-install/raw/main/install-release.sh)\" @ install";
+    let install = backend.exec_on_host(install_cmd).await?;
+    if !install.success() {
+        return Err(AppError::Config(format!("xray install failed: {}", install.stderr)));
+    }
+
+    let version = backend.exec_on_host("xray version 2>&1 | head -1").await?;
+    if !version.success() {
+        return Err(AppError::Config("xray version check failed".into()));
+    }
+
+    let stdout = version.stdout.trim();
+    let token = stdout
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| AppError::Config(format!("cannot parse xray version from: {stdout}")))?;
+    let major: u32 = token.split('.').next()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| AppError::Config(format!("cannot parse major version from: {token}")))?;
+    if major < 25 {
+        return Err(AppError::Config(format!("xray version {token} is too old; need 25+ for XHTTP")));
+    }
+    Ok(token.to_string())
+}
+
 pub async fn apt_install(backend: &dyn XrayBackend, packages: &[&str]) -> Result<()> {
     let update = backend.exec_on_host(
         "sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq"
@@ -76,5 +102,34 @@ mod tests {
         };
         let result = apt_install(&backend, &["nginx"]).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn install_xray_runs_official_script() {
+        let backend = MockBackend {
+            calls: Mutex::new(vec![]),
+            responses: Mutex::new(vec![
+                CommandOutput { stdout: "Xray installed".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput { stdout: "Xray 26.3.27 ...\nA unified platform...".into(), stderr: "".into(), exit_code: 0 },
+            ]),
+        };
+        let version = install_xray(&backend).await.unwrap();
+        assert!(version.starts_with("26."));
+        let calls = backend.calls.lock().unwrap();
+        assert!(calls[0].contains("Xray-install"));
+        assert!(calls[1].contains("xray version"));
+    }
+
+    #[tokio::test]
+    async fn install_xray_rejects_old_version() {
+        let backend = MockBackend {
+            calls: Mutex::new(vec![]),
+            responses: Mutex::new(vec![
+                CommandOutput { stdout: "ok".into(), stderr: "".into(), exit_code: 0 },
+                CommandOutput { stdout: "Xray 1.8.4 ...".into(), stderr: "".into(), exit_code: 0 },
+            ]),
+        };
+        let err = install_xray(&backend).await.unwrap_err();
+        assert!(err.to_string().contains("too old") || err.to_string().contains("1.8"));
     }
 }
