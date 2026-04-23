@@ -12,8 +12,6 @@ use config::{Cli, Config};
 use error::AppError;
 use ssh::{expand_tilde, resolve_ssh_host, SshSession};
 use std::io::IsTerminal;
-use xray::client::generate_vless_url;
-use xray::config::read_server_config;
 use xray::types::VlessUrlParams;
 
 // ── Helpers inlined from the deleted src/backend.rs (Epic D Task 1.2) ──
@@ -150,32 +148,32 @@ async fn read_public_key(backend: &dyn XrayBackend) -> Result<String, AppError> 
     }
 }
 
-/// Build a vless:// URL for a user, using live server config for reality params.
+/// Build a vless:// URL for a user — legacy Amnezia path (reads server.json from
+/// the container to pull Reality params).
 ///
-/// Kept `pub(crate)` for `src/telegram.rs`; main.rs CLI call-sites were deleted
-/// in Task 1.2 and will be rewired to the bridge XrayClient in Phase 4.
+/// Kept `pub(crate)` so `src/telegram.rs` still compiles in its legacy
+/// non-bridge branches until Task 5.1 rips those out. The body no longer
+/// works because `xray::config::read_server_config` was deleted in Task 3.2;
+/// returning an error here is fine because every caller is scheduled for
+/// removal in Task 5.1 / 4.2.
 pub(crate) async fn build_vless_url(
-    backend: &dyn XrayBackend,
-    uuid: &str,
-    name: &str,
+    _backend: &dyn XrayBackend,
+    _uuid: &str,
+    _name: &str,
 ) -> Result<String, AppError> {
-    let server_config = read_server_config(backend).await?;
-    let reality = server_config
-        .reality_settings()
-        .ok_or_else(|| AppError::Xray("no Reality settings in server config".to_string()))?;
-    let port = server_config.vless_port().unwrap_or(443);
-    let public_key = read_public_key(backend).await?;
-
-    let params = VlessUrlParams {
-        uuid: uuid.to_string(),
-        host: backend.hostname().to_string(),
-        port,
-        sni: reality.sni,
-        public_key,
-        short_id: reality.short_id,
-        name: name.to_string(),
+    let _ = VlessUrlParams {
+        uuid: String::new(),
+        host: String::new(),
+        port: 0,
+        sni: String::new(),
+        public_key: String::new(),
+        short_id: String::new(),
+        name: String::new(),
     };
-    Ok(generate_vless_url(&params))
+    Err(AppError::Xray(
+        "legacy Amnezia vless URL builder removed (Task 3.2); bridge path uses xray::url instead"
+            .to_string(),
+    ))
 }
 
 /// Get VPS public IP. Tries curl on the host first, falls back to SSH config host.
@@ -300,14 +298,6 @@ fn main() {
     // Non-interactive CLI commands
     if cli.list_users {
         if let Err(e) = runtime.block_on(cli_list_users(&config, local)) {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
-
-    if cli.check_server {
-        if let Err(e) = runtime.block_on(cli_check_server(&config, local)) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
@@ -496,55 +486,6 @@ fn looks_like_ip(s: &str) -> bool {
         return false;
     }
     s.parse::<std::net::IpAddr>().is_ok()
-}
-
-async fn cli_check_server(config: &Config, local: bool) -> error::Result<()> {
-    if !local {
-        let (_, port, user, _) = resolve_connection_info(config)?;
-        eprintln!(
-            "Connecting to {}@{}:{}...",
-            user,
-            config
-                .ssh_host
-                .as_deref()
-                .or(config.host.as_deref())
-                .unwrap_or("?"),
-            port
-        );
-    }
-
-    let backend = connect_cli_backend(config, local).await?;
-
-    // Ensure API is enabled (idempotent — no restart if already configured)
-    eprintln!("Checking API configuration...");
-    let modified = xray::config::ensure_api_enabled(backend.as_ref()).await?;
-    if modified {
-        eprintln!("API was not configured — enabled and container restarted.");
-    } else {
-        eprintln!("API already configured.");
-    }
-
-    let client = xray::client::XrayApiClient::new(backend.as_ref());
-
-    let users = client.list_users().await?;
-    let server_info = client.get_server_info().await?;
-    let api_ok = client.probe_stats_api().await.unwrap_or(false);
-
-    if api_ok {
-        println!(
-            "API enabled, {} users, xray v{}",
-            users.len(),
-            server_info.version
-        );
-    } else {
-        println!(
-            "API degraded (stats API unreachable), {} users, xray v{}",
-            users.len(),
-            server_info.version
-        );
-    }
-
-    Ok(())
 }
 
 async fn cli_user_url(config: &Config, name: &str, local: bool) -> error::Result<()> {
@@ -792,21 +733,10 @@ async fn cli_telegram_bot(
 
     let backend = connect_cli_backend(config, local).await?;
 
-    // Ensure the Xray API is configured before starting the bot.
-    // On a fresh server, the API may not be enabled yet — without this,
-    // commands like /add would fail on the runtime API call.
-    eprintln!("Checking Xray API configuration...");
-    match xray::config::ensure_api_enabled(backend.as_ref()).await {
-        Ok(true) => eprintln!("API was not configured — enabled and container restarted."),
-        Ok(false) => eprintln!("API already configured."),
-        Err(e) => {
-            return Err(error::AppError::Xray(format!(
-                "failed to ensure Xray API is enabled (bot cannot operate without it): {}",
-                e
-            )));
-        }
-    }
-
+    // Legacy (non-bridge) bot path: the Amnezia-Docker `ensure_api_enabled`
+    // bootstrap was removed in Task 3.2. The bot's legacy branches in
+    // `telegram.rs` are scheduled for removal in Task 5.1; until then this
+    // path will fail at runtime when any API-backed command is invoked.
     telegram::run_bot(token, backend, config.clone(), false).await
 }
 
@@ -872,28 +802,9 @@ async fn cli_add_user(config: &Config, name: &str, local: bool, bridge: bool) ->
 
     let backend = connect_cli_backend(config, local).await?;
 
-    // Pre-check: reject duplicate names before potentially bootstrapping the API,
-    // so we don't trigger a backup + restart for a no-op duplicate attempt.
-    // Check both server.json emails (normalized configs) and clientsTable names
-    // (pre-bootstrap configs where emails haven't been backfilled yet).
-    let email = xray::types::XrayUser::email_from_name(name);
-    let server_config = xray::config::read_server_config(backend.as_ref()).await?;
-    let clients_table = xray::config::read_clients_table(backend.as_ref()).await?;
-    if server_config.has_client_email(&email) || clients_table.has_name(name) {
-        return Err(error::AppError::Xray(format!(
-            "user '{}' already exists",
-            name
-        )));
-    }
-    drop(server_config);
-    drop(clients_table);
-
-    // Ensure API is enabled (idempotent — no restart if already configured)
-    let modified = xray::config::ensure_api_enabled(backend.as_ref()).await?;
-    if modified {
-        eprintln!("API was not configured — enabled and container restarted.");
-    }
-
+    // Legacy (non-bridge) add-user path: the Amnezia-Docker pre-check + API
+    // bootstrap (`ensure_api_enabled`, `read_server_config`, `read_clients_table`)
+    // were removed in Task 3.2. Full removal of this branch happens in Task 4.2.
     let client = xray::client::XrayApiClient::new(backend.as_ref());
 
     let uuid = client.add_user(name).await?;
