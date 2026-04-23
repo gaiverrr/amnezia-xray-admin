@@ -16,7 +16,7 @@ use crate::backend_trait::XrayBackend;
 use crate::config::Config;
 use crate::error::Result;
 use crate::xray::client::XrayClient;
-use crate::native::url::{render_qr_png, render_xhttp_url, XhttpUrlParams};
+use crate::xray::url::{render_qr_png, render_xhttp_url, XhttpUrlParams};
 use crate::ui::dashboard::format_bytes;
 use crate::ui::qr::render_qr_to_png;
 use crate::xray::client::{ServerInfo, XrayApiClient};

@@ -7,7 +7,7 @@
 
 use crate::backend_trait::XrayBackend;
 use crate::error::{AppError, Result};
-use crate::native::config_render::{parse_bridge_config, ClientEntry};
+use crate::xray::config_render::{parse_bridge_config, ClientEntry};
 
 pub const NATIVE_CONFIG_PATH: &str = "/usr/local/etc/xray/config.json";
 pub const NATIVE_REALITY_PUBKEY_PATH: &str = "/usr/local/etc/xray/reality-public-key";

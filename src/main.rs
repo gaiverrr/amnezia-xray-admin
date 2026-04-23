@@ -2,7 +2,6 @@ mod backend_trait;
 mod config;
 mod error;
 pub mod migrate;
-pub mod native;
 mod ssh;
 mod telegram;
 mod xray;
@@ -949,7 +948,7 @@ async fn cli_add_user(config: &Config, name: &str, local: bool, bridge: bool) ->
 
         match client.bridge_public_params().await {
             Ok(params) => {
-                let url = native::url::render_xhttp_url(&native::url::XhttpUrlParams {
+                let url = xray::url::render_xhttp_url(&xray::url::XhttpUrlParams {
                     uuid: entry.uuid.clone(),
                     host: backend.hostname().to_string(),
                     port: params.port,
@@ -961,7 +960,7 @@ async fn cli_add_user(config: &Config, name: &str, local: bool, bridge: bool) ->
                 });
                 println!("URL:   {}", url);
                 println!();
-                println!("{}", native::url::render_qr_ascii(&url));
+                println!("{}", xray::url::render_qr_ascii(&url));
             }
             Err(e) => eprintln!(
                 "Warning: URL generation failed: {}. Use --user-url to retry.",
