@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Internal: `src/telegram.rs` (~1800 LOC) split into a submodule tree — `mod.rs` (dispatcher + bot entry), `format.rs` (pure text formatters + validators), `keyboards.rs` (inline keyboard builders), `handlers.rs` (async per-command handlers). No behaviour changes; all 157 tests still pass. Closes `amnezia-xray-admin-k6o`.
+
 ## [0.4.1] - 2026-04-24
 
 ### Fixed
