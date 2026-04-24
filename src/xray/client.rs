@@ -5,12 +5,17 @@
 //! after any response has been sent (see the chicken-and-egg note in the
 //! Telegram bot).
 
+use std::collections::HashMap;
+
 use crate::backend_trait::XrayBackend;
 use crate::error::{AppError, Result};
 use crate::xray::config_render::{parse_bridge_config, ClientEntry};
+use crate::xray::types::TrafficStats;
 
 pub const NATIVE_CONFIG_PATH: &str = "/usr/local/etc/xray/config.json";
 pub const NATIVE_REALITY_PUBKEY_PATH: &str = "/usr/local/etc/xray/reality-public-key";
+/// Xray's gRPC API listens here on the bridge (see `api` + `dokodemo-door` inbound).
+pub const NATIVE_API_ADDRESS: &str = "127.0.0.1:8080";
 
 /// Public Reality params that bot needs to render vless URLs for users.
 #[derive(Debug, Clone)]
@@ -183,6 +188,99 @@ impl<'a> XrayClient<'a> {
             .map(|c| c.uuid)
             .ok_or_else(|| AppError::Config(format!("user '{name}' not found")))
     }
+
+    /// Query xray's `statsquery` API for all per-user traffic counters. Returns
+    /// a map keyed by the full email (`name@vpn`).
+    ///
+    /// On any transport/parse failure this returns an empty map rather than an
+    /// error — stats are informational and the bot should keep working even if
+    /// the api inbound is temporarily unreachable.
+    pub async fn get_all_user_stats(&self) -> HashMap<String, TrafficStats> {
+        let cmd = format!("xray api statsquery --server={NATIVE_API_ADDRESS} -pattern 'user>>>'");
+        let Ok(out) = self.backend.exec_on_host(&cmd).await else {
+            return HashMap::new();
+        };
+        if !out.success() {
+            return HashMap::new();
+        }
+        parse_user_stats(&out.stdout).unwrap_or_default()
+    }
+
+    /// Aggregate uplink/downlink for a given inbound tag (e.g. `client-in`).
+    /// Returns `(0, 0)` on any failure — see rationale on `get_all_user_stats`.
+    pub async fn get_inbound_stats(&self, tag: &str) -> (u64, u64) {
+        let cmd = format!(
+            "xray api statsquery --server={NATIVE_API_ADDRESS} -pattern 'inbound>>>{tag}>>>'"
+        );
+        let Ok(out) = self.backend.exec_on_host(&cmd).await else {
+            return (0, 0);
+        };
+        if !out.success() {
+            return (0, 0);
+        }
+        parse_inbound_stats(&out.stdout).unwrap_or((0, 0))
+    }
+}
+
+/// Parse the `{"stat": [{"name": "user>>>rita@vpn>>>traffic>>>downlink", "value": N}, ...]}`
+/// payload into a map keyed by email. Unknown shapes are skipped silently.
+pub(crate) fn parse_user_stats(json: &str) -> Result<HashMap<String, TrafficStats>> {
+    let v: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| AppError::Config(format!("parse statsquery: {e}")))?;
+    let mut map: HashMap<String, TrafficStats> = HashMap::new();
+    let Some(arr) = v.get("stat").and_then(|s| s.as_array()) else {
+        return Ok(map);
+    };
+    for entry in arr {
+        let Some(name) = entry.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        let Some(value) = entry.get("value").and_then(|x| x.as_u64()) else {
+            continue;
+        };
+        // Expected: user>>>{email}>>>traffic>>>{uplink|downlink}
+        let parts: Vec<&str> = name.split(">>>").collect();
+        if parts.len() != 4 || parts[0] != "user" || parts[2] != "traffic" {
+            continue;
+        }
+        let slot = map.entry(parts[1].to_string()).or_default();
+        match parts[3] {
+            "uplink" => slot.uplink = value,
+            "downlink" => slot.downlink = value,
+            _ => {}
+        }
+    }
+    Ok(map)
+}
+
+/// Sum uplink/downlink across all matching inbound entries in a statsquery
+/// response. Expected shape: `inbound>>>{tag}>>>traffic>>>{uplink|downlink}`.
+pub(crate) fn parse_inbound_stats(json: &str) -> Result<(u64, u64)> {
+    let v: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| AppError::Config(format!("parse statsquery: {e}")))?;
+    let mut uplink = 0u64;
+    let mut downlink = 0u64;
+    let Some(arr) = v.get("stat").and_then(|s| s.as_array()) else {
+        return Ok((0, 0));
+    };
+    for entry in arr {
+        let Some(name) = entry.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        let Some(value) = entry.get("value").and_then(|x| x.as_u64()) else {
+            continue;
+        };
+        let parts: Vec<&str> = name.split(">>>").collect();
+        if parts.len() != 4 {
+            continue;
+        }
+        match parts[3] {
+            "uplink" => uplink += value,
+            "downlink" => downlink += value,
+            _ => {}
+        }
+    }
+    Ok((uplink, downlink))
 }
 
 /// Reject names that could break shell quoting or jq arg parsing.
@@ -213,5 +311,67 @@ mod tests {
         assert!(validate_name("ok name").is_ok());
         assert!(validate_name("Admin [macOS Tahoe (26.3.1)]").is_ok());
         assert!(validate_name("user-1_a.b").is_ok());
+    }
+
+    #[test]
+    fn parse_user_stats_groups_by_email() {
+        let json = r#"{
+            "stat": [
+                { "name": "user>>>rita@vpn>>>traffic>>>downlink", "value": 1000 },
+                { "name": "user>>>rita@vpn>>>traffic>>>uplink",   "value": 200  },
+                { "name": "user>>>ivan@vpn>>>traffic>>>downlink", "value": 50   }
+            ]
+        }"#;
+        let map = parse_user_stats(json).unwrap();
+        assert_eq!(map["rita@vpn"].uplink, 200);
+        assert_eq!(map["rita@vpn"].downlink, 1000);
+        assert_eq!(map["ivan@vpn"].uplink, 0);
+        assert_eq!(map["ivan@vpn"].downlink, 50);
+    }
+
+    #[test]
+    fn parse_user_stats_empty() {
+        assert!(parse_user_stats(r#"{"stat":[]}"#).unwrap().is_empty());
+        assert!(parse_user_stats(r#"{}"#).unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_user_stats_skips_malformed_entries() {
+        // Each of these entries is individually malformed; parser should skip
+        // them silently without returning an error.
+        let json = r#"{
+            "stat": [
+                { "name": "user>>>short", "value": 1 },
+                { "name": "outbound>>>foo>>>traffic>>>uplink", "value": 2 },
+                { "name": "user>>>x@y>>>traffic>>>uplink" },
+                { "value": 3 },
+                "not-an-object"
+            ]
+        }"#;
+        let map = parse_user_stats(json).unwrap();
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn parse_user_stats_rejects_non_json() {
+        assert!(parse_user_stats("not json").is_err());
+    }
+
+    #[test]
+    fn parse_inbound_stats_sums_uplink_and_downlink() {
+        let json = r#"{
+            "stat": [
+                { "name": "inbound>>>client-in>>>traffic>>>uplink",   "value": 10 },
+                { "name": "inbound>>>client-in>>>traffic>>>downlink", "value": 90 }
+            ]
+        }"#;
+        let (up, down) = parse_inbound_stats(json).unwrap();
+        assert_eq!(up, 10);
+        assert_eq!(down, 90);
+    }
+
+    #[test]
+    fn parse_inbound_stats_empty() {
+        assert_eq!(parse_inbound_stats(r#"{"stat":[]}"#).unwrap(), (0, 0));
     }
 }

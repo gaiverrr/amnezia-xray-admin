@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `/users` (Telegram bot) now shows real per-user traffic (uplink/downlink), and `/status` shows real total inbound traffic, by querying `xray api statsquery` on the bridge. Both were stubbed to zero after Epic D removed the old Amnezia gRPC stats path. Closes `amnezia-xray-admin-oar`.
+
+### Added
+- `/status` now displays xray.service uptime (computed from systemd's monotonic-enter timestamp).
+
 ## [0.4.0] - 2026-04-23
 
 ### Removed (breaking)

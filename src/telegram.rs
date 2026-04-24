@@ -602,19 +602,21 @@ async fn handle_command(
 async fn cmd_users(state: &BotState) -> std::result::Result<String, crate::error::AppError> {
     let client = XrayClient::new(state.backend.as_ref());
     let clients = client.list_clients().await?;
+    let stats_map = client.get_all_user_stats().await;
     let user_data: Vec<(XrayUser, TrafficStats, u32)> = clients
         .into_iter()
         .map(|c| {
             let name = c.email.strip_suffix("@vpn").unwrap_or(&c.email).to_string();
+            let stats = stats_map.get(&c.email).cloned().unwrap_or_default();
             let user = XrayUser {
                 uuid: c.uuid,
                 name,
-                email: c.email,
+                email: c.email.clone(),
                 flow: String::new(),
-                stats: TrafficStats::default(),
+                stats: stats.clone(),
                 online_count: 0,
             };
-            (user, TrafficStats::default(), 0)
+            (user, stats, 0)
         })
         .collect();
     Ok(format_users_message(&user_data))
@@ -848,41 +850,76 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
 
 /// Execute /status command: server info + online summary.
 async fn cmd_status(state: &BotState) -> std::result::Result<String, crate::error::AppError> {
-    // Native bridge: no Amnezia API, no docker container. Report user count
-    // and xray binary version only (uptime/stats/latest not plumbed yet).
     let client = XrayClient::new(state.backend.as_ref());
     let clients = client.list_clients().await?;
-    let version_out = state
-        .backend
-        .exec_on_host("xray version 2>/dev/null | head -n 1 | awk '{print $2}'")
-        .await
-        .ok();
-    let version = version_out
-        .and_then(|o| {
-            if o.success() {
-                let v = o.stdout.trim().to_string();
-                if v.is_empty() {
-                    None
-                } else {
-                    Some(v)
-                }
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "unknown".to_string());
+    let (uplink, downlink) = client.get_inbound_stats("client-in").await;
+
+    let version = fetch_trimmed(
+        &*state.backend,
+        "xray version 2>/dev/null | head -n 1 | awk '{print $2}'",
+    )
+    .await
+    .unwrap_or_else(|| "unknown".to_string());
+
+    let uptime = fetch_xray_uptime(&*state.backend).await.unwrap_or_default();
+
     let server_info = ServerInfo {
         version,
-        uplink: 0,
-        downlink: 0,
+        uplink,
+        downlink,
     };
     Ok(format_status_message(
         &server_info,
         clients.len(),
         0,
-        "",
+        &uptime,
         None,
     ))
+}
+
+/// Run a shell command and return trimmed stdout on success, else None.
+async fn fetch_trimmed(backend: &dyn XrayBackend, cmd: &str) -> Option<String> {
+    let out = backend.exec_on_host(cmd).await.ok()?;
+    if !out.success() {
+        return None;
+    }
+    let trimmed = out.stdout.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Fetch xray.service uptime as a human-readable string (e.g. "3h 12m"),
+/// computed from systemd's `ActiveEnterTimestampMonotonic` and the host's
+/// monotonic clock. Returns None on failure.
+async fn fetch_xray_uptime(backend: &dyn XrayBackend) -> Option<String> {
+    // One shell invocation: read the service's active-since timestamp and
+    // the uptime_in_seconds value, then print their delta.
+    let cmd = "\
+        enter_us=$(systemctl show xray --property=ActiveEnterTimestampMonotonic --value 2>/dev/null); \
+        now_us=$(awk '{printf \"%d\", $1 * 1000000}' /proc/uptime 2>/dev/null); \
+        if [ -n \"$enter_us\" ] && [ \"$enter_us\" != \"0\" ] && [ -n \"$now_us\" ]; then \
+            echo $(( (now_us - enter_us) / 1000000 )); \
+        fi";
+    let seconds_str = fetch_trimmed(backend, cmd).await?;
+    let seconds: u64 = seconds_str.parse().ok()?;
+    Some(format_uptime(seconds))
+}
+
+/// Format a duration in seconds as a compact "Xd Yh Zm" string.
+fn format_uptime(seconds: u64) -> String {
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3600;
+    let minutes = (seconds % 3600) / 60;
+    if days > 0 {
+        format!("{days}d {hours}h {minutes}m")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else {
+        format!("{minutes}m")
+    }
 }
 
 /// Start the Telegram bot and block until shutdown.
@@ -950,6 +987,17 @@ pub async fn run_bot(token: &str, backend: Box<dyn XrayBackend>, config: Config)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_format_uptime_ranges() {
+        assert_eq!(format_uptime(0), "0m");
+        assert_eq!(format_uptime(59), "0m");
+        assert_eq!(format_uptime(60), "1m");
+        assert_eq!(format_uptime(3_600), "1h 0m");
+        assert_eq!(format_uptime(3_660), "1h 1m");
+        assert_eq!(format_uptime(86_400), "1d 0h 0m");
+        assert_eq!(format_uptime(90_061), "1d 1h 1m");
+    }
 
     #[test]
     fn test_help_text_contains_all_commands() {
