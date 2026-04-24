@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-04-24
+
 ### Fixed
 - `/users` (Telegram bot) now shows real per-user traffic (uplink/downlink), and `/status` shows real total inbound traffic, by querying `xray api statsquery` on the bridge. Both were stubbed to zero after Epic D removed the old Amnezia gRPC stats path. Closes `amnezia-xray-admin-oar`.
 
@@ -154,7 +156,8 @@ This release clarifies tool positioning as a personal-use admin for a double-hop
 - Telegram bot mode with commands: /start, /help, /users, /status, /add, /delete, /url, /qr
 - Bot deployment command (`--deploy-bot`) to set up the Telegram bot on VPS via SSH
 
-[Unreleased]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/gaiverrr/amnezia-xray-admin/compare/v0.2.0...v0.2.1
