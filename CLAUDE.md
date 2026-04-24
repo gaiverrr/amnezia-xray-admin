@@ -99,11 +99,11 @@ to `exec_on_host` for the native bridge.
 - **Bot needs `--host <public-ip>`**: without it, `LocalBackend::hostname()` returns whatever was passed (or `"localhost"`) and that ends up in generated URLs. The systemd unit's `ExecStart` always passes the current bridge IP explicitly.
 - **Alias resolution**: CLI URL generation uses `backend.hostname()`, which `connect_ssh` sets to the **resolved** hostname (after expanding `~/.ssh/config` aliases). Do not use `cli.host` / `config.host` for URL rendering — those are pre-resolution.
 
-## Live infrastructure (as of 2026-04-23)
+## Live infrastructure (as of 2026-04-24)
 
-- **Bridge** (ssh alias `yc-vm`, `81.26.189.136`, Yandex Cloud ru-central1-d): native xray on :443 (XHTTP+Reality, SNI `www.sberbank.ru`). Routes `geoip:ru → direct`, else → `foreign-egress`. Hosts the Telegram bot as `amnezia-xray-bot.service`.
-- **Egress** (ssh alias `vps-vpn`, `103.231.72.109`, Stark): native xray on :8444 + nginx self-steal on `127.0.0.1:9443` with LE cert for `yuriy-vps.duckdns.org`. Outbound freedom.
-- **Legacy on `vps-vpn`, stopped but preserved**: old Amnezia Docker container (users already migrated), `mtproxymax` MTProto proxy on :8443 (being deprecated — Telegram's MTProxy IP blocking).
+- **Bridge** (ssh alias `yc-vm`, `81.26.189.136`, Yandex Cloud ru-central1-d): native xray on :443 (XHTTP+Reality, SNI `www.sberbank.ru`). Routes `geoip:ru → direct`, else → `foreign-egress`. Hosts the VPN management Telegram bot as `amnezia-xray-bot.service`. Also carries a `dokodemo-door` inbound on :8443 (`mtproxy-in → direct`) that TCP-forwards to `vps-vpn:8443` — so MTProxy clients reach it via the RU IP.
+- **Egress** (ssh alias `vps-vpn`, `103.231.72.109`, Stark): native xray on :8444 + nginx self-steal on `127.0.0.1:9443` with LE cert for `yuriy-vps.duckdns.org`. Outbound freedom. Also runs `mtproxymax` Docker container on :8443 (faketls with `cloudflare.com` SNI) and its `mtproxymax-telegram.service` bot — mtproxymax lives HERE, not on bridge, because Yandex Cloud IPs cannot reach Telegram DCs.
+- **Legacy on `vps-vpn`, stopped**: old Amnezia Docker container (`amnezia-xray`, exited), files preserved for now. Users already migrated to the double-hop. Filed for removal in `amnezia-xray-admin-mgj`.
 - **Runbook**: `.claude/skills/amnezia-ops/` — project-local skill for live VPN fixes (health check, user CRUD, key rotation, disaster recovery).
 
 ## Release Process
