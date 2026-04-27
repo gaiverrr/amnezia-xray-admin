@@ -64,6 +64,71 @@ ssh yc-vm 'sudo docker logs 3x-ui --tail 30 2>&1 | grep -iE "tg|bot|proxy|error"
 
 # 9443 reachable from internet?
 nc -z -w 3 81.26.189.136 9443 && echo OK
+
+# xray-core in 3x-ui not in a startup-fail loop?
+ssh yc-vm 'sudo docker logs 3x-ui --since 30s 2>&1 | grep -iE "error|fail" | head -5'
+# If you see repeated "Failed to start: empty privateKey" or similar, find the
+# offending inbound id with /panel/api/inbounds/list and DELETE it via
+# /panel/api/inbounds/del/{id}. xray will retry-loop until the bad inbound is
+# removed because xray refuses to start ANY inbounds when one is malformed.
+```
+
+## End-to-end client test (no real device required)
+
+To verify Reality+xhttp+VLESS actually tunnels traffic correctly through the
+test inbound + foreign-egress without touching a phone:
+
+```bash
+# 1. Build a minimal client config locally
+cat > ~/test-config.json <<'JSON'
+{
+  "log": {"loglevel": "info"},
+  "inbounds": [{
+    "tag": "socks-in",
+    "port": 11080,
+    "listen": "0.0.0.0",
+    "protocol": "socks",
+    "settings": {"udp": true, "auth": "noauth"}
+  }],
+  "outbounds": [{
+    "tag": "test",
+    "protocol": "vless",
+    "settings": {"vnext": [{"address":"81.26.189.136","port":9443,"users":[
+      {"id":"<UUID>","encryption":"none","flow":""}
+    ]}]},
+    "streamSettings": {
+      "network": "xhttp",
+      "security": "reality",
+      "xhttpSettings": {"path": "<PATH>"},
+      "realitySettings": {
+        "fingerprint": "chrome",
+        "serverName": "<SNI>",
+        "publicKey": "<PUBKEY>",
+        "shortId": "<SID>",
+        "spiderX": "/"
+      }
+    }
+  }]
+}
+JSON
+
+# 2. Run xray client in docker (Mac arm64 supported).
+# CRITICAL: bind socks inbound on 0.0.0.0 — Docker port mapping can't reach
+# 127.0.0.1 inside the container.
+docker run --rm -d --name xray-test -p 127.0.0.1:11080:11080 \
+  -v ~/test-config.json:/cfg.json:ro \
+  ghcr.io/xtls/xray-core:latest -c /cfg.json
+
+# 3. Probe public IP through the tunnel
+curl -x socks5h://127.0.0.1:11080 https://api.ipify.org
+# Expected: 103.231.72.109 (vps-vpn IP) → tunnel works, foreign-egress wired
+# If you see 81.26.189.136 (bridge IP) → routing rule missing or wrong
+# If you see your own IP (no proxy) → curl --max-time fired, connection reset
+# If empty → check xray logs: docker logs xray-test
+
+# 4. Cleanup
+docker stop xray-test
+rm ~/test-config.json
 ```
 
 ## Adding/removing users
