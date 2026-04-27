@@ -38,6 +38,7 @@ Do not read every file — progressive disclosure.
 | Rotate Reality keys (paranoia or suspected compromise) | `references/user-ops.md` § Reality rotation | Regenerate x25519 on one hop → update the other → regenerate ALL client URLs. |
 | "Мигрируй на новый VPS" (bridge OR egress) | `references/migration.md` | Read the full runbook first — bridge and egress flows differ. |
 | "Сдох VPS, поднимаем с нуля" | `references/disaster-recovery.md` | Confirm which hop died before running anything. |
+| 3x-ui панель / @ggg_3x-ui_bot / "тестовый inbound 9443" | `references/3x-ui-panel.md` | Web UI bound to `127.0.0.1:2053`, доступ только через `ssh -L 2053:127.0.0.1:2053 yc-vm`. Креды у Yuriy в `~/.config/3x-ui-bridge/`. |
 | Something not above | Ask the user one clarifying question. |
 
 ## Invariants (never violate)
