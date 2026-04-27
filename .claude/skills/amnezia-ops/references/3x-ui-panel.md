@@ -86,6 +86,86 @@ curl -sS -b "$COOKIE" -X POST 'http://localhost:2053/panel/api/inbounds/addClien
 
 (The SSH tunnel from previous section must be active.)
 
+## Modifying the xray template config (outbounds, routing rules)
+
+3x-ui stores its xray template in sqlite under `key='xrayTemplateConfig'`,
+but **the HTTP API field name is `xraySetting`** (form-encoded). No
+partial-update — always send the full template. User inbounds live in a
+separate `inbounds` DB table and are merged in at xray-launch time; do not
+include them in the template.
+
+### Read current template
+
+```bash
+curl -sS -b "$COOKIE" -X POST 'http://localhost:2053/panel/xray/' | \
+  python3 -c 'import json,sys;d=json.load(sys.stdin)["obj"];print(d["xraySetting"])' \
+  > /tmp/tpl.json
+# obj.xraySetting is a JSON-encoded STRING — needs json.loads to mutate.
+# obj.inboundTags is an array (auto-named "inbound-<port>" or "inbound-<listen>:<port>").
+```
+
+### Write template
+
+```bash
+curl -sS -b "$COOKIE" -X POST 'http://localhost:2053/panel/xray/update' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode "xraySetting=$(cat /tmp/tpl.json)" \
+  --data-urlencode "outboundTestUrl=https://www.google.com/generate_204"
+# Validates via xray.Config unmarshal. Rejects with "xray template config
+# invalid: ..." if anything's off.
+```
+
+### Apply
+
+`/panel/xray/update` does NOT auto-restart xray. After save:
+
+```bash
+curl -sS -b "$COOKIE" -X POST 'http://localhost:2053/panel/setting/restartPanel'
+```
+
+### Inbound tag naming (hardcoded, NOT user-configurable via API)
+
+- `listen` empty / `0.0.0.0` / `::`           → tag = `inbound-<port>`
+- specific listen (e.g. `127.0.0.1`)          → tag = `inbound-<listen>:<port>`
+
+Source: `web/controller/inbound.go:113-117`, `web/service/inbound.go:495-500`.
+
+### Workflow: add an outbound + routing rule (e.g. double-hop egress)
+
+```bash
+# Fetch current template
+curl -sS -b "$COOKIE" -X POST 'http://localhost:2053/panel/xray/' \
+  | python3 -c 'import json,sys;print(json.load(sys.stdin)["obj"]["xraySetting"])' \
+  > /tmp/tpl-current.json
+
+# Mutate
+python3 << 'PY' > /tmp/tpl-new.json
+import json
+t = json.load(open('/tmp/tpl-current.json'))
+t['outbounds'].append({...new outbound dict...})
+t['routing']['rules'].append({"type":"field","inboundTag":["inbound-9443"],"outboundTag":"foreign-egress"})
+print(json.dumps(t))
+PY
+
+# Push + apply
+curl -sS -b "$COOKIE" -X POST 'http://localhost:2053/panel/xray/update' \
+  --data-urlencode "xraySetting=$(cat /tmp/tpl-new.json)" \
+  --data-urlencode "outboundTestUrl=https://www.google.com/generate_204"
+curl -sS -b "$COOKIE" -X POST 'http://localhost:2053/panel/setting/restartPanel'
+
+# Verify live config picked up the change
+ssh yc-vm 'sudo docker exec 3x-ui cat bin/config.json' \
+  | jq '{outbounds:[.outbounds[].tag], rules:[.routing.rules[]|{inboundTag,outboundTag}]}'
+```
+
+### Sources
+
+- `web/controller/xray_setting.go` (lines 32–99: routes, GET, update)
+- `web/service/xray_setting.go` (lines 17–89: Save + UnwrapXrayTemplateConfig)
+- `web/service/inbound.go` (lines 1585–1594: GetInboundTags)
+- `database/model/model.go` (lines 48–112: Inbound + Setting schemas)
+- Postman collection (only quasi-official): https://www.postman.com/hsanaei/3x-ui/collection/q1l5l0u/3x-ui
+
 ## Production xray's `bot-socks` inbound
 
 On `yc-vm`, the production xray now has an extra inbound:
